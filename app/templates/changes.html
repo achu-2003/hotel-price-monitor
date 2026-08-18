@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Changes · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Changes</h1>
+<p class="muted">
+  Every row here cleared both the significance threshold and the confirmation
+  checks. Movements below the threshold, and one-off blips that did not
+  persist, are recorded in the price history but never appear here.
+</p>
+
+<form class="filters" method="get" action="/changes">
+  <label>Hotel
+    <select name="hotel_id">
+      <option value="">All hotels</option>
+      {% for hotel in hotels %}
+      <option value="{{ hotel.id }}" {{ 'selected' if hotel_id == hotel.id else '' }}>{{ hotel.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Window
+    <select name="hours">
+      {% for option in [24, 48, 168, 720] %}
+      <option value="{{ option }}" {{ 'selected' if hours == option else '' }}>
+        {{ 'last %dh'|format(option) if option < 168 else 'last %dd'|format(option // 24) }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+<table class="grid">
+  <thead>
+    <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Was</th><th>Now</th><th>Change</th><th>Told</th></tr>
+  </thead>
+  <tbody>
+    {% for change, hotel_name, room_name, check_in, check_out in changes %}
+    <tr>
+      <td class="nowrap muted">{{ change.changed_at.strftime('%d %b %H:%M') }}</td>
+      <td><a href="/hotels/{{ change.hotel_id }}">{{ hotel_name }}</a></td>
+      <td>{{ room_name or '—' }}</td>
+      <td class="nowrap muted">{{ check_in }} → {{ check_out }}</td>
+      <td class="num muted">{{ money(change.old_price, change.currency) }}</td>
+      <td class="num strong">
+        {% if change.direction.value == 'became_unavailable' %}
+          <span class="pill pill-soldout">sold out</span>
+        {% else %}
+          {{ money(change.new_price, change.currency) }}
+        {% endif %}
+      </td>
+      <td class="num {{ 'up' if change.direction.value == 'increase' else ('down' if change.direction.value == 'decrease' else '') }}">
+        {% if change.direction.value == 'became_available' %}
+          <span class="pill pill-ok">back</span>
+        {% elif change.delta %}
+          {{ '+' if change.direction.value == 'increase' else '−' }}{{ money(change.delta|abs, change.currency) }}
+          {% if change.delta_pct %}<span class="muted">({{ '%.1f'|format(change.delta_pct|abs) }}%)</span>{% endif %}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if change.notified %}<span class="pill pill-ok">yes</span>
+        {% else %}<span class="pill pill-off">pending</span>{% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No confirmed changes in this window.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

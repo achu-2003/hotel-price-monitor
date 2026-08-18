@@ -1,0 +1,49 @@
+{#
+  Layout for every dashboard page.
+
+  No CDN links and no inline <script>: the Content-Security-Policy set in
+  app/main.py allows scripts only from 'self', so everything is served from
+  /static. That is a deliberate trade — a strict CSP is the single most
+  effective defence against an injected script, and this dashboard displays
+  room names taken from other people's websites.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Hotel Price Monitor{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:,">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">Hotel Price Monitor</a>
+  <nav>
+    <a href="/matrix">Matrix</a>
+    <a href="/changes">Changes</a>
+    <a href="/sources">Sources</a>
+    <a href="/hotels">Hotels</a>
+    <a href="/targets">Targets</a>
+    <a href="/unmatched">Unmatched</a>
+    <a href="/health-tab">Health</a>
+    <a href="/notifications">Notifications</a>
+  </nav>
+  <div class="user">
+    <span title="{{ user.email }}">{{ user.full_name or user.email }}</span>
+    <span class="badge {{ 'badge-admin' if is_admin else 'badge-viewer' }}">{{ user.role.value }}</span>
+    <a href="/logout">Log out</a>
+  </div>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<footer>
+  <span>Times shown in your browser's locale · prices in the source currency</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

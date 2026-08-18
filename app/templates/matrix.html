@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Price matrix · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Price matrix</h1>
+
+{#
+  Occupancy is part of the form, not a hidden default. A 2-guest rate and a
+  3-guest rate are different offers with different offer keys, and a matrix
+  that quietly mixed them would look like a comparison while comparing
+  nothing.
+#}
+<form class="filters" method="get" action="/matrix">
+  <label>Check in <input type="date" name="check_in" value="{{ check_in }}"></label>
+  <label>Check out <input type="date" name="check_out" value="{{ check_out }}"></label>
+  <label>Adults <input type="number" name="adults" min="1" max="20" value="{{ adults }}"></label>
+  <button type="submit">Show</button>
+  <span class="muted">Defaults to the coming weekend.</span>
+</form>
+
+{% if rows %}
+<div class="scroll-x">
+<table class="grid matrix">
+  <thead>
+    <tr><th>Hotel</th><th>Cheapest</th><th>Rooms</th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="{{ 'own-property' if row.hotel.is_own_property else '' }}">
+      <td>
+        <a href="/hotels/{{ row.hotel.id }}">{{ row.hotel.name }}</a>
+        {% if row.hotel.is_own_property %}<span class="pill pill-own">yours</span>{% endif %}
+      </td>
+      <td class="num strong">{{ money(row.cheapest, row.cells[0].currency if row.cells else 'INR') }}</td>
+      <td>
+        <div class="cells">
+          {% for cell in row.cells %}
+          <span class="cell {{ 'cell-changed' if cell.changed_recently else '' }}
+                       {{ 'cell-soldout' if not cell.is_available else '' }}"
+                title="Last checked {{ cell.last_checked_at.strftime('%d %b %H:%M') }}">
+            <span class="cell-room">{{ cell.room_name }}</span>
+            <span class="cell-price">
+              {% if cell.is_available %}{{ money(cell.price, cell.currency) }}
+              {% else %}sold out{% endif %}
+            </span>
+          </span>
+          {% endfor %}
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted">
+  Highlighted cells changed in the last 24 hours. Prices come from
+  <code>price_series</code> — the last confirmed value per offer, not the
+  latest raw observation.
+</p>
+{% else %}
+<p class="muted">
+  Nothing has been collected for these dates and occupancy yet. Prices appear
+  once a monitor target covering this stay window has run successfully.
+</p>
+{% endif %}
+{% endblock %}

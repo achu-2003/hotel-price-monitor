@@ -1,0 +1,163 @@
+# Local development stack.
+#
+#   python scripts/bootstrap_env.py   # once, generates .env with real secrets
+#   docker compose up --build
+#
+# Dashboard : http://localhost:8000
+# Flower    : http://localhost:5555
+# Mailhog   : http://localhost:8025   (catches all outgoing email locally)
+#
+# For production use docker-compose.prod.yml, which adds Caddy for TLS, drops
+# the host port bindings, and reads secrets from /run/secrets instead of .env.
+
+name: hotel-price-monitor
+
+x-app-env: &app-env
+  env_file: [.env]
+  environment:
+    POSTGRES_HOST: postgres
+    REDIS_HOST: redis
+
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.api
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hotelmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-hotelmonitor_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"   # loopback only: never expose Postgres publicly
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hotelmonitor_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # appendonly: a restart must not silently drop queued price checks.
+    # noeviction: the broker must never evict a task to reclaim memory.
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot: runs migrations, then exits. Everything else waits for it, so the
+  # API can never start against an out-of-date schema.
+  migrate:
+    <<: [*app-build, *app-env]
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: [*app-build, *app-env]
+    ports:
+      - "8000:8000"
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Heavy browser work, isolated: its own image, its own queue, its own memory
+  # cap. A Chromium leak here cannot starve Postgres.
+  worker-browser:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.browser
+    <<: *app-env
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    mem_limit: 4g
+    shm_size: 1gb          # Chromium crashes with the 64MB Docker default
+    restart: unless-stopped
+
+  # Light work: HTTP-only adapters and everything that is not a browser.
+  worker-http:
+    <<: [*app-build, *app-env]
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "-Q", "http", "-c", "8", "-Ofair", "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker-notify:
+    <<: [*app-build, *app-env]
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "-Q", "notify", "-c", "4", "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # SINGLE REPLICA, always. Two beats means every price check runs twice.
+  beat:
+    <<: [*app-build, *app-env]
+    command: ["celery", "-A", "app.workers.celery_app", "beat",
+              "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  flower:
+    <<: [*app-build, *app-env]
+    command: ["celery", "-A", "app.workers.celery_app", "flower",
+              "--port=5555"]
+    ports:
+      - "127.0.0.1:5555:5555"   # loopback only; put it behind auth in prod
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Development only. Catches every outgoing email so notification templates
+  # can be tested without sending anything to a real address.
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  artifacts:

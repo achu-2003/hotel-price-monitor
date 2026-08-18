@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Unmatched rooms · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Rooms waiting to be mapped</h1>
+<p class="muted">
+  These room names appeared on a source and no alias resolved them with
+  enough confidence. The system will not guess: a wrong mapping corrupts a
+  price series silently and indefinitely, while this queue is a visible gap.
+  Mapping one writes a permanent alias, and the same name resolves instantly
+  from then on.
+</p>
+
+<table class="grid">
+  <thead>
+    <tr><th>Hotel</th><th>Name on the site</th><th>Seen</th><th>Best guess</th><th>Map to</th></tr>
+  </thead>
+  <tbody>
+    {% for unmatched, hotel_id, hotel_name, suggested_name in rows %}
+    <tr>
+      <td><a href="/hotels/{{ hotel_id }}">{{ hotel_name }}</a></td>
+      <td>
+        <strong>{{ unmatched.raw_room_name }}</strong>
+        <br><code class="muted">{{ unmatched.normalized_name }}</code>
+      </td>
+      <td class="num">
+        {{ unmatched.occurrence_count }}×
+        <br><span class="muted nowrap">{{ unmatched.last_seen_at.strftime('%d %b') }}</span>
+      </td>
+      <td>
+        {# Recorded as a suggestion, never auto-applied: below the automatic
+           threshold, a near-miss is exactly the case most likely to be wrong. #}
+        {% if suggested_name %}
+          {{ suggested_name }}
+          <span class="muted">{{ '%.0f'|format((unmatched.suggested_confidence or 0) * 100) }}%</span>
+        {% else %}
+          <span class="muted">no candidate</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if is_admin %}
+        <form class="inline resolve-unmatched" data-unmatched-id="{{ unmatched.id }}">
+          <select name="room_type_id" required>
+            <option value="">Choose a room type…</option>
+            {% for room in rooms_by_hotel.get(hotel_id, []) %}
+            <option value="{{ room.id }}"
+              {{ 'selected' if room.id == unmatched.suggested_room_type_id else '' }}>
+              {{ room.name }}
+            </option>
+            {% endfor %}
+          </select>
+          <button type="submit">Map</button>
+        </form>
+        {% if not rooms_by_hotel.get(hotel_id) %}
+        <span class="muted">Add a room type on the hotel page first.</span>
+        {% endif %}
+        {% else %}
+        <span class="muted">admin only</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted">Nothing waiting — every room name resolves.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Notifications · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Notifications</h1>
+<p class="muted">
+  One row is one message to one person. All of a hotel's changes inside a
+  60-second window are batched into a single message — a weekend-wide reprice
+  can produce a hundred changes, and a hundred separate alerts is how the
+  system gets muted.
+</p>
+
+<section>
+  <h2>Recipients</h2>
+  <table class="grid">
+    <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Quiet hours</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      {% for recipient in recipients %}
+      <tr>
+        <td>{{ recipient.name }}</td>
+        <td class="muted">{{ recipient.email or '—' }}</td>
+        <td class="muted">{{ recipient.phone_e164 or '—' }}</td>
+        <td class="muted">
+          {% if recipient.quiet_hours_start %}
+            {{ recipient.quiet_hours_start.strftime('%H:%M') }}–{{ recipient.quiet_hours_end.strftime('%H:%M') }}
+          {% else %}
+            <span title="Falls back to the deployment default">default</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if recipient.is_active %}<span class="pill pill-ok">active</span>
+          {% else %}<span class="pill pill-off">inactive</span>{% endif %}
+        </td>
+        <td>
+          {% if is_admin %}
+          {# Exercising the provider before a real price move depends on it:
+             credentials and templates fail silently until first use. #}
+          <button class="test-notify" data-recipient-id="{{ recipient.id }}" data-channel="email">
+            Send test
+          </button>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No recipients — nothing will be sent to anyone.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Delivery history</h2>
+  <table class="grid">
+    <thead>
+      <tr><th>Created</th><th>To</th><th>Hotel</th><th>Channel</th><th>Status</th><th>Detail</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for notification, recipient_name, hotel_name in notifications %}
+      <tr>
+        <td class="nowrap muted">{{ notification.created_at.strftime('%d %b %H:%M') }}</td>
+        <td>{{ recipient_name }}</td>
+        <td>{{ hotel_name or '—' }}</td>
+        <td>{{ notification.channel }} <span class="muted">{{ notification.provider }}</span></td>
+        <td>
+          <span class="pill pill-{{ {'sent':'ok','delivered':'ok','read':'ok','failed':'stop','queued':'warn'}.get(notification.status.value, 'off') }}">
+            {{ notification.status.value }}
+          </span>
+          {% if notification.scheduled_for %}
+            <span class="pill pill-pending" title="Held for quiet hours or the hourly cap">
+              held → {{ notification.scheduled_for.strftime('%d %b %H:%M') }}
+            </span>
+          {% endif %}
+        </td>
+        <td class="truncate muted">
+          {{ notification.error_detail or notification.subject or '' }}
+        </td>
+        <td>
+          {% if is_admin and notification.status.value == 'failed' %}
+          <button class="resend-notification" data-notification-id="{{ notification.id }}">
+            Resend
+          </button>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Nothing sent in this window.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

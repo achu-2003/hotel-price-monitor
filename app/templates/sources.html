@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Sources · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Sources</h1>
+<p class="muted">
+  A source is a <em>booking platform</em>, not a hotel. A dozen properties can
+  share one eZee or one OTA, so the selectors are worked out once here and
+  every hotel on that platform then needs only a URL. Fix a broken selector
+  once and every hotel using it is fixed.
+</p>
+
+<table class="grid">
+  <thead>
+    <tr><th>Code</th><th>Adapter</th><th>Domain</th><th>Hotels</th><th>Rate limit</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for source in sources %}
+    <tr>
+      <td><strong>{{ source.code }}</strong><br><span class="muted">{{ source.display_name }}</span></td>
+      <td><code>{{ source.adapter_key }}</code></td>
+      <td class="muted truncate">{{ source.base_domain or '—' }}</td>
+      <td class="num">{{ counts.get(source.id, 0) }}</td>
+      <td class="num muted">{{ source.rate_limit_per_min }}/min</td>
+      <td>
+        {% if source.is_usable %}
+          <span class="pill pill-ok">ready</span>
+          <span class="muted">reviewed {{ source.tos_reviewed_at }} by {{ source.tos_reviewed_by }}</span>
+        {% elif source.tos_reviewed_at %}
+          <span class="pill pill-stop">review declined</span>
+        {% else %}
+          {# The compliance gate. The dispatcher's query filters on
+             tos_reviewed_at, so this is structural, not a reminder. #}
+          <span class="pill pill-warn">needs ToS review</span>
+          {% if is_admin %}
+          <form class="inline api-form" style="margin-top:6px"
+                data-endpoint="/api/v1/sources/{{ source.id }}/tos-review"
+                data-method="POST">
+            <input name="reviewed_by" placeholder="Your name" required maxlength="120" size="14">
+            <input name="notes" placeholder="Notes (optional)" size="18">
+            <input type="hidden" name="approve" value="true">
+            <button type="submit">Approve</button>
+          </form>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No sources yet — add one below to get started.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if is_admin %}
+<details class="panel" {% if not sources %}open{% endif %}>
+  <summary>Add a source</summary>
+  <form class="stack api-form" data-endpoint="/api/v1/sources" data-method="POST">
+    <label>Code
+      <input name="code" required maxlength="60" placeholder="ezee">
+      <span class="muted">Short identifier, lowercase. One per booking platform.</span>
+    </label>
+    <label>Display name
+      <input name="display_name" required maxlength="120" placeholder="eZee booking engine">
+    </label>
+    <label>Adapter
+      <select name="adapter_key" required>
+        {% for key in adapter_keys %}
+        <option value="{{ key }}" {{ 'selected' if key == 'playwright_direct_site' else '' }}>{{ key }}</option>
+        {% endfor %}
+      </select>
+      <span class="muted">
+        <code>playwright_direct_site</code> for a hotel's own booking engine ·
+        <code>http_json</code> if it exposes a JSON endpoint ·
+        <code>playwright_ota</code> for an OTA listing ·
+        <code>manual_entry</code> for prices typed by hand
+      </span>
+    </label>
+    <label>Base domain
+      <input name="base_domain" maxlength="200" placeholder="live.ezeereservation.com">
+      <span class="muted">Used for the robots.txt check.</span>
+    </label>
+    <label>Rate limit (requests per minute)
+      <input name="rate_limit_per_min" type="number" min="1" max="120" value="6">
+    </label>
+    <button type="submit">Create source</button>
+    <p class="form-status" hidden></p>
+    <span class="muted">
+      Created disabled. It cannot be fetched until someone records a Terms of
+      Service review above.
+    </span>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

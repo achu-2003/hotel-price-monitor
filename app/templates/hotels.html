@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Hotels · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Hotels</h1>
+
+<form class="filters" method="get" action="/hotels">
+  <label>Search <input type="search" name="q" value="{{ q }}" placeholder="Name contains…"></label>
+  <button type="submit">Filter</button>
+</form>
+
+{% if is_admin %}
+{#
+  Room types are absent from this form on purpose. For a competitor, the site
+  decides what its rooms are called and renames them; they are discovered by
+  the first successful fetch and mapped in the Unmatched queue. Letting an
+  operator invent names here would create room types nothing ever matches.
+#}
+<details class="panel">
+  <summary>Add a hotel</summary>
+  <form class="stack api-form" data-endpoint="/api/v1/hotels" data-method="POST">
+    <label>Name <input name="name" required maxlength="200"></label>
+    <label>Location <input name="location" maxlength="200" placeholder="Yelagiri, Tamil Nadu"></label>
+    <label class="inline">
+      <input type="checkbox" name="is_own_property" value="true"> This is my own property
+    </label>
+    <label>Notes <textarea name="notes" rows="2"></textarea></label>
+    <button type="submit">Create hotel</button>
+    <p class="form-status" hidden></p>
+  </form>
+</details>
+{% endif %}
+
+<table class="grid">
+  <thead>
+    <tr><th>Hotel</th><th>Location</th><th>Targets</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for hotel in hotels %}
+    <tr>
+      <td>
+        <a href="/hotels/{{ hotel.id }}">{{ hotel.name }}</a>
+        {% if hotel.is_own_property %}<span class="pill pill-own">yours</span>{% endif %}
+      </td>
+      <td class="muted">{{ hotel.location or '—' }}</td>
+      <td class="num">{{ target_counts.get(hotel.id, 0) }}</td>
+      <td>
+        {% if hotel.is_active %}<span class="pill pill-ok">active</span>
+        {% else %}<span class="pill pill-off">inactive</span>{% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">No hotels yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

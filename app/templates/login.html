@@ -1,0 +1,34 @@
+{#
+  Standalone page: it must render for someone who is not logged in, so it does
+  not extend base.html (which assumes a user).
+
+  The form posts to the API's /auth/login, which sets the session cookie. One
+  login implementation, one throttle, one audit entry — regardless of whether
+  the caller was a browser or a script.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Hotel Price Monitor</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:,">
+</head>
+<body class="login-body">
+  <form class="login-card" id="login-form" data-next="{{ next|e }}">
+    <h1>Hotel Price Monitor</h1>
+    <p class="muted">Sign in to view prices and manage monitoring.</p>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+    <button type="submit">Sign in</button>
+    <p class="error" id="login-error" hidden></p>
+  </form>
+  <script src="/static/app.js"></script>
+</body>
+</html>

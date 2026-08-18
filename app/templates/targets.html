@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Targets · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Monitor targets</h1>
+<p class="muted">
+  A target says <em>which hotel, on which source, for which stay, how often</em>.
+  It does not name rooms — the site decides what its rooms are called, and they
+  are discovered by the fetch. Intervals are editable here and take effect at
+  the next dispatch sweep, with nothing to restart.
+</p>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Hotel</th><th>Source</th><th>Stay</th><th>Resolves to</th>
+      <th>Guests</th><th>Every</th><th>Next</th><th>Health</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for target, hotel_id, hotel_name, source_code, resolved in rows %}
+    <tr>
+      <td><a href="/hotels/{{ hotel_id }}">{{ hotel_name }}</a></td>
+      <td class="muted">{{ source_code }}</td>
+      <td>
+        {% if target.date_strategy.value == 'fixed' %}
+          {{ target.fixed_check_in }} → {{ target.fixed_check_out }}
+        {% else %}
+          +{{ target.lead_time_days }}d / {{ target.length_of_stay_nights }}n
+        {% endif %}
+      </td>
+      <td class="nowrap muted">
+        {#
+          A rolling window looks static in the configuration and means a
+          different night every day. Showing today's absolute dates beside it
+          is what stops that being misread. Resolved by the route through
+          services/dates.py, so this column can never disagree with what the
+          dispatcher will actually fetch.
+        #}
+        {% if resolved %}
+          {{ resolved.check_in }} → {{ resolved.check_out }}
+        {% else %}
+          <span title="This stay window has passed">expired</span>
+        {% endif %}
+      </td>
+      <td class="num">{{ target.adults }}A{{ '+%dC'|format(target.children) if target.children else '' }}</td>
+      <td class="num">{{ target.interval_minutes }}m</td>
+      <td class="muted nowrap">
+        {{ target.next_run_at.strftime('%d %b %H:%M') if target.next_run_at else '—' }}
+      </td>
+      <td>
+        {% if not target.is_enabled %}<span class="pill pill-off">disabled</span>
+        {% elif target.circuit_state.value != 'closed' %}<span class="pill pill-stop">{{ target.circuit_state.value }}</span>
+        {% elif target.is_stale(now) %}<span class="pill pill-warn">stale</span>
+        {% else %}<span class="pill pill-ok">ok</span>{% endif %}
+      </td>
+      <td class="nowrap">
+        {% if is_admin %}
+        <button class="run-now" data-target-id="{{ target.id }}">Run now</button>
+        <span class="run-status" data-for="{{ target.id }}"></span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="muted">No targets configured.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,22 @@
+{#
+  Polled by app.js after a manual run. A browser fetch takes 20-40 seconds, so
+  the button gets a 202 and this fragment reports what happened.
+
+  "skipped" is a normal outcome, not a failure: it means a previous run of the
+  same hotel and stay window was still in flight and the lock held.
+#}
+{% if run is none %}
+  <span class="pill pill-off">unknown run</span>
+{% elif run.status.value == 'running' %}
+  <span class="pill pill-warn">running…</span>
+{% elif run.status.value == 'success' %}
+  <span class="pill pill-ok">
+    {{ run.offers_found }} offers,
+    {{ run.changes_detected }} change{{ '' if run.changes_detected == 1 else 's' }}
+    {%- if run.offers_unmatched %}, {{ run.offers_unmatched }} unmatched{% endif %}
+  </span>
+{% elif run.status.value == 'skipped' %}
+  <span class="pill pill-off" title="{{ run.error_summary }}">skipped — already running</span>
+{% else %}
+  <span class="pill pill-stop" title="{{ run.error_summary }}">failed</span>
+{% endif %}

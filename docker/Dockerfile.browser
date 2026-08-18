@@ -1,0 +1,49 @@
+# Celery worker for the "browser" queue.
+#
+# Built on Microsoft's Playwright image because it already carries the exact
+# system libraries Chromium needs. Installing those by hand on top of a slim
+# image is possible but is a recurring source of "works locally, missing
+# libnss3 in production" failures.
+#
+# Pin the image tag to the SAME version as the playwright package in
+# requirements.txt. A mismatch between the driver and the bundled browser
+# fails at runtime, not at build time.
+FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# The base image ships the browsers, but re-running install is cheap and makes
+# the image self-consistent if the pinned version ever moves.
+RUN playwright install chromium --with-deps
+
+COPY alembic.ini .
+COPY alembic/ ./alembic/
+COPY app/ ./app/
+COPY scripts/ ./scripts/
+
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /data/artifacts \
+    && chown -R appuser:appuser /data /app
+USER appuser
+
+# Why these flags:
+#   -Q browser              this worker takes ONLY heavy browser work
+#   -c 3                    ~400MB of Chromium each; 3 fits comfortably in 8GB
+#   --max-tasks-per-child   Chromium leaks over hundreds of runs; recycling the
+#                           child process is the cheap, reliable fix
+#   -Ofair                  do not pre-assign tasks to a busy worker; page load
+#                           times vary wildly between sites
+CMD ["celery", "-A", "app.workers.celery_app", "worker", \
+     "-Q", "browser", \
+     "-c", "3", \
+     "--max-tasks-per-child", "20", \
+     "-Ofair", \
+     "--loglevel", "INFO"]

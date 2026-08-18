@@ -1,0 +1,318 @@
+"""The primary adapter: a competitor's own booking engine, driven by Chromium.
+
+This is where most of the project's value comes from. A hotel's own site names
+its rooms the way the hotel names them, states the meal plan, and says whether
+a rate is refundable — the three things an aggregator flattens away.
+
+Two extraction strategies, tried in this order:
+
+1. **The booking engine's own JSON**, captured from the network while the page
+   loads. Configure ``json_url_contains`` and the adapter uses the response the
+   page itself fetched. This is the outcome to aim for: it survives redesigns.
+2. **The DOM**, via per-hotel selectors. Works everywhere, breaks whenever the
+   site is restyled — which is why a break raises ``SchemaDriftError`` with a
+   screenshot rather than writing a guessed number.
+
+All of it is configuration on ``hotel_sources.adapter_config``:
+
+.. code-block:: yaml
+
+    url_template: "https://book.example.com/search?in={check_in}&out={check_out}&ad={adults}"
+    json_url_contains: ["/api/availability"]     # strategy 1
+    rooms_path: "data.rooms"
+    fields: {room_name: "name", price_inclusive: "rate.total"}
+
+    wait_for: ".room-card"                        # strategy 2
+    room_card: ".room-card"
+    selectors:
+      room_name: ".room-card__title"
+      price: ".room-card__price"
+      meal_plan: ".room-card__board"
+      sold_out: ".room-card--unavailable"
+    sold_out_markers: ["No rooms available for these dates"]
+"""
+from __future__ import annotations
+
+import time
+
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout
+
+from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
+from app.adapters.mapping import dig, offer_from_mapping, render_template
+from app.adapters.parsing import (
+    detect_currency,
+    looks_sold_out,
+    parse_price,
+    parse_price_or_none,
+    parse_rooms_left,
+)
+from app.adapters.playwright_base import BrowserFetch, build_user_agent, open_page
+from app.adapters.robots import RobotsChecker
+from app.config import get_settings
+from app.core.errors import AdapterConfigError, SchemaDriftError
+from app.core.logging import get_logger
+from app.core.ratelimit import get_redis
+
+log = get_logger("adapter.direct_site")
+
+#: How long to wait for the room list after the page reports domcontentloaded.
+#: Booking engines fetch availability after first paint, so waiting for the
+#: rooms selector is what actually decides whether we saw the prices.
+_ROOMS_WAIT_MS = 25_000
+
+
+class PlaywrightDirectSiteAdapter:
+    """Reads prices from a hotel's own booking engine."""
+
+    adapter_key = "playwright_direct_site"
+    queue = "browser"
+
+    def fetch(self, context: FetchContext) -> FetchResult:
+        settings = get_settings()
+        config = context.config or {}
+
+        url = self._resolve_url(context, config)
+
+        RobotsChecker(
+            build_user_agent(settings.browser_user_agent_suffix),
+            cache=_cache_or_none(),
+            enabled=settings.respect_robots_txt,
+        ).assert_allowed(url)
+
+        started = time.monotonic()
+        label = f"hs{context.hotel_source_id}"
+
+        with open_page(
+            url,
+            locale=context.locale,
+            timezone=context.timezone,
+            artifact_label=label,
+        ) as fetch:
+            self._wait_for_rooms(fetch, config)
+
+            offers, sold_out = self._extract_json(fetch, config, context)
+            if offers is None:
+                offers, sold_out = self._extract_dom(fetch, config, context)
+
+        return FetchResult(
+            offers=offers,
+            sold_out_detected=sold_out,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            source_url=url,
+        )
+
+    # -- setup -------------------------------------------------------
+    def _resolve_url(self, context: FetchContext, config: dict) -> str:
+        template = config.get("url_template") or context.url
+        if not template:
+            raise AdapterConfigError(
+                "playwright_direct_site needs a url on the hotel_source row or "
+                "a url_template in adapter_config."
+            )
+        return render_template(
+            template,
+            check_in=context.check_in,
+            check_out=context.check_out,
+            nights=context.stay.nights,
+            adults=context.adults,
+            children=context.children,
+            rooms=context.rooms,
+            currency=context.currency,
+            external_id=context.external_id or "",
+        )
+
+    def _wait_for_rooms(self, fetch: BrowserFetch, config: dict) -> None:
+        """Wait for the room list, tolerating its absence.
+
+        A timeout here is NOT raised: the page may legitimately be showing "no
+        rooms available", which the extraction step is better placed to judge.
+        Raising here would report a sold-out weekend as a broken adapter.
+        """
+        selector = config.get("wait_for") or config.get("room_card")
+        if not selector:
+            return
+        try:
+            fetch.page.wait_for_selector(
+                selector, timeout=int(config.get("wait_timeout_ms", _ROOMS_WAIT_MS))
+            )
+        except PlaywrightTimeout:
+            log.info("rooms_selector_never_appeared", selector=selector)
+
+    # -- strategy 1: the page's own JSON -----------------------------
+    def _extract_json(
+        self, fetch: BrowserFetch, config: dict, context: FetchContext
+    ) -> tuple[list[NormalizedOffer] | None, bool]:
+        """Returns ``(None, False)`` when this strategy is not configured or the
+        response was not seen, so the caller falls through to the DOM."""
+        fragments = config.get("json_url_contains")
+        if not fragments:
+            return None, False
+
+        payload = fetch.find_json(*fragments)
+        if payload is None:
+            log.info("availability_json_not_seen", fragments=fragments)
+            return None, False
+
+        mapping = config.get("fields") or {}
+        if not mapping.get("room_name"):
+            raise AdapterConfigError(
+                "json_url_contains is set but fields.room_name is missing; the "
+                "captured payload cannot be mapped to offers."
+            )
+
+        nodes = dig(payload, config.get("rooms_path"), None)
+        if isinstance(nodes, dict):
+            nodes = list(nodes.values())
+        if not isinstance(nodes, list):
+            log.info("json_rooms_path_missed", path=config.get("rooms_path"))
+            return None, False
+        if not nodes:
+            return ([], True) if config.get("sold_out_when_empty") else (None, False)
+
+        offers = [
+            offer_from_mapping(node, mapping, default_currency=context.currency)
+            for node in nodes
+        ]
+        log.info("offers_from_json", count=len(offers), hotel=context.hotel_name)
+        return offers, bool(offers) and not any(o.is_available for o in offers)
+
+    # -- strategy 2: the DOM -----------------------------------------
+    def _extract_dom(
+        self, fetch: BrowserFetch, config: dict, context: FetchContext
+    ) -> tuple[list[NormalizedOffer], bool]:
+        selectors = config.get("selectors") or {}
+        card_selector = config.get("room_card")
+        if not card_selector or not selectors.get("room_name") or not selectors.get("price"):
+            raise AdapterConfigError(
+                "DOM extraction needs room_card plus selectors.room_name and "
+                "selectors.price in adapter_config. Run scripts/probe_site.py "
+                "against this hotel to find them."
+            )
+
+        page = fetch.page
+        cards = page.query_selector_all(card_selector)
+
+        if not cards:
+            # Nothing found. The page either says "sold out" or it has been
+            # redesigned, and the difference decides whether we write a
+            # business event or raise an alert. We never guess between them.
+            body = _safe_text(page, "body")[:4000]
+            markers = config.get("sold_out_markers") or []
+            if any(m.lower() in body.lower() for m in markers) or looks_sold_out(body):
+                log.info("sold_out_detected", hotel=context.hotel_name)
+                return [], True
+            raise SchemaDriftError(
+                f"No elements matched room_card selector {card_selector!r} and "
+                f"the page does not say it is sold out. This is almost "
+                f"certainly a redesign — see the saved screenshot.",
+                context={"selector": card_selector, "hotel": context.hotel_name},
+            )
+
+        offers: list[NormalizedOffer] = []
+        for card in cards:
+            try:
+                offers.append(self._offer_from_card(card, selectors, context))
+            except SchemaDriftError as exc:
+                # One malformed card must not discard the other four rooms that
+                # parsed cleanly. The gap is visible; a lost page load is not.
+                log.warning("room_card_skipped", reason=str(exc), hotel=context.hotel_name)
+
+        if not offers:
+            raise SchemaDriftError(
+                f"{len(cards)} room cards matched but none yielded a price. "
+                f"The price selector {selectors.get('price')!r} is stale.",
+                context={"cards": len(cards), "hotel": context.hotel_name},
+            )
+
+        log.info("offers_from_dom", count=len(offers), hotel=context.hotel_name)
+        return offers, not any(o.is_available for o in offers)
+
+    def _offer_from_card(self, card, selectors: dict, context: FetchContext) -> NormalizedOffer:
+        name = _text_in(card, selectors["room_name"])
+        if not name:
+            raise SchemaDriftError("Room card carried no name")
+
+        sold_out_selector = selectors.get("sold_out")
+        card_text = _element_text(card)
+        is_available = not (
+            (sold_out_selector and card.query_selector(sold_out_selector) is not None)
+            or looks_sold_out(card_text)
+        )
+
+        price_text = _text_in(card, selectors["price"])
+        price = None
+        if is_available:
+            # parse_price raises rather than returning None: a listed room with
+            # an unreadable price is drift, and a guessed number is worse than
+            # a gap.
+            price = parse_price(price_text, field_name=f"price of {name[:40]!r}")
+
+        exclusive_text = _text_in(card, selectors.get("price_exclusive"))
+        taxes_text = _text_in(card, selectors.get("taxes_fees"))
+
+        return NormalizedOffer(
+            raw_room_name=name,
+            price_inclusive=price,
+            price_exclusive=parse_price_or_none(exclusive_text, field_name="price_exclusive"),
+            taxes_fees=parse_price_or_none(taxes_text, field_name="taxes_fees"),
+            currency=detect_currency(price_text or "", default=context.currency),
+            meal_plan=_text_in(card, selectors.get("meal_plan")),
+            refundable=_refundable(card, selectors),
+            is_available=is_available,
+            rooms_left=parse_rooms_left(_text_in(card, selectors.get("rooms_left"))),
+            raw_payload={"card_text": card_text[:1000]},
+        )
+
+
+def _refundable(card, selectors: dict) -> bool | None:
+    """Tri-state on purpose.
+
+    "Unknown refundability" and "non-refundable" are different offers and must
+    not collide in the offer key, so an absent selector stays ``None``.
+    """
+    selector = selectors.get("refundable")
+    if not selector:
+        return None
+    text = _text_in(card, selector)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if "non-refundable" in lowered or "non refundable" in lowered:
+        return False
+    if "refundable" in lowered or "free cancel" in lowered:
+        return True
+    return None
+
+
+def _text_in(element, selector: str | None) -> str | None:
+    if not selector:
+        return None
+    try:
+        child = element.query_selector(selector)
+    except PlaywrightError:
+        return None
+    if child is None:
+        return None
+    return _element_text(child) or None
+
+
+def _element_text(element) -> str:
+    try:
+        return " ".join((element.inner_text() or "").split())
+    except PlaywrightError:
+        return ""
+
+
+def _safe_text(page, selector: str) -> str:
+    try:
+        return page.inner_text(selector, timeout=2_000) or ""
+    except PlaywrightError:
+        return ""
+
+
+def _cache_or_none():
+    try:
+        return get_redis()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("robots_cache_unavailable", error=str(exc))
+        return None

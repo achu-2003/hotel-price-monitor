@@ -1,0 +1,102 @@
+# Development overrides.
+#
+# Docker Compose merges this file into docker-compose.yml automatically, so
+# `docker compose up` picks it up with no extra flags. Production uses
+# `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`, which
+# names its files explicitly and therefore never sees this one.
+#
+# WHAT THIS CHANGES, AND WHY
+# ==========================
+# The base compose file bakes the source into the image (`COPY app/ ./app/`),
+# which is correct for a deploy: the image is then a complete, immutable
+# artifact. It is wrong while developing, because every one-line edit needs a
+# rebuild before you can see it.
+#
+# So here the source is bind-mounted over the copy, and the API runs uvicorn
+# with --reload instead of gunicorn. Edit a file in VS Code, save, and the API
+# has already reloaded by the time you switch windows.
+#
+# Only ./app, ./alembic and ./scripts are mounted — not the whole directory.
+# Mounting `.` would push your Windows `.venv` (with its Windows binaries and
+# Python 3.14 packages) into a Linux container, which at best wastes I/O and
+# at worst shadows something.
+
+services:
+  api:
+    # --reload watches the mounted source. gunicorn with multiple workers is
+    # the right production server and the wrong development one: it does not
+    # reload, and a traceback gets buried in whichever worker happened to
+    # handle the request.
+    command:
+      ["uvicorn", "app.main:app",
+       "--host", "0.0.0.0", "--port", "8000",
+       "--reload", "--reload-dir", "/app/app"]
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      - artifacts:/data/artifacts
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+
+  # Workers do NOT hot-reload: Celery has no equivalent of --reload, and
+  # restarting a worker mid-fetch would abandon a browser session. The source
+  # is still mounted so a restart is a second rather than a rebuild:
+  #
+  #     docker compose restart worker-browser
+  #
+  # Task code, adapters and the ingest pipeline all live behind that restart.
+  worker-browser:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - artifacts:/data/artifacts
+    environment:
+      LOG_LEVEL: DEBUG
+      # One browser instead of three. On a development machine that is also
+      # running an editor and a browser of your own, three Chromiums at ~400MB
+      # each is what makes everything else feel slow.
+      BROWSER_MAX_CONCURRENCY: "1"
+    command:
+      ["celery", "-A", "app.workers.celery_app", "worker",
+       "-Q", "browser", "-c", "1", "--max-tasks-per-child", "20",
+       "-Ofair", "--loglevel", "INFO"]
+
+  worker-http:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+    environment:
+      LOG_LEVEL: DEBUG
+
+  worker-notify:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+    environment:
+      LOG_LEVEL: DEBUG
+
+  beat:
+    volumes:
+      - ./app:/app/app
+    environment:
+      LOG_LEVEL: DEBUG
+
+  # Migrations read app/config.py and alembic/, both of which you edit.
+  migrate:
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+
+  postgres:
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates a SECOND database for the integration suite, so running the
+      # tests cannot destroy the prices you have been collecting all week.
+      #
+      # Scripts in this directory run only when the data directory is first
+      # initialised. If pgdata already exists the script is ignored, and the
+      # test database has to be created by hand — see docs/RUNBOOK.md.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
