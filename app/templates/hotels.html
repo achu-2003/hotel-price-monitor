@@ -27,13 +27,17 @@
     <label>Notes <textarea name="notes" rows="2"></textarea></label>
     <button type="submit">Create hotel</button>
     <p class="form-status" hidden></p>
+    <span class="muted">
+      Next you paste its booking URL on the hotel's own page — the booking
+      engine, price mapping and rooms are all worked out from there.
+    </span>
   </form>
 </details>
 {% endif %}
 
 <table class="grid">
   <thead>
-    <tr><th>Hotel</th><th>Location</th><th>Targets</th><th>Status</th></tr>
+    <tr><th>Hotel</th><th>Location</th><th>Targets</th><th>Status</th>{% if is_admin %}<th></th>{% endif %}</tr>
   </thead>
   <tbody>
     {% for hotel in hotels %}
@@ -48,9 +52,25 @@
         {% if hotel.is_active %}<span class="pill pill-ok">active</span>
         {% else %}<span class="pill pill-off">inactive</span>{% endif %}
       </td>
+      {% if is_admin %}
+      {#
+        Edit opens the panel on the hotel's own page rather than editing in
+        place. Renaming is rare and the same panel holds the booking link and
+        the delete, so one place beats a row that grows a form.
+      #}
+      <td class="nowrap row-actions">
+        <a href="/hotels/{{ hotel.id }}#hotel-details">Edit</a>
+        {% if hotel.is_active %}
+        <button class="deactivate-hotel" data-hotel-id="{{ hotel.id }}"
+                data-hotel-name="{{ hotel.name }}">Stop</button>
+        {% else %}
+        <button class="reactivate-hotel" data-hotel-id="{{ hotel.id }}">Resume</button>
+        {% endif %}
+      </td>
+      {% endif %}
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">No hotels yet.</td></tr>
+    <tr><td colspan="{{ 5 if is_admin else 4 }}" class="muted">No hotels yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

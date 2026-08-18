@@ -23,14 +23,17 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Cookie, Depends, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
+from app.adapters.engines import known_engines
 from app.api.deps import SESSION_COOKIE, DbSession
+from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.security import decode_token
 from app.db.models import (
@@ -60,6 +63,32 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 # and reimplementing that in Jinja would be a second place to get it wrong.
 templates.env.globals["money"] = money
 templates.env.globals["now"] = lambda: datetime.now(UTC)
+
+
+def _localtime(value, fmt: str = "%d %b %H:%M") -> str:
+    """Render a timestamp in the deployment's timezone, not UTC.
+
+    Everything is stored timezone-aware in UTC, which is correct. Showing it
+    that way is not: this system watches hotels in Tamil Nadu, and a Health tab
+    reporting a failure at 09:05 when the operator's clock says 14:35 makes
+    every incident harder to place. Rendering server-side in the configured
+    zone also means the same string appears in the dashboard and in an alert
+    email, rather than the two disagreeing.
+    """
+    if value is None:
+        return "—"
+    # A plain time (quiet hours) is already expressed in the recipient's own
+    # zone and has no date to convert against, so it is rendered as-is.
+    if not isinstance(value, datetime):
+        return value.strftime(fmt)
+    zone = ZoneInfo(get_settings().timezone)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(zone).strftime(fmt)
+
+
+templates.env.filters["localtime"] = _localtime
+templates.env.globals["tz"] = get_settings().timezone
 
 
 class NotLoggedIn(Exception):
@@ -96,11 +125,40 @@ def _redirect_to_login(request: Request) -> RedirectResponse:
     )
 
 
-def _render(request: Request, user: User, template: str, **context) -> HTMLResponse:
+async def _render(
+    request: Request, user: User, session, template: str, **context
+) -> HTMLResponse:
+    """Render a page, with the "needs attention" count every screen shows.
+
+    Computed centrally rather than per route: a nav badge that some pages
+    forget to populate is worse than none, because it silently reads zero.
+    Four cheap counts, and they are the only things that ever require a human.
+    """
+    now = datetime.now(UTC)
+    targets = (
+        await session.scalars(select(MonitorTarget).where(MonitorTarget.is_enabled.is_(True)))
+    ).all()
+    attention = {
+        "errors": await session.scalar(
+            select(func.count(MonitoringError.id)).where(MonitoringError.resolved_at.is_(None))
+        ) or 0,
+        "unmatched": await session.scalar(
+            select(func.count(UnmatchedOffer.id)).where(UnmatchedOffer.resolved_at.is_(None))
+        ) or 0,
+        "stale": sum(1 for t in targets if t.is_stale(now)),
+        "paused": sum(1 for t in targets if t.circuit_state != CircuitState.CLOSED),
+    }
+    attention["total"] = sum(attention.values())
+
     return templates.TemplateResponse(
         request=request,
         name=template,
-        context={"user": user, "is_admin": user.role.value == "admin", **context},
+        context={
+            "user": user,
+            "is_admin": user.role.value == "admin",
+            "attention": attention,
+            **context,
+        },
     )
 
 
@@ -165,39 +223,26 @@ async def overview(request: Request, user: DashUser, session: DbSession):
         )
     ).all()
 
-    failures = (
-        await session.execute(
-            select(MonitoringError, Hotel.name)
-            .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
-            .where(MonitoringError.resolved_at.is_(None))
-            .order_by(MonitoringError.occurred_at.desc())
-            .limit(10)
-        )
-    ).all()
 
+    last_success = await session.scalar(
+        select(func.max(MonitorTarget.last_success_at))
+    )
     summary = {
         "hotels_active": await session.scalar(
             select(func.count(Hotel.id)).where(Hotel.is_active.is_(True))
         ),
-        "targets_enabled": len(targets),
-        "circuits_open": sum(1 for t in targets if t.circuit_state == CircuitState.OPEN),
-        "stale_targets": sum(1 for t in targets if t.is_stale(now)),
         "changes_24h": await session.scalar(
             select(func.count(PriceChange.id)).where(PriceChange.changed_at >= day_ago)
         ),
-        "unmatched": await session.scalar(
-            select(func.count(UnmatchedOffer.id)).where(UnmatchedOffer.resolved_at.is_(None))
-        ),
-        "unresolved_errors": await session.scalar(
-            select(func.count(MonitoringError.id)).where(MonitoringError.resolved_at.is_(None))
-        ),
+        # Rendered here rather than in the template so it uses the same
+        # timezone conversion as every other timestamp on the page.
+        "last_check": _localtime(last_success, "%d %b %H:%M") if last_success else None,
     }
 
-    return _render(
-        request, user, "overview.html",
+    return await _render(
+        request, user, session, "overview.html",
         summary=summary,
         changes=recent_changes,
-        failures=failures,
     )
 
 
@@ -264,8 +309,8 @@ async def matrix(
         prices = [c["price"] for c in entry["cells"] if c["is_available"] and c["price"]]
         entry["cheapest"] = min(prices) if prices else None
 
-    return _render(
-        request, user, "matrix.html",
+    return await _render(
+        request, user, session, "matrix.html",
         rows=sorted(grouped.values(), key=lambda e: e["hotel"].name),
         check_in=check_in,
         check_out=check_out,
@@ -295,8 +340,8 @@ async def hotels_page(
             )
         ).all()
     )
-    return _render(
-        request, user, "hotels.html", hotels=hotels, target_counts=target_counts, q=q or ""
+    return await _render(
+        request, user, session, "hotels.html", hotels=hotels, target_counts=target_counts, q=q or ""
     )
 
 
@@ -356,16 +401,36 @@ async def hotel_detail(
     all_sources = (await session.scalars(select(Source).order_by(Source.code))).all()
     attached_ids = {hs.source_id for hs, _ in sources}
 
-    return _render(
-        request, user, "hotel_detail.html",
+    return await _render(
+        request, user, session, "hotel_detail.html",
         hotel=hotel, sources=sources, rooms=rooms, targets=targets,
         prices=prices, runs=runs, now=datetime.now(UTC),
         all_sources=all_sources, attached_ids=attached_ids,
         today=local_today(),
+        known_engines=known_engines(),
     )
 
 
-# -- sources ---------------------------------------------------------
+# -- retired screens -------------------------------------------------
+# Kept as redirects rather than deleted: an operator with a bookmark should
+# land somewhere useful, not on a 404 that looks like a broken deploy.
+@router.get("/health-tab")
+async def health_tab_redirect():
+    return RedirectResponse(url="/attention", status_code=307)
+
+
+@router.get("/unmatched")
+async def unmatched_redirect():
+    return RedirectResponse(url="/attention", status_code=307)
+
+
+@router.get("/targets")
+async def targets_redirect():
+    """Per-hotel monitoring lives on the hotel page; problems live in Attention."""
+    return RedirectResponse(url="/hotels", status_code=307)
+
+
+# -- sources (no longer in the nav; engine is detected from the URL) --
 @router.get("/sources", response_class=HTMLResponse)
 async def sources_page(request: Request, user: DashUser, session: DbSession):
     """Booking platforms, and their Terms of Service reviews.
@@ -388,8 +453,8 @@ async def sources_page(request: Request, user: DashUser, session: DbSession):
     )
     from app.adapters import registry
 
-    return _render(
-        request, user, "sources.html",
+    return await _render(
+        request, user, session, "sources.html",
         sources=rows, counts=counts, adapter_keys=registry.available_keys(),
     )
 
@@ -427,40 +492,132 @@ async def changes_page(
         await session.scalars(select(Hotel).where(Hotel.is_active.is_(True)).order_by(Hotel.name))
     ).all()
 
-    return _render(
-        request, user, "changes.html",
+    return await _render(
+        request, user, session, "changes.html",
         changes=rows, hotels=hotels, hotel_id=hotel_id, hours=hours,
     )
 
 
-# -- health ----------------------------------------------------------
-@router.get("/health-tab", response_class=HTMLResponse)
-async def health_page(request: Request, user: DashUser, session: DbSession):
-    """Errors grouped by hotel and class, plus every stale or paused target.
+# -- in-app change popups --------------------------------------------
+@router.get("/changes/recent")
+async def changes_recent(
+    user: DashUser,
+    session: DbSession,
+    since_id: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=8, ge=1, le=25),
+) -> JSONResponse:
+    """Confirmed changes newer than ``since_id``, for the on-screen popup.
 
-    Silence is listed alongside errors on purpose: a target that stopped
-    checking without failing is the expensive case, and it would otherwise be
-    invisible on a screen that only showed exceptions.
+    WHY A CURSOR AND NOT ``price_changes.notified``
+    ===============================================
+    ``notified`` belongs to the email/WhatsApp dispatcher, which sets it even
+    when no recipient is assigned to the hotel. Reading it here would put the
+    popup and the dispatcher in a race over one flag, and whichever ran first
+    would silence the other. A cursor held by the browser keeps them
+    independent: switching notifications on later changes nothing here, and a
+    change can legitimately be shown on two screens at once.
+
+    The first poll of a browser sends no cursor and is answered with the
+    current head and nothing else, so opening the dashboard after a busy night
+    does not stack up forty toasts nobody asked for.
+    """
+    if user is None:
+        # 401 rather than the usual redirect: this is fetched, not navigated
+        # to, and an HTML login form parsed as JSON is a confusing dead end.
+        return JSONResponse({"detail": "not authenticated"}, status_code=401)
+
+    head = await session.scalar(select(func.max(PriceChange.id))) or 0
+    if since_id is None or since_id >= head:
+        return JSONResponse({"cursor": head, "alerts": [], "more": 0})
+
+    rows = (
+        await session.execute(
+            select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
+                   PriceSeries.check_out)
+            .join(Hotel, PriceChange.hotel_id == Hotel.id)
+            .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
+            .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
+            .where(PriceChange.id > since_id, PriceChange.id <= head)
+            .order_by(PriceChange.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    total = await session.scalar(
+        select(func.count(PriceChange.id)).where(
+            PriceChange.id > since_id, PriceChange.id <= head
+        )
+    ) or 0
+
+    return JSONResponse(
+        {
+            "cursor": head,
+            # A market-wide reprice can confirm eighty changes in one cycle.
+            # Eighty toasts is the same as none; the surplus becomes one line
+            # pointing at the Changes page.
+            "more": max(0, total - len(rows)),
+            # Oldest first: they stack downward, and reading top to bottom
+            # should follow the clock.
+            "alerts": [_popup_payload(*row) for row in reversed(rows)],
+        }
+    )
+
+
+def _popup_payload(change, hotel_name, room_name, check_in, check_out) -> dict:
+    """One toast, with every string already formatted.
+
+    Prices are rendered here rather than in JavaScript because ``money``
+    already knows about Indian digit grouping and half-rupee rates, and a
+    second implementation in the browser is a second place for ₹1,23,456 to
+    come out as ₹123,456.
+    """
+    direction = change.direction.value
+    return {
+        "id": change.id,
+        "hotel_id": change.hotel_id,
+        "hotel": hotel_name,
+        "room": room_name or "—",
+        "stay": f"{check_in} → {check_out}" if check_in and check_out else "",
+        "direction": direction,
+        "was": money(change.old_price, change.currency),
+        # Sold out is a state, not a price of zero — the same distinction the
+        # comparison state machine makes.
+        "now": (
+            "sold out"
+            if direction == "became_unavailable"
+            else money(change.new_price, change.currency)
+        ),
+        "delta": (
+            None
+            if not change.delta
+            else ("+" if direction == "increase" else "−")
+            + money(abs(change.delta), change.currency)
+        ),
+        "delta_pct": (
+            None if change.delta_pct is None else f"{abs(change.delta_pct):.1f}%"
+        ),
+        "when": _localtime(change.changed_at, "%d %b %H:%M"),
+    }
+
+
+# -- attention -------------------------------------------------------
+@router.get("/attention", response_class=HTMLResponse)
+async def attention_page(request: Request, user: DashUser, session: DbSession):
+    """Everything waiting on a person, in one place.
+
+    Health and Unmatched used to be separate screens listing the same kind of
+    thing: work only a human can do. Splitting them meant two tabs to check and
+    two chances to forget one.
+
+    Ordered by cost of ignoring, not by loudness. "Gone quiet" leads because a
+    target that stopped checking without failing looks perfectly healthy
+    everywhere else while the prices silently freeze.
     """
     if user is None:
         return _redirect_to_login(request)
 
     now = datetime.now(UTC)
-    errors = (
-        await session.execute(
-            select(MonitoringError, Hotel.name)
-            .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
-            .where(MonitoringError.resolved_at.is_(None))
-            .order_by(MonitoringError.occurred_at.desc())
-            .limit(200)
-        )
-    ).all()
 
-    by_class: dict[str, int] = {}
-    for error, _ in errors:
-        by_class[error.error_class.value] = by_class.get(error.error_class.value, 0) + 1
-
-    targets = (
+    target_rows = (
         await session.execute(
             select(MonitorTarget, Hotel.id, Hotel.name)
             .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
@@ -468,31 +625,13 @@ async def health_page(request: Request, user: DashUser, session: DbSession):
             .where(MonitorTarget.is_enabled.is_(True))
         )
     ).all()
-
-    stale = [(t, hid, name) for t, hid, name in targets if t.is_stale(now)]
+    stale = [(t, hid, name) for t, hid, name in target_rows if t.is_stale(now)]
     paused = [
-        (t, hid, name) for t, hid, name in targets
+        (t, hid, name) for t, hid, name in target_rows
         if t.circuit_state != CircuitState.CLOSED
     ]
 
-    return _render(
-        request, user, "health.html",
-        errors=errors, by_class=by_class, stale=stale, paused=paused, now=now,
-    )
-
-
-# -- unmatched rooms -------------------------------------------------
-@router.get("/unmatched", response_class=HTMLResponse)
-async def unmatched_page(request: Request, user: DashUser, session: DbSession):
-    """The mapping queue: raw room names nothing resolved.
-
-    Each line is a price deliberately not recorded rather than a series
-    possibly corrupted. Clearing one takes a click and fixes it for good.
-    """
-    if user is None:
-        return _redirect_to_login(request)
-
-    rows = (
+    unmatched = (
         await session.execute(
             select(UnmatchedOffer, Hotel.id, Hotel.name, RoomType.name)
             .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
@@ -500,12 +639,12 @@ async def unmatched_page(request: Request, user: DashUser, session: DbSession):
             .outerjoin(RoomType, UnmatchedOffer.suggested_room_type_id == RoomType.id)
             .where(UnmatchedOffer.resolved_at.is_(None))
             .order_by(UnmatchedOffer.occurrence_count.desc())
-            .limit(200)
+            .limit(100)
         )
     ).all()
 
-    hotel_ids = {hid for _, hid, _, _ in rows}
     rooms_by_hotel: dict[int, list] = {}
+    hotel_ids = {hid for _, hid, _, _ in unmatched}
     if hotel_ids:
         for room in (
             await session.scalars(
@@ -516,8 +655,24 @@ async def unmatched_page(request: Request, user: DashUser, session: DbSession):
         ).all():
             rooms_by_hotel.setdefault(room.hotel_id, []).append(room)
 
-    return _render(
-        request, user, "unmatched.html", rows=rows, rooms_by_hotel=rooms_by_hotel
+    errors = (
+        await session.execute(
+            select(MonitoringError, Hotel.name)
+            .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
+            .where(MonitoringError.resolved_at.is_(None))
+            .order_by(MonitoringError.occurred_at.desc())
+            .limit(100)
+        )
+    ).all()
+
+    by_class: dict[str, int] = {}
+    for error, _ in errors:
+        by_class[error.error_class.value] = by_class.get(error.error_class.value, 0) + 1
+
+    return await _render(
+        request, user, session, "attention.html",
+        stale=stale, paused=paused, unmatched=unmatched,
+        rooms_by_hotel=rooms_by_hotel, errors=errors, by_class=by_class, now=now,
     )
 
 
@@ -542,51 +697,13 @@ async def notifications_page(
     ).all()
     recipients = (await session.scalars(select(Recipient).order_by(Recipient.name))).all()
 
-    return _render(
-        request, user, "notifications.html",
+    return await _render(
+        request, user, session, "notifications.html",
         notifications=rows, recipients=recipients, hours=hours,
     )
 
 
 # -- targets ---------------------------------------------------------
-@router.get("/targets", response_class=HTMLResponse)
-async def targets_page(request: Request, user: DashUser, session: DbSession):
-    if user is None:
-        return _redirect_to_login(request)
-
-    rows = (
-        await session.execute(
-            select(MonitorTarget, Hotel.id, Hotel.name, Source.code)
-            .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
-            .join(Hotel, HotelSource.hotel_id == Hotel.id)
-            .join(Source, HotelSource.source_id == Source.id)
-            .order_by(Hotel.name, MonitorTarget.id)
-        )
-    ).all()
-
-    # Resolved here rather than in the template, through the same function the
-    # dispatcher uses, so the dates shown can never disagree with the dates
-    # that will actually be fetched.
-    today = local_today()
-    resolved_rows = []
-    for target, hotel_id, hotel_name, source_code in rows:
-        try:
-            stay = resolve_stay_window(
-                strategy=target.date_strategy,
-                today=today,
-                fixed_check_in=target.fixed_check_in,
-                fixed_check_out=target.fixed_check_out,
-                lead_time_days=target.lead_time_days,
-                length_of_stay_nights=target.length_of_stay_nights,
-            )
-        except ValueError:
-            stay = None
-        resolved_rows.append((target, hotel_id, hotel_name, source_code, stay))
-
-    return _render(request, user, "targets.html", rows=resolved_rows, today=today,
-                   now=datetime.now(UTC))
-
-
 @router.get("/check-runs/{check_run_id}", response_class=HTMLResponse)
 async def check_run_partial(
     request: Request, check_run_id: str, user: DashUser, session: DbSession

@@ -28,7 +28,13 @@ from dataclasses import dataclass
 from rapidfuzz import fuzz
 
 # Above this, accept a fuzzy match automatically (flagged for review).
-AUTO_MATCH_THRESHOLD = 85.0
+#
+# 90, not 85. With the min-of-two-ratios score below, "super deluxe double
+# occupancy" against "deluxe double occupancy" lands at 88.5 -- close enough to
+# look like the same room, and it is not. The gap between 85 and 90 is exactly
+# where "a qualifier word was added" lives, and that is the case where guessing
+# wrong is silent and permanent. Above 90 the names are effectively identical.
+AUTO_MATCH_THRESHOLD = 90.0
 # Between this and AUTO_MATCH_THRESHOLD, record as a suggestion only.
 SUGGEST_THRESHOLD = 60.0
 
@@ -115,13 +121,27 @@ class MatchResult:
 def score_similarity(a: str, b: str) -> float:
     """Similarity of two already-normalised names, 0-100.
 
-    ``token_set_ratio`` is the right choice here because it ignores extra
-    words: "deluxe double balcony" still scores highly against "deluxe double",
-    which is exactly the rename case this has to survive.
+    The score is the MINIMUM of two ratios, and that choice is the whole point:
+
+    ``token_set_ratio``  ignores extra words entirely, so a superset scores 100
+    ``token_sort_ratio`` compares the full strings, so extra words cost you
+
+    Using ``token_set_ratio`` alone is actively dangerous. It rates
+    "super deluxe double occupancy" against "deluxe double occupancy" as a
+    perfect 100, because every token of the shorter name appears in the longer
+    one. Those are different rooms at very different rates -- observed on a
+    real property, where the two collapsed into one price series and only a
+    primary-key violation stopped it being written.
+
+    Taking the minimum means extra distinguishing words ("super", "premium",
+    "executive") pull the score down, so the pair falls below the automatic
+    threshold and goes to a human instead. A rename like "Deluxe Room" ->
+    "Deluxe Double Room with Balcony" also lands there: one click to map, once,
+    versus a silently corrupted series that nobody notices for months.
     """
     if not a or not b:
         return 0.0
-    return float(fuzz.token_set_ratio(a, b))
+    return float(min(fuzz.token_set_ratio(a, b), fuzz.token_sort_ratio(a, b)))
 
 
 def resolve(

@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Attention · Hotel Price Monitor{% endblock %}
+
+{#
+  Everything waiting on a person, in one list, ordered by how expensive it is
+  to ignore.
+
+  "Gone quiet" comes first and errors come last, which is the opposite of the
+  obvious order. An erroring target is loud and already visible everywhere; a
+  target that stopped checking WITHOUT failing looks perfectly healthy — the
+  Matrix keeps showing prices, they are just frozen. That is the failure that
+  actually costs money.
+#}
+
+{% block content %}
+<h1>Attention</h1>
+
+{% if not attention.total %}
+<section class="empty-state">
+  <p class="empty-big">Nothing needs you.</p>
+  <p class="muted">
+    Every enabled target is checking on schedule, every room name resolves, and
+    nothing is failing. This page disappears from the menu when it is empty.
+  </p>
+</section>
+{% endif %}
+
+{% if stale %}
+<section>
+  <h2>Gone quiet <span class="muted">— no successful check in three intervals</span></h2>
+  <p class="muted">
+    These are not erroring. They simply stopped, which means the prices shown
+    elsewhere are stale while looking current.
+  </p>
+  <table class="grid">
+    <thead><tr><th>Hotel</th><th>Interval</th><th>Last success</th><th></th></tr></thead>
+    <tbody>
+      {% for target, hotel_id, hotel_name in stale %}
+      <tr class="row-alarm">
+        <td><a href="/hotels/{{ hotel_id }}">{{ hotel_name }}</a></td>
+        <td class="num">{{ target.interval_minutes }}m</td>
+        <td class="muted">{{ target.last_success_at|localtime('%d %b %H:%M') if target.last_success_at else 'never' }}</td>
+        <td>
+          {% if is_admin and target.is_enabled %}
+          <button class="run-now" data-target-id="{{ target.id }}">Run now</button>
+          <span class="run-status" data-for="{{ target.id }}"></span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if paused %}
+<section>
+  <h2>Paused <span class="muted">— circuit breaker</span></h2>
+  <p class="muted">
+    Five consecutive failures pause a target for an hour, then one probe decides
+    whether it resumes. A robots.txt refusal or a bot wall pauses it at once —
+    those are a site saying no, and counting to five would mean four more
+    unwelcome requests.
+  </p>
+  <table class="grid">
+    <thead><tr><th>Hotel</th><th>State</th><th>Since</th><th>Failures</th><th></th></tr></thead>
+    <tbody>
+      {% for target, hotel_id, hotel_name in paused %}
+      <tr>
+        <td><a href="/hotels/{{ hotel_id }}">{{ hotel_name }}</a></td>
+        <td><span class="pill pill-stop">{{ target.circuit_state.value }}</span></td>
+        <td class="muted">{{ target.circuit_opened_at|localtime('%d %b %H:%M') }}</td>
+        <td class="num">{{ target.consecutive_failures }}</td>
+        <td>
+          {% if is_admin %}
+          <button class="resume-target" data-target-id="{{ target.id }}">Resume</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if unmatched %}
+<section>
+  <h2>Rooms to map <span class="muted">— names no alias resolved</span></h2>
+  <p class="muted">
+    The system will not guess: a wrong mapping corrupts a price series silently
+    and indefinitely, while this queue is a visible gap. Map one once and it
+    resolves forever after.
+  </p>
+  <table class="grid">
+    <thead>
+      <tr><th>Hotel</th><th>Name on the site</th><th>Seen</th><th>Best guess</th><th>Map to</th></tr>
+    </thead>
+    <tbody>
+      {% for row, hotel_id, hotel_name, suggested_name in unmatched %}
+      <tr>
+        <td><a href="/hotels/{{ hotel_id }}">{{ hotel_name }}</a></td>
+        <td>
+          <strong>{{ row.raw_room_name }}</strong>
+          <br><code class="muted">{{ row.normalized_name }}</code>
+        </td>
+        <td class="num">
+          {{ row.occurrence_count }}×
+          <br><span class="muted nowrap">{{ row.last_seen_at|localtime('%d %b') }}</span>
+        </td>
+        <td>
+          {% if suggested_name %}
+            {{ suggested_name }}
+            <span class="muted">{{ '%.0f'|format((row.suggested_confidence or 0) * 100) }}%</span>
+          {% else %}<span class="muted">no candidate</span>{% endif %}
+        </td>
+        <td>
+          {% if is_admin %}
+          <form class="inline resolve-unmatched" data-unmatched-id="{{ row.id }}">
+            <select name="room_type_id" required>
+              <option value="">Choose…</option>
+              {% for room in rooms_by_hotel.get(hotel_id, []) %}
+              <option value="{{ room.id }}"
+                {{ 'selected' if room.id == row.suggested_room_type_id else '' }}>
+                {{ room.name }}
+              </option>
+              {% endfor %}
+            </select>
+            <button type="submit">Map</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if errors %}
+<section>
+  <h2>Errors</h2>
+  <p class="muted">
+    One line each, with the whole story one click away. A truncated message
+    with no way to see the rest is how a certificate failure gets read as
+    "timeout" for a week.
+  </p>
+  {% if by_class %}
+  <div class="chips">
+    {% for name, count in by_class.items() %}
+    <span class="chip">{{ name }} <strong>{{ count }}</strong></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <table class="grid">
+    <thead><tr><th>When</th><th>Hotel</th><th>Class</th><th>Message</th><th>Evidence</th><th></th></tr></thead>
+    <tbody>
+      {% for error, hotel_name in errors %}
+      <tr>
+        <td class="nowrap muted">{{ error.occurred_at|localtime('%d %b %H:%M') }}</td>
+        <td>{{ hotel_name or '—' }}</td>
+        <td><span class="pill pill-{{ 'warn' if error.is_transient else 'stop' }}">{{ error.error_class.value }}</span></td>
+        <td>
+          <button type="button" class="error-expand" aria-expanded="false"
+                  aria-controls="error-detail-{{ error.id }}">
+            <span class="error-caret" aria-hidden="true">▸</span>
+            <span class="truncate">{{ error.message }}</span>
+          </button>
+        </td>
+        <td class="nowrap">
+          {# The screenshot is what turns "the adapter broke" into a ten-minute
+             fix. Pruned after the retention window. #}
+          {% if error.screenshot_path %}
+          <a href="/api/v1/errors/{{ error.id }}/artifact?kind=screenshot">screenshot</a>
+          {% endif %}
+          {% if error.html_path %}
+          <a href="/api/v1/errors/{{ error.id }}/artifact?kind=html">html</a>
+          {% endif %}
+        </td>
+        <td>
+          {% if is_admin %}
+          <button class="resolve-error" data-error-id="{{ error.id }}">Resolve</button>
+          {% endif %}
+        </td>
+      </tr>
+      {#
+        Rendered with the page rather than fetched on demand: every field is
+        already in the query that drew the row above, so a request per expand
+        would be a round trip to show data the browser is already holding.
+        The screenshot is the one exception — see the img below.
+      #}
+      <tr class="error-detail" id="error-detail-{{ error.id }}" hidden>
+        <td colspan="6">
+          <div class="error-panel">
+            <dl class="error-meta">
+              <div>
+                <dt>Occurred</dt>
+                <dd>{{ error.occurred_at|localtime('%d %b %Y %H:%M:%S') }}</dd>
+              </div>
+              <div>
+                <dt>Class</dt>
+                {# Transient vs permanent is the difference between "it will
+                   retry itself" and "it will not fix itself" — the first thing
+                   worth knowing about a failure. #}
+                <dd>
+                  {{ error.error_class.value }}
+                  <span class="muted">· {{ 'retries by itself' if error.is_transient else 'will not retry' }}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>Retries so far</dt>
+                <dd>{{ error.retry_count }}</dd>
+              </div>
+              {% if error.monitor_target_id %}
+              <div>
+                <dt>Target</dt>
+                <dd>#{{ error.monitor_target_id }}</dd>
+              </div>
+              {% endif %}
+              {% if error.check_run_id %}
+              <div>
+                <dt>Check run</dt>
+                <dd><code>{{ error.check_run_id }}</code></dd>
+              </div>
+              {% endif %}
+            </dl>
+
+            <pre class="error-message">{{ error.message }}</pre>
+
+            {% if error.context %}
+            {# Scrubbed on write — see app/core/redaction.py — so this is safe
+               to put on a screen someone might screenshot into a chat. #}
+            <div class="error-block">
+              <h3>Context</h3>
+              <pre>{{ error.context | tojson(indent=2) }}</pre>
+            </div>
+            {% endif %}
+
+            {% if error.screenshot_path %}
+            <figure class="error-shot">
+              {# Framed and scrollable rather than shown whole: a full-page
+                 capture of a booking engine is several thousand pixels tall,
+                 and inlining it at full height buries every other error on
+                 the page. The top of the shot is the part that answers "what
+                 did it see?" anyway. #}
+              <div class="error-shot-frame">
+                {# data-src, not src: a page listing forty errors would
+                   otherwise pull forty PNGs nobody opened. app.js fills it in
+                   on the first expand. #}
+                <img data-src="/api/v1/errors/{{ error.id }}/artifact?kind=screenshot"
+                     alt="The page as it looked when this check failed">
+              </div>
+              <figcaption class="muted">
+                The page at the moment it failed ·
+                <a href="/api/v1/errors/{{ error.id }}/artifact?kind=screenshot">open full size</a>
+                {% if error.html_path %}
+                · <a href="/api/v1/errors/{{ error.id }}/artifact?kind=html">saved HTML</a>
+                {% endif %}
+              </figcaption>
+            </figure>
+            {% elif error.html_path %}
+            <p class="muted">
+              No screenshot was captured —
+              <a href="/api/v1/errors/{{ error.id }}/artifact?kind=html">the saved HTML</a>
+              is all the evidence there is.
+            </p>
+            {% else %}
+            <p class="muted">
+              No screenshot or HTML was captured. Either this failed before the
+              page loaded, or the artifacts have been pruned.
+            </p>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

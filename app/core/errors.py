@@ -152,10 +152,16 @@ def classify(exc: BaseException) -> FetchError:
     name = type(exc).__name__.lower()
     text = str(exc).lower()
 
+    # Plenty of exceptions stringify to nothing at all -- NotImplementedError
+    # is the common one, and an empty message is worse than no error row: it
+    # says something broke and refuses to say what. The type name is always
+    # available, so the message is never allowed to be blank.
+    detail = str(exc).strip() or f"{type(exc).__name__} (no message)"
+
     if "timeout" in name or "timeout" in text:
-        return TimeoutError_(str(exc))
+        return TimeoutError_(detail)
     if any(k in name for k in ("connection", "dns", "socket", "ssl")):
-        return NetworkError(str(exc))
-    if "targetclosed" in name or "browser" in text and "closed" in text:
-        return BrowserCrashError(str(exc))
-    return FetchError(str(exc))
+        return NetworkError(detail)
+    if "targetclosed" in name or ("browser" in text and "closed" in text):
+        return BrowserCrashError(detail)
+    return FetchError(detail, context={"exception_type": type(exc).__name__})

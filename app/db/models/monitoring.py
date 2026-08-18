@@ -101,10 +101,21 @@ class MonitorTarget(Base, TimestampMixin):
 
         Silent failure is the mode that actually costs money: the dashboard
         looks fine, the prices are just frozen. Alerting on silence catches it.
+
+        A target that has NEVER succeeded is measured from when it was created,
+        not treated as stale on sight. "Gone quiet" means something stopped;
+        a target added a minute ago has not stopped, it has not started — and
+        putting it in the alarm list the instant it is created is how people
+        learn to ignore the alarm list.
+
+        Once three intervals have passed with no success, it is genuinely wrong
+        and does belong there.
         """
-        if self.last_success_at is None:
-            return True
-        return (now - self.last_success_at).total_seconds() > self.interval_minutes * 60 * 3
+        baseline = self.last_success_at or self.created_at
+        if baseline is None:
+            # No creation timestamp yet: the row is mid-insert, not stale.
+            return False
+        return (now - baseline).total_seconds() > self.interval_minutes * 60 * 3
 
     def __repr__(self) -> str:
         return f"<MonitorTarget {self.id} hs={self.hotel_source_id} every {self.interval_minutes}m>"

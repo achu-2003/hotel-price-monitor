@@ -26,6 +26,7 @@ _ADAPTERS: dict[str, str] = {
     "playwright_ota": "app.adapters.playwright_ota:PlaywrightOtaAdapter",
     "http_json": "app.adapters.http_json:HttpJsonAdapter",
     "aiosell": "app.adapters.aiosell:AiosellAdapter",
+    "gotoyelagiri": "app.adapters.gotoyelagiri:GotoYelagiriAdapter",
     "manual_entry": "app.adapters.manual_entry:ManualEntryAdapter",
 }
 
@@ -36,6 +37,7 @@ _QUEUES: dict[str, str] = {
     "playwright_ota": "browser",
     "http_json": "http",
     "aiosell": "http",
+    "gotoyelagiri": "http",
     "manual_entry": "manual",
 }
 

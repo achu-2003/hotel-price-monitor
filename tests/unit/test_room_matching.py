@@ -10,6 +10,7 @@ import pytest
 
 from app.services.room_matching import (
     AUTO_MATCH_THRESHOLD,
+    SUGGEST_THRESHOLD,
     normalize_room_name,
     resolve,
     score_similarity,
@@ -63,16 +64,50 @@ def test_empty_input_is_unmatchable_not_a_valid_key():
     assert normalize_room_name("room") == ""  # nothing but a stop word
 
 
-# ── the rename case this exists to survive ───────────────────────────
-def test_a_site_renaming_a_room_still_resolves():
-    """"Deluxe Room" becoming "Deluxe Double Room with Balcony" must not split
-    the price history in two."""
+# ── renames, and the reason they are NOT auto-resolved ───────────────
+def test_a_rename_with_extra_words_goes_to_a_human():
+    """"Deluxe Room" -> "Deluxe Double Room with Balcony" is NOT auto-matched.
+
+    This was auto-matched once, and the mechanism that allowed it is the same
+    one that merged "Super Deluxe Double Occupancy Room" into "Deluxe Double
+    Occupancy Room" on a real property: token_set_ratio scores a superset as a
+    perfect 100, so "add a word" and "different room" are indistinguishable.
+
+    Two rooms at different rates sharing one price series is invisible and
+    permanent. An unmatched row is visible and costs one click. The queue is
+    the cheaper failure, so added words now suppress the automatic match and
+    the near-miss is offered as a suggestion instead.
+    """
     result = resolve(
         "Deluxe Double Room with Balcony", aliases={}, candidates=CANDIDATES
     )
-    assert result.matched
+    assert not result.matched
+    assert result.score < AUTO_MATCH_THRESHOLD
+
+
+def test_a_qualifier_word_never_collapses_two_rooms():
+    """The failure this threshold exists to prevent."""
+    candidates = [(1, normalize_room_name("Deluxe Double Occupancy Room"))]
+    result = resolve(
+        "Super Deluxe Double Occupancy Room", aliases={}, candidates=candidates
+    )
+    assert not result.matched, "Super Deluxe is a different, dearer room"
+    # Still surfaced as a suggestion, so mapping it is one click if it IS right.
+    assert result.suggestion is not None
+
+
+def test_once_mapped_a_rename_resolves_forever():
+    """The queue is a one-time cost, not a recurring one.
+
+    A human maps the new name once; the alias then hits on the exact path and
+    fuzzy matching is never consulted again.
+    """
+    aliases = {normalize_room_name("Deluxe Double Room with Balcony"): 2}
+    result = resolve(
+        "Deluxe Double Room with Balcony", aliases=aliases, candidates=CANDIDATES
+    )
     assert result.room_type_id == 2
-    assert result.score >= AUTO_MATCH_THRESHOLD
+    assert result.is_exact
 
 
 # ── exact alias path ─────────────────────────────────────────────────
@@ -139,8 +174,29 @@ def test_identical_strings_score_full_marks():
     assert score_similarity("deluxe", "deluxe") == 100.0
 
 
-def test_extra_descriptive_words_do_not_destroy_the_score():
-    assert score_similarity("balcony deluxe double", "deluxe") >= AUTO_MATCH_THRESHOLD
+def test_extra_words_lower_the_score_below_the_automatic_threshold():
+    """The score is min(token_set_ratio, token_sort_ratio).
+
+    token_set_ratio alone returns 100 here, because every token of "deluxe"
+    appears in "balcony deluxe double". Taking the minimum makes the extra
+    words cost something, which is what keeps two genuinely different rooms
+    apart.
+    """
+    score = score_similarity("balcony deluxe double", "deluxe")
+    assert score < AUTO_MATCH_THRESHOLD
+    # Still high enough to be offered as a suggestion rather than discarded.
+    assert score >= SUGGEST_THRESHOLD - 20
+
+
+def test_a_qualifier_scores_below_the_threshold():
+    assert score_similarity(
+        "deluxe double occupancy super", "deluxe double occupancy"
+    ) < AUTO_MATCH_THRESHOLD
+
+
+def test_word_order_alone_still_matches():
+    """Room names are descriptive, not grammatical: order carries no meaning."""
+    assert score_similarity("deluxe double", "double deluxe") == 100.0
 
 
 def test_empty_strings_score_zero():

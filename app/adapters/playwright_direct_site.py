@@ -122,19 +122,33 @@ class PlaywrightDirectSiteAdapter:
         )
 
     def _wait_for_rooms(self, fetch: BrowserFetch, config: dict) -> None:
-        """Wait for the room list, tolerating its absence.
+        """Wait for whatever this source actually delivers the prices in.
 
-        A timeout here is NOT raised: the page may legitimately be showing "no
+        A timeout is NOT raised here: the page may legitimately be showing "no
         rooms available", which the extraction step is better placed to judge.
-        Raising here would report a sold-out weekend as a broken adapter.
+        Raising would report a sold-out weekend as a broken adapter.
         """
+        timeout_ms = int(config.get("wait_timeout_ms", _ROOMS_WAIT_MS))
+
+        # When the prices come from an XHR, wait for THAT, not for a DOM node.
+        # Booking engines fetch availability after first paint, so returning as
+        # soon as the document is parsed would look at an empty page and report
+        # drift on a site that was working perfectly.
+        fragments = config.get("json_url_contains")
+        if fragments:
+            deadline = time.monotonic() + timeout_ms / 1000
+            while time.monotonic() < deadline:
+                if fetch.find_json(*fragments) is not None:
+                    return
+                fetch.page.wait_for_timeout(250)
+            log.info("availability_json_never_arrived", fragments=fragments)
+            return
+
         selector = config.get("wait_for") or config.get("room_card")
         if not selector:
             return
         try:
-            fetch.page.wait_for_selector(
-                selector, timeout=int(config.get("wait_timeout_ms", _ROOMS_WAIT_MS))
-            )
+            fetch.page.wait_for_selector(selector, timeout=timeout_ms)
         except PlaywrightTimeout:
             log.info("rooms_selector_never_appeared", selector=selector)
 

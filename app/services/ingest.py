@@ -105,6 +105,13 @@ def ingest_fetch_result(
 
     aliases = _load_aliases(session, ctx)
     candidates = _load_room_types(session, ctx.hotel_id)
+    if not candidates and result.offers:
+        # A brand-new hotel has no rooms defined, so every offer would land in
+        # the unmatched queue and an operator would retype names the site has
+        # already told us. Seeding from the site's own names is not guessing:
+        # with zero existing rooms there is nothing to mis-map against, which
+        # is exactly the condition that makes matching risky elsewhere.
+        candidates = _seed_room_types(session, result.offers, ctx)
     seen_keys: set[str] = set()
 
     for offer in result.offers:
@@ -129,6 +136,25 @@ def ingest_fetch_result(
             refundable=offer.refundable,
             currency=offer.currency or ctx.currency,
         )
+        if offer_key in seen_keys:
+            # Two offers in one fetch resolved to the same identity. Legitimate
+            # when a site lists one room under two rate plans that differ only
+            # in something the key does not carry; a bug when two DIFFERENT
+            # rooms matched the same room type.
+            #
+            # Either way the second must not be inserted: the offer key is the
+            # primary key of price_series, so writing both aborts the whole
+            # transaction and the entire fetch is lost — including the rooms
+            # that were perfectly fine.
+            log.warning(
+                "duplicate_offer_key_in_fetch",
+                hotel_id=ctx.hotel_id,
+                offer_key=offer_key[:12],
+                raw_name=offer.raw_room_name[:80],
+                room_type_id=room_type_id,
+                hint="two room names mapped to one room type; check the alias table",
+            )
+            continue
         seen_keys.add(offer_key)
 
         observation_id = _write_observation(session, offer, offer_key, ctx)
@@ -169,6 +195,47 @@ def _load_room_types(session: Session, hotel_id: int) -> list[tuple[int, str]]:
         )
     ).all()
     return [(room_id, canonical) for room_id, canonical in rows]
+
+
+def _seed_room_types(
+    session: Session, offers: list[NormalizedOffer], ctx: IngestContext
+) -> list[tuple[int, str]]:
+    """Create a hotel's room types from the first successful fetch.
+
+    Only ever runs when the hotel has none at all. The names come from the
+    site, which is the authority on what its rooms are called — an operator
+    typing them by hand is copying from the same source, with typos.
+
+    Two names that normalise identically collapse into one room type, which is
+    correct: they are the same room described twice.
+    """
+    created: list[tuple[int, str]] = []
+    seen: set[str] = set()
+
+    for order, offer in enumerate(offers):
+        canonical = room_matching.normalize_room_name(offer.raw_room_name)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+
+        room = RoomType(
+            hotel_id=ctx.hotel_id,
+            name=offer.raw_room_name.strip()[:200],
+            canonical_name=canonical[:200],
+            sort_order=order,
+        )
+        session.add(room)
+        session.flush()  # need the id to match the rest of this same fetch
+        created.append((room.id, canonical))
+
+    if created:
+        log.info(
+            "room_types_seeded",
+            hotel_id=ctx.hotel_id,
+            count=len(created),
+            names=[o.raw_room_name[:40] for o in offers][:8],
+        )
+    return created
 
 
 def _resolve_room(

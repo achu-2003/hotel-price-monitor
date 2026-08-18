@@ -37,7 +37,7 @@
   <tbody>
     {% for change, hotel_name, room_name, check_in, check_out in changes %}
     <tr>
-      <td class="nowrap muted">{{ change.changed_at.strftime('%d %b %H:%M') }}</td>
+      <td class="nowrap muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</td>
       <td><a href="/hotels/{{ change.hotel_id }}">{{ hotel_name }}</a></td>
       <td>{{ room_name or '—' }}</td>
       <td class="nowrap muted">{{ check_in }} → {{ check_out }}</td>

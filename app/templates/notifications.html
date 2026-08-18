@@ -22,7 +22,7 @@
         <td class="muted">{{ recipient.phone_e164 or '—' }}</td>
         <td class="muted">
           {% if recipient.quiet_hours_start %}
-            {{ recipient.quiet_hours_start.strftime('%H:%M') }}–{{ recipient.quiet_hours_end.strftime('%H:%M') }}
+            {{ recipient.quiet_hours_start|localtime('%H:%M') }}–{{ recipient.quiet_hours_end|localtime('%H:%M') }}
           {% else %}
             <span title="Falls back to the deployment default">default</span>
           {% endif %}
@@ -57,7 +57,7 @@
     <tbody>
       {% for notification, recipient_name, hotel_name in notifications %}
       <tr>
-        <td class="nowrap muted">{{ notification.created_at.strftime('%d %b %H:%M') }}</td>
+        <td class="nowrap muted">{{ notification.created_at|localtime('%d %b %H:%M') }}</td>
         <td>{{ recipient_name }}</td>
         <td>{{ hotel_name or '—' }}</td>
         <td>{{ notification.channel }} <span class="muted">{{ notification.provider }}</span></td>
@@ -67,7 +67,7 @@
           </span>
           {% if notification.scheduled_for %}
             <span class="pill pill-pending" title="Held for quiet hours or the hourly cap">
-              held → {{ notification.scheduled_for.strftime('%d %b %H:%M') }}
+              held → {{ notification.scheduled_for|localtime('%d %b %H:%M') }}
             </span>
           {% endif %}
         </td>

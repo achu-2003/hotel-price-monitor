@@ -1,11 +1,27 @@
 {#
   Layout for every dashboard page.
 
+  FOUR NAV ITEMS, NOT EIGHT
+  =========================
+  Three of the originals were scaffolding for problems that no longer exist:
+
+  * "Sources" existed because the booking engine was a choice. It is now read
+    from the pasted URL, and the only human decision left — the Terms of
+    Service review — appears inline on the hotel page, where it blocks you.
+  * "Targets" listed every monitor across all hotels, duplicating what each
+    hotel page already shows. Anything genuinely wrong with one now surfaces
+    under Attention.
+  * "Unmatched" and "Health" were two lists of the same thing: work waiting for
+    a person. They are one page now.
+
+  Attention appears ONLY when there is something to do. A permanent tab reading
+  zero every day teaches people to stop looking at it, so it earns its place by
+  being absent most of the time.
+
   No CDN links and no inline <script>: the Content-Security-Policy set in
-  app/main.py allows scripts only from 'self', so everything is served from
-  /static. That is a deliberate trade — a strict CSP is the single most
-  effective defence against an injected script, and this dashboard displays
-  room names taken from other people's websites.
+  app/main.py allows scripts only from 'self'. A strict CSP is the best defence
+  against an injected script, and this dashboard renders room names taken from
+  other people's websites.
 #}
 <!doctype html>
 <html lang="en">
@@ -19,19 +35,23 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/">Hotel Price Monitor</a>
+  {# `active` is set by whichever prefix the current path starts with, so
+     /hotels/3 still lights up Hotels. #}
+  {% set path = request.url.path %}
   <nav>
-    <a href="/matrix">Matrix</a>
-    <a href="/changes">Changes</a>
-    <a href="/sources">Sources</a>
-    <a href="/hotels">Hotels</a>
-    <a href="/targets">Targets</a>
-    <a href="/unmatched">Unmatched</a>
-    <a href="/health-tab">Health</a>
-    <a href="/notifications">Notifications</a>
+    <a href="/matrix"        class="{{ 'active' if path.startswith('/matrix') }}">Matrix</a>
+    <a href="/changes"       class="{{ 'active' if path.startswith('/changes') }}">Changes</a>
+    <a href="/hotels"        class="{{ 'active' if path.startswith('/hotels') }}">Hotels</a>
+    <a href="/notifications" class="{{ 'active' if path.startswith('/notifications') }}">Alerts</a>
+    {% if attention and attention.total %}
+    <a href="/attention" class="nav-alert {{ 'active' if path.startswith('/attention') }}">
+      Attention <span class="nav-count">{{ attention.total }}</span>
+    </a>
+    {% endif %}
   </nav>
   <div class="user">
     <span title="{{ user.email }}">{{ user.full_name or user.email }}</span>
-    <span class="badge {{ 'badge-admin' if is_admin else 'badge-viewer' }}">{{ user.role.value }}</span>
+    {% if is_admin %}<span class="badge badge-admin">admin</span>{% endif %}
     <a href="/logout">Log out</a>
   </div>
 </header>
@@ -41,8 +61,15 @@
 </main>
 
 <footer>
-  <span>Times shown in your browser's locale · prices in the source currency</span>
+  <span>Times in {{ tz }} · prices in the source currency</span>
 </footer>
+
+{#
+  Where price-change popups land. Empty until app.js fills it: the polling and
+  the markup both live in /static/app.js, because the CSP forbids inline
+  script and these names come from other people's websites.
+#}
+<div class="toast-stack" id="toast-stack" role="status" aria-live="polite"></div>
 
 <script src="/static/app.js"></script>
 </body>

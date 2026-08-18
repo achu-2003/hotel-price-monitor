@@ -6,7 +6,7 @@ outcome in `docs/TOS_REVIEW.md` before that source is enabled.
 
 | URL | Verdict | Adapter | robots.txt | JSON API | Prices found |
 |---|---|---|---|---|---|
-| https://be.aiosell.com/book/b3cee25963?checkin=2026-08-25&ch | BEST - JSON endpoint available (use HttpJsonAdapter) | `http_json` | allowed | yes | 10 |
+| https://letsbook.me/booking/hotelgoldennest?checkin=2026-08- | BEST - JSON endpoint available (use HttpJsonAdapter) | `http_json` | allowed | yes | 7 |
 
 ## Next steps
 

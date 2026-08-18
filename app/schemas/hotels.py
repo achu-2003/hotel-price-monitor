@@ -142,6 +142,34 @@ class HotelSourceCreate(ORMModel):
     )
 
 
+class AttachFromUrl(ORMModel):
+    """Attach a hotel by pasting the URL from the address bar.
+
+    The engine, adapter, field mapping, property code and date placeholders are
+    all derived from it. Nothing else is asked for, because nothing else has to
+    be: every one of those is a fact about the URL rather than a decision.
+    """
+
+    url: str = Field(
+        min_length=8,
+        max_length=2000,
+        description=(
+            "The booking page showing rates for specific dates. Its dates and "
+            "guest counts are replaced with placeholders so the target follows "
+            "a rolling window instead of pinning one night forever."
+        ),
+    )
+    currency: str = Field(default="INR", min_length=3, max_length=3)
+
+    @field_validator("url")
+    @classmethod
+    def _must_be_http(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned.lower().startswith(("http://", "https://")):
+            raise ValueError("Paste the full URL, including https://")
+        return cleaned
+
+
 class HotelSourceUpdate(ORMModel):
     url: str | None = None
     external_id: str | None = None
@@ -162,6 +190,67 @@ class HotelSourceOut(ORMModel):
     adapter_config: dict[str, Any]
     is_active: bool
     last_verified_at: datetime | None
+
+
+class ReplaceUrl(ORMModel):
+    """Correct the link a hotel was attached with.
+
+    The usual reason is the honest one: the wrong page was pasted. The URL is
+    re-detected exactly as it was on attach, because a hand-edited URL that
+    lost its date placeholders would pin one night forever and the prices would
+    go stale while still looking current.
+    """
+
+    url: str = Field(
+        min_length=8,
+        max_length=2000,
+        description="The corrected booking page, showing rates for specific dates.",
+    )
+    discard_history: bool = Field(
+        default=False,
+        description=(
+            "Required when the new URL points at a DIFFERENT property. Prices "
+            "already collected belong to the old one, and comparing the two "
+            "would report the difference between two hotels as a price change."
+        ),
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _must_be_http(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned.lower().startswith(("http://", "https://")):
+            raise ValueError("Paste the full URL, including https://")
+        return cleaned
+
+
+class HotelPurge(ORMModel):
+    """Confirmation for erasing a hotel outright.
+
+    The name is typed rather than clicked. This destroys data the application
+    cannot give back, so the confirmation is deliberately not something a
+    mis-click can satisfy.
+    """
+
+    confirm_name: str = Field(min_length=1, max_length=200)
+
+
+class HotelPurgeResult(ORMModel):
+    """What was destroyed, so it can be reported once and then is gone."""
+
+    hotel_id: int
+    name: str
+    series_deleted: int
+    observations_deleted: int
+    changes_deleted: int
+
+
+class ReplaceUrlResult(ORMModel):
+    """What the replacement actually did, so the dashboard can say so."""
+
+    hotel_source: HotelSourceOut
+    property_changed: bool
+    series_reset: int
 
 
 # -- room types ------------------------------------------------------

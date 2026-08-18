@@ -1,240 +1,171 @@
 {% extends "base.html" %}
 {% block title %}{{ hotel.name }} · Hotel Price Monitor{% endblock %}
 
+{#
+  Ordered by what someone actually opens this page for.
+
+  Prices first once they exist; a numbered setup path first while they do not.
+  The booking engine used to lead the page and be a decision the operator had
+  to make — it is now derived from the URL, so it has become a one-line status
+  tucked under "Setup detail". The one decision the system will not make, the
+  Terms of Service review, is surfaced inline exactly where it blocks progress
+  rather than on a separate screen.
+#}
+
+{% set has_source   = sources|length > 0 %}
+{% set has_target   = targets|length > 0 %}
+{% set has_prices   = prices|length > 0 %}
+{% set needs_review = has_source and not sources[0][1].is_usable %}
+{# A source with no date in its URL publishes one current rate. Offering a
+   "nights ahead" box for it would invite storing today's price under a future
+   night — plausible, wrong, and undetectable later. #}
+{% set standing_rate = has_source and sources[0][0].adapter_config.get('standing_rate') %}
+
 {% block content %}
-<h1>
-  {{ hotel.name }}
-  {% if hotel.is_own_property %}<span class="pill pill-own">yours</span>{% endif %}
-  {% if not hotel.is_active %}<span class="pill pill-off">inactive</span>{% endif %}
-</h1>
-<p class="muted">{{ hotel.location or 'No location recorded' }}</p>
-
-<section>
-  <h2>Sources</h2>
-  <table class="grid">
-    <thead><tr><th>Source</th><th>Adapter</th><th>URL</th><th>Vetted</th><th>Config</th></tr></thead>
-    <tbody>
-      {% for hotel_source, source in sources %}
-      <tr>
-        <td>{{ source.display_name }} <span class="muted">({{ source.code }})</span></td>
-        <td><code>{{ source.adapter_key }}</code></td>
-        <td class="truncate">{{ hotel_source.url or '—' }}</td>
-        <td>
-          {# The compliance gate: the dispatcher will not select a source
-             without a recorded review, so this column explains why a hotel
-             that looks configured is not being checked. #}
-          {% if source.is_usable %}
-            <span class="pill pill-ok">reviewed {{ source.tos_reviewed_at }}</span>
-          {% elif source.tos_reviewed_at %}
-            <span class="pill pill-stop">review declined</span>
-          {% else %}
-            <span class="pill pill-warn">no ToS review — will not fetch</span>
-          {% endif %}
-        </td>
-        <td class="num muted">{{ hotel_source.adapter_config|length }} keys</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">No sources attached — nothing will be collected.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
+<div class="page-head">
+  <div>
+    <h1>
+      {{ hotel.name }}
+      {% if hotel.is_own_property %}<span class="pill pill-own">yours</span>{% endif %}
+      {% if not hotel.is_active %}<span class="pill pill-off">inactive</span>{% endif %}
+    </h1>
+    <p class="muted">{{ hotel.location or 'No location recorded' }}</p>
+  </div>
   {% if is_admin %}
-  <details class="panel" {% if not sources %}open{% endif %}>
-    <summary>Attach a source — this is where the booking URL goes</summary>
-    {% if all_sources %}
-    <form class="stack api-form"
-          data-endpoint="/api/v1/hotels/{{ hotel.id }}/sources"
-          data-method="POST">
-      <label>Source
-        <select name="source_id" required>
-          {% for source in all_sources %}
-          <option value="{{ source.id }}" {{ 'disabled' if source.id in attached_ids else '' }}>
-            {{ source.display_name }} ({{ source.code }})
-            {%- if source.id in attached_ids %} — already attached
-            {%- elif not source.is_usable %} — needs ToS review{% endif %}
-          </option>
-          {% endfor %}
-        </select>
-      </label>
+  {# Jumps to the panel under Setup detail; app.js opens it on arrival, because
+     an anchor that scrolls to a shut panel reads as a broken link. #}
+  <a class="btn-link" href="#hotel-details">Edit</a>
+  {% endif %}
+  {% if has_prices %}
+  <a class="btn-link" href="/matrix?check_in={{ prices[0][0].check_in }}&check_out={{ prices[0][0].check_out }}&adults={{ prices[0][0].adults }}">Compare in Matrix →</a>
+  {% endif %}
+</div>
 
-      <label>Booking URL
-        <input name="url" placeholder="https://live.ezeereservation.com/?hotel=12345" size="60">
+{# ── setup path: shown only while something is genuinely missing ───── #}
+{% if is_admin and not has_prices %}
+<section class="setup">
+  <h2 class="setup-title">Get this hotel collecting prices</h2>
+  <ol class="steps">
+
+    <li class="{{ 'done' if has_source else 'now' }}">
+      <span class="step-n">{{ '✓' if has_source else '1' }}</span>
+      <div class="step-body">
+        <strong>Paste the booking URL</strong>
+        {% if not has_source %}
+        <form class="stack api-form"
+              data-endpoint="/api/v1/hotels/{{ hotel.id }}/sources/from-url"
+              data-method="POST"
+              data-busy="Inspecting the page…"
+              data-busy-note="Opening the page in a browser and looking for its prices. This can take up to a minute for a site not seen before.">
+          <input name="url" required autofocus
+                 placeholder="https://…  the page showing room prices for real dates">
+          <button type="submit">Detect and attach</button>
+          <p class="form-status" hidden></p>
+        </form>
         <span class="muted">
-          The page that shows <strong>room prices for specific dates</strong> —
-          not the homepage. Use <code>{check_in}</code>, <code>{check_out}</code>
-          and <code>{adults}</code> as placeholders if the dates go in the URL.
+          Open the hotel's site → pick any dates → <strong>Book Now</strong> →
+          copy the address bar. Paste the page that <em>shows the room prices</em>,
+          not the homepage.
+          <br>
+          A recognised booking engine attaches instantly. Anything else is
+          inspected live — the page is opened in a browser, and its prices are
+          only accepted if they match what the page displays.
         </span>
-      </label>
+        {% else %}
+        <span class="muted">{{ sources[0][1].display_name }}</span>
+        {% endif %}
+      </div>
+    </li>
 
-      <label>Property ID on that platform
-        <input name="external_id" maxlength="200" placeholder="optional">
-      </label>
-
-      <label>Adapter config (JSON)
-        <textarea name="adapter_config" data-json rows="7" spellcheck="false"
-                  placeholder='{&#10;  "room_card": ".room-result",&#10;  "selectors": {&#10;    "room_name": ".room-title",&#10;    "price": ".rate-amount"&#10;  }&#10;}'></textarea>
+    <li class="{{ 'done' if has_source and not needs_review else ('now' if needs_review else '') }}">
+      <span class="step-n">{{ '✓' if has_source and not needs_review else '2' }}</span>
+      <div class="step-body">
+        <strong>Approve the Terms of Service</strong>
+        {% if needs_review %}
+        {# Nothing is ever fetched from a source without a named human on
+           record. Detection answers the technical question; this one is not
+           technical. #}
+        <form class="inline api-form"
+              data-endpoint="/api/v1/sources/{{ sources[0][1].id }}/tos-review"
+              data-method="POST">
+          <input name="reviewed_by" placeholder="Your name" required size="18">
+          <input type="hidden" name="approve" value="true">
+          <button type="submit">Approve</button>
+        </form>
+        <span class="muted">Once per booking engine, not per hotel.</span>
+        {% elif has_source %}
         <span class="muted">
-          Where the price sits on this site. Get it from
-          <code>scripts/probe_site.py</code>. Leave blank to fill in later —
-          editing this row is how a site redesign gets fixed, with no deploy.
+          Reviewed {{ sources[0][1].tos_reviewed_at }} by {{ sources[0][1].tos_reviewed_by }}
         </span>
-      </label>
+        {% else %}
+        <span class="muted">Available once a source is attached.</span>
+        {% endif %}
+      </div>
+    </li>
 
-      <button type="submit">Attach source</button>
-      <p class="form-status" hidden></p>
-    </form>
-    {% else %}
-    <p class="muted">
-      No sources exist yet. <a href="/sources">Create one first</a> — a source is
-      the booking platform, and several hotels usually share one.
-    </p>
+    <li class="{{ 'done' if has_target else ('now' if has_source and not needs_review else '') }}">
+      <span class="step-n">{{ '✓' if has_target else '3' }}</span>
+      <div class="step-body">
+        <strong>Choose what to watch</strong>
+        {% if has_source and not has_target %}
+        <form class="inline api-form" data-endpoint="/api/v1/monitor-targets" data-method="POST">
+          <input type="hidden" name="hotel_source_id" value="{{ sources[0][0].id }}">
+          <input type="hidden" name="date_strategy" value="rolling">
+          <input type="hidden" name="length_of_stay_nights" value="1">
+          {% if standing_rate %}
+          <input type="hidden" name="lead_time_days" value="0">
+          {% else %}
+          <label class="tight">Nights ahead
+            <input name="lead_time_days" type="number" min="0" max="365" value="0"></label>
+          {% endif %}
+          <label class="tight">Adults
+            <input name="adults" type="number" min="1" max="20" value="2"></label>
+          <label class="tight">Every (min)
+            <input name="interval_minutes" type="number" min="5" max="1440" value="30"></label>
+          <button type="submit">Start watching</button>
+        </form>
+        <span class="muted">
+          {% if standing_rate %}
+          This site publishes one <strong>current rate</strong> rather than
+          pricing per night, so it is watched for tonight only. You still see
+          every change the hotel makes — just not a different number per future
+          date, because it does not publish one.
+          {% else %}
+          0 nights ahead means tonight, and it rolls forward daily. Rooms are
+          discovered from the site — you never name them.
+          {% endif %}
+        </span>
+        {% elif has_target %}
+        <span class="muted">{{ targets|length }} window(s) configured</span>
+        {% endif %}
+      </div>
+    </li>
+
+    <li class="{{ 'now' if has_target else '' }}">
+      <span class="step-n">4</span>
+      <div class="step-body">
+        <strong>Run it</strong>
+        {% if has_target and targets[0].is_enabled %}
+        <button class="run-now" data-target-id="{{ targets[0].id }}">Run now</button>
+        <span class="run-status" data-for="{{ targets[0].id }}"></span>
+        {% else %}
+        <span class="muted">Available once a window exists.</span>
+        {% endif %}
+      </div>
+    </li>
+  </ol>
+</section>
+{% endif %}
+
+{# ── prices: the reason anyone opens this page ─────────────────────── #}
+{% if has_prices %}
+<section>
+  <h2>
+    Current prices
+    {% if standing_rate %}
+    <span class="pill pill-pending" title="This site publishes one rate for all dates">current rate</span>
     {% endif %}
-  </details>
-  {% endif %}
-</section>
-
-<section>
-  <h2>Room types</h2>
-  <p class="muted">
-    Discovered from the site and confirmed here. Aliases map whatever the
-    source calls a room to one of these, which is what keeps a price series
-    intact when a site renames its rooms.
-  </p>
-  <table class="grid">
-    <thead><tr><th>Name</th><th>Canonical (matching key)</th><th>Capacity</th></tr></thead>
-    <tbody>
-      {% for room in rooms %}
-      <tr>
-        <td>{{ room.name }}</td>
-        <td><code class="muted">{{ room.canonical_name }}</code></td>
-        <td class="num">{{ room.capacity or '—' }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="3" class="muted">None yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if is_admin %}
-  <details class="panel">
-    <summary>Add a room type</summary>
-    <form class="stack api-form" data-endpoint="/api/v1/hotels/{{ hotel.id }}/rooms" data-method="POST">
-      <label>Name <input name="name" required maxlength="200" placeholder="Deluxe Room"></label>
-      <label>Capacity <input name="capacity" type="number" min="1" max="30"></label>
-      <button type="submit">Add room type</button>
-      <p class="form-status" hidden></p>
-    </form>
-  </details>
-  {% endif %}
-</section>
-
-<section>
-  <h2>Monitor targets</h2>
-  <table class="grid">
-    <thead>
-      <tr><th>Stay</th><th>Guests</th><th>Every</th><th>Next run</th><th>Health</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for target in targets %}
-      <tr>
-        <td>
-          {% if target.date_strategy.value == 'fixed' %}
-            {{ target.fixed_check_in }} → {{ target.fixed_check_out }}
-          {% else %}
-            <span title="Resolved to absolute dates at every dispatch">
-              +{{ target.lead_time_days }}d, {{ target.length_of_stay_nights }}n (rolling)
-            </span>
-          {% endif %}
-        </td>
-        <td class="num">{{ target.adults }}A{{ '+%dC'|format(target.children) if target.children else '' }}</td>
-        <td class="num">{{ target.interval_minutes }}m</td>
-        <td class="muted nowrap">
-          {{ target.next_run_at.strftime('%d %b %H:%M') if target.next_run_at else '—' }}
-        </td>
-        <td>
-          {% if target.circuit_state.value != 'closed' %}
-            <span class="pill pill-stop">{{ target.circuit_state.value }}</span>
-          {% elif target.is_stale(now) %}
-            <span class="pill pill-warn">stale</span>
-          {% elif not target.is_enabled %}
-            <span class="pill pill-off">disabled</span>
-          {% else %}
-            <span class="pill pill-ok">ok</span>
-          {% endif %}
-          {% if target.consecutive_failures %}
-            <span class="muted">{{ target.consecutive_failures }} fails</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if is_admin %}
-          {# 202 + poll. A browser fetch takes 20-40s; the request must not
-             wait on it. #}
-          <button class="run-now" data-target-id="{{ target.id }}">Run now</button>
-          <span class="run-status" data-for="{{ target.id }}"></span>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6" class="muted">No targets — this hotel is not being checked.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if is_admin %}
-  <details class="panel" {% if sources and not targets %}open{% endif %}>
-    <summary>Add a monitor target — what to check, and how often</summary>
-    {% if sources %}
-    <form class="stack api-form" data-endpoint="/api/v1/monitor-targets" data-method="POST">
-      <label>Source
-        <select name="hotel_source_id" required>
-          {% for hotel_source, source in sources %}
-          <option value="{{ hotel_source.id }}">{{ source.display_name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-
-      <label>Which nights
-        <select name="date_strategy" required>
-          <option value="rolling" selected>Rolling — always N days ahead</option>
-          <option value="fixed">Fixed — one specific stay</option>
-        </select>
-        <span class="muted">
-          Rolling resolves to absolute dates at every run, so today's "7 days
-          out" and tomorrow's are different nights and are never compared
-          against each other.
-        </span>
-      </label>
-
-      <label>Days ahead <input name="lead_time_days" type="number" min="0" max="365" value="7"></label>
-      <label>Nights <input name="length_of_stay_nights" type="number" min="1" max="30" value="1"></label>
-      <span class="muted">For a fixed stay, clear those two and set the dates instead:</span>
-      <label>Check in <input name="fixed_check_in" type="date"></label>
-      <label>Check out <input name="fixed_check_out" type="date"></label>
-
-      <label>Adults <input name="adults" type="number" min="1" max="20" value="2"></label>
-      <label>Children <input name="children" type="number" min="0" max="20" value="0"></label>
-      <label>Check every (minutes)
-        <input name="interval_minutes" type="number" min="5" max="1440" value="30">
-        <span class="muted">Editable later with nothing to restart.</span>
-      </label>
-
-      <button type="submit">Create target</button>
-      <p class="form-status" hidden></p>
-      <span class="muted">
-        Note there is no room field: the site decides what its rooms are called
-        and renames them, so rooms are discovered by the fetch.
-      </span>
-    </form>
-    {% else %}
-    <p class="muted">Attach a source above first — a target monitors a hotel <em>on a source</em>.</p>
-    {% endif %}
-  </details>
-  {% endif %}
-</section>
-
-<section>
-  <h2>Current prices</h2>
+  </h2>
   <table class="grid">
     <thead><tr><th>Stay</th><th>Room</th><th>Guests</th><th>Price</th><th>Last checked</th></tr></thead>
     <tbody>
@@ -247,40 +178,289 @@
           {% if series.is_available %}{{ money(series.last_price, series.currency) }}
           {% else %}<span class="pill pill-soldout">sold out</span>{% endif %}
           {% if series.pending_price %}
-            {# Moved enough to matter, not yet confirmed across the required
-               number of checks. Shown, never alerted on. #}
-            <span class="pill pill-pending" title="Awaiting confirmation ({{ series.pending_count }} so far)">
-              → {{ money(series.pending_price, series.currency) }}?
-            </span>
+          {# Moved enough to matter, not yet confirmed across the required
+             number of checks. Shown, never alerted on. #}
+          <span class="pill pill-pending" title="Awaiting confirmation ({{ series.pending_count }} so far)">
+            → {{ money(series.pending_price, series.currency) }}?
+          </span>
           {% endif %}
         </td>
-        <td class="muted nowrap">{{ series.last_checked_at.strftime('%d %b %H:%M') }}</td>
+        <td class="muted nowrap">{{ series.last_checked_at|localtime('%d %b %H:%M') }}</td>
       </tr>
-      {% else %}
-      <tr><td colspan="5" class="muted">Nothing collected yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
+{% endif %}
 
+{# ── what is being watched ─────────────────────────────────────────── #}
+{% if has_target %}
 <section>
-  <h2>Recent check runs</h2>
+  <h2>What is being watched</h2>
   <table class="grid">
-    <thead><tr><th>Started</th><th>Status</th><th>Offers</th><th>Unmatched</th><th>Changes</th><th>Took</th></tr></thead>
+    <thead>
+      <tr><th>Stay</th><th>Guests</th><th>Every</th><th>Next run</th><th>Health</th><th></th></tr>
+    </thead>
     <tbody>
-      {% for run in runs %}
+      {% for target in targets %}
       <tr>
-        <td class="nowrap muted">{{ run.started_at.strftime('%d %b %H:%M:%S') }}</td>
-        <td><span class="pill pill-{{ 'ok' if run.status.value == 'success' else ('stop' if run.status.value == 'failed' else 'warn') }}">{{ run.status.value }}</span></td>
-        <td class="num">{{ run.offers_found }}</td>
-        <td class="num">{{ run.offers_unmatched }}</td>
-        <td class="num">{{ run.changes_detected }}</td>
-        <td class="num muted">{{ (run.duration_ms / 1000)|round(1) if run.duration_ms else '—' }}s</td>
+        <td>
+          {% if target.date_strategy.value == 'fixed' %}
+            {{ target.fixed_check_in }} → {{ target.fixed_check_out }}
+          {% else %}
+            <span title="Resolved to absolute dates at every dispatch">
+              {{ 'tonight' if target.lead_time_days == 0 else '+%dd'|format(target.lead_time_days) }},
+              {{ target.length_of_stay_nights }}n
+            </span>
+          {% endif %}
+        </td>
+        <td class="num">{{ target.adults }}A{{ '+%dC'|format(target.children) if target.children else '' }}</td>
+        <td class="num">{{ target.interval_minutes }}m</td>
+        <td class="muted nowrap">{{ target.next_run_at|localtime('%d %b %H:%M') }}</td>
+        <td>
+          {% if not target.is_enabled %}<span class="pill pill-off">disabled</span>
+          {% elif target.circuit_state.value != 'closed' %}<span class="pill pill-stop">{{ target.circuit_state.value }}</span>
+          {% elif target.is_stale(now) %}<span class="pill pill-warn">stale</span>
+          {% else %}<span class="pill pill-ok">ok</span>{% endif %}
+          {% if target.consecutive_failures %}<span class="muted">{{ target.consecutive_failures }} fails</span>{% endif %}
+        </td>
+        <td class="nowrap">
+          {% if is_admin and target.is_enabled %}
+          <button class="run-now" data-target-id="{{ target.id }}">Run now</button>
+          <span class="run-status" data-for="{{ target.id }}"></span>
+          {% elif is_admin %}
+          <span class="muted">disabled</span>
+          {% endif %}
+        </td>
       </tr>
-      {% else %}
-      <tr><td colspan="6" class="muted">No runs recorded.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+
+  {% if is_admin and has_source %}
+  <details class="panel">
+    <summary>Watch another stay window</summary>
+    <form class="stack api-form" data-endpoint="/api/v1/monitor-targets" data-method="POST">
+      <label>Source
+        <select name="hotel_source_id" required>
+          {% for hotel_source, source in sources %}
+          <option value="{{ hotel_source.id }}">{{ source.display_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="date_strategy" value="rolling">
+      <label>Nights ahead <input name="lead_time_days" type="number" min="0" max="365" value="7"></label>
+      <label>Nights of stay <input name="length_of_stay_nights" type="number" min="1" max="30" value="1"></label>
+      <label>Adults <input name="adults" type="number" min="1" max="20" value="2"></label>
+      <label>Check every (minutes) <input name="interval_minutes" type="number" min="5" max="1440" value="30"></label>
+      <button type="submit">Add window</button>
+      <p class="form-status" hidden></p>
+      <span class="muted">
+        Each window is its own price series and is never compared against
+        another — different nights are different products.
+      </span>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ── reference, not daily use ──────────────────────────────────────── #}
+<section>
+  <h2 class="muted-head">Setup detail</h2>
+
+  {% if is_admin %}
+  <details class="panel" id="hotel-details">
+    <summary>Hotel details <span class="muted">— name, location, notes</span></summary>
+    <form class="stack api-form" style="margin-top:12px"
+          data-endpoint="/api/v1/hotels/{{ hotel.id }}" data-method="PATCH">
+      <label>Name
+        <input name="name" value="{{ hotel.name }}" maxlength="200" required>
+      </label>
+      <label>Location
+        <input name="location" value="{{ hotel.location or '' }}" maxlength="200">
+      </label>
+      <label>Notes
+        <textarea name="notes" rows="2">{{ hotel.notes or '' }}</textarea>
+      </label>
+      <button type="submit">Save</button>
+      <p class="form-status" hidden></p>
+      <span class="muted">
+        Renaming changes only what is displayed. The address of this page is
+        keyed on the slug fixed when the hotel was created, so links already
+        shared keep working, and the price history is untouched — it belongs to
+        the hotel, not to its name.
+      </span>
+    </form>
+
+    {#
+      Two different answers to "get rid of this", kept visibly apart because
+      one is reversible and the other is not.
+    #}
+    <div class="danger-zone">
+      {% if hotel.is_active %}
+      <h3>Stop monitoring</h3>
+      <p class="muted">
+        The usual answer. Checks stop and it leaves the Matrix, but every price
+        already collected stays and resuming picks up where it left off — a
+        competitor you stopped watching in March is still the answer to what
+        they charged in March.
+      </p>
+      <button class="deactivate-hotel" data-hotel-id="{{ hotel.id }}"
+              data-hotel-name="{{ hotel.name }}">Stop monitoring</button>
+      {% else %}
+      <h3>Resume monitoring</h3>
+      <p class="muted">
+        Monitoring is stopped and every target stays disabled until you resume.
+      </p>
+      <button class="reactivate-hotel" data-hotel-id="{{ hotel.id }}">Resume monitoring</button>
+      {% endif %}
+
+      <h3 class="danger-head">Delete permanently</h3>
+      <p class="muted">
+        For a hotel added by mistake, or one that spent a week pointed at the
+        wrong property — where the recorded history is noise rather than
+        evidence. This erases the hotel, its rooms, its targets and every price
+        ever recorded for it. Nothing here can bring it back.
+      </p>
+      <form class="stack purge-hotel" data-hotel-id="{{ hotel.id }}">
+        {# The name goes on its own line: a .stack label is a flex column, so
+           text wrapped around the input would break into three stacked
+           fragments. #}
+        <label>
+          To confirm, type the hotel's name exactly
+          <input name="confirm_name" required autocomplete="off" spellcheck="false"
+                 placeholder="{{ hotel.name }}">
+        </label>
+        <button type="submit" class="danger">Delete permanently</button>
+        <p class="form-status" hidden></p>
+      </form>
+    </div>
+  </details>
+  {% endif %}
+
+  <details class="panel">
+    <summary>
+      Data source
+      {% if has_source %}
+        <span class="muted">— {{ sources[0][1].display_name }}</span>
+        {% if sources[0][1].is_usable %}<span class="pill pill-ok">ready</span>
+        {% else %}<span class="pill pill-warn">needs ToS review</span>{% endif %}
+      {% else %}
+        <span class="pill pill-warn">none attached</span>
+      {% endif %}
+    </summary>
+
+    <table class="grid">
+      <thead><tr><th>Engine</th><th>Adapter</th><th>Property</th><th>URL template</th></tr></thead>
+      <tbody>
+        {% for hotel_source, source in sources %}
+        <tr>
+          <td>{{ source.display_name }}</td>
+          <td><code>{{ source.adapter_key }}</code></td>
+          <td class="muted">{{ hotel_source.external_id or '—' }}</td>
+          <td class="truncate"><code class="muted">{{ hotel_source.url or '—' }}</code></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">Nothing attached — no prices will be collected.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if is_admin and has_source %}
+    {#
+      Correcting a pasted link. Not a plain edit of the URL field: what is
+      stored is a TEMPLATE, with the dates replaced by placeholders so the
+      target follows a rolling window. A hand-typed URL would pin one night
+      forever and the prices would go stale while still looking current — so
+      the URL is re-detected exactly as it was on attach.
+    #}
+    {% for hotel_source, source in sources %}
+    <form class="stack replace-url" style="margin-top:12px"
+          data-hotel-source-id="{{ hotel_source.id }}">
+      <label>
+        Replace the booking link
+        {% if sources|length > 1 %}<span class="muted">— {{ source.display_name }}</span>{% endif %}
+        <input name="url" size="70" required placeholder="https://…">
+      </label>
+      <label class="inline confirm-discard" hidden>
+        <input type="checkbox" name="discard_history" value="true">
+        Yes — this is a different property, drop the stored baselines
+      </label>
+      <button type="submit">Re-detect and save</button>
+      <p class="form-status" hidden></p>
+      <span class="muted">
+        Paste the corrected page while it is showing rates for specific dates.
+        If it turns out to be a different property, this will stop and ask:
+        prices already collected belong to the old one, and comparing the two
+        would report the gap between two hotels as a price change.
+      </span>
+    </form>
+    {% endfor %}
+    {% endif %}
+
+    {% if is_admin and not has_source %}
+    <form class="stack api-form" style="margin-top:12px"
+          data-endpoint="/api/v1/hotels/{{ hotel.id }}/sources/from-url"
+          data-method="POST">
+      <label>Booking URL <input name="url" size="70" required placeholder="https://…"></label>
+      <button type="submit">Detect and attach</button>
+      <p class="form-status" hidden></p>
+      <span class="muted">
+        Recognised: {% for e in known_engines %}<code>{{ e.domains|join(', ') }}</code>{{ ", " if not loop.last }}{% endfor %}.
+        Anything else needs <code>scripts/probe_site.py</code> first — this will
+        not invent a configuration for a site nobody has inspected.
+      </span>
+    </form>
+    {% endif %}
+  </details>
+
+  <details class="panel">
+    <summary>Room types <span class="muted">— {{ rooms|length }}, discovered from the site</span></summary>
+    <table class="grid">
+      <thead><tr><th>Name</th><th>Matching key</th><th>Capacity</th></tr></thead>
+      <tbody>
+        {% for room in rooms %}
+        <tr>
+          <td>{{ room.name }}</td>
+          <td><code class="muted">{{ room.canonical_name }}</code></td>
+          <td class="num">{{ room.capacity or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">
+          None yet — created automatically by the first successful fetch.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if is_admin %}
+    <form class="inline api-form" style="margin-top:10px"
+          data-endpoint="/api/v1/hotels/{{ hotel.id }}/rooms" data-method="POST">
+      <input name="name" required maxlength="200" placeholder="Add a room by hand">
+      <button type="submit">Add</button>
+    </form>
+    {% endif %}
+  </details>
+
+  <details class="panel">
+    <summary>Recent checks <span class="muted">— {{ runs|length }}</span></summary>
+    <table class="grid">
+      <thead><tr><th>Started</th><th>Status</th><th>Offers</th><th>Unmatched</th><th>Changes</th><th>Took</th></tr></thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td class="nowrap muted">{{ run.started_at|localtime('%d %b %H:%M:%S') }}</td>
+          <td><span class="pill pill-{{ 'ok' if run.status.value == 'success' else ('stop' if run.status.value == 'failed' else 'warn') }}">{{ run.status.value }}</span></td>
+          <td class="num">{{ run.offers_found }}</td>
+          <td class="num">{{ run.offers_unmatched }}</td>
+          <td class="num">{{ run.changes_detected }}</td>
+          <td class="num muted">{{ (run.duration_ms / 1000)|round(1) if run.duration_ms else '—' }}s</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted">No runs recorded.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
 </section>
 {% endblock %}

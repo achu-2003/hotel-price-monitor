@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
+from app.adapters.engines import detect, known_engines
 from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
 from app.db.models import (
     Hotel,
@@ -13,6 +15,9 @@ from app.db.models import (
     HotelSource,
     MonitoringError,
     MonitorTarget,
+    PriceChange,
+    PriceObservation,
+    PriceSeries,
     Recipient,
     RoomType,
     RoomTypeAlias,
@@ -28,17 +33,24 @@ from app.schemas.hotels import (
     HotelDetail,
     HotelHealth,
     HotelOut,
+    HotelPurge,
+    HotelPurgeResult,
     HotelSourceCreate,
     HotelSourceOut,
     HotelSourceUpdate,
+    AttachFromUrl,
     HotelUpdate,
     RoomTypeCreate,
     RoomTypeOut,
     RoomTypeUpdate,
+    ReplaceUrl,
+    ReplaceUrlResult,
 )
+from app.core.logging import get_logger
 from app.services.room_matching import normalize_room_name
 
 router = APIRouter(tags=["hotels"])
+log = get_logger("api.hotels")
 
 
 def _slugify(name: str) -> str:
@@ -205,6 +217,11 @@ async def update_hotel(
         request=request,
     )
     await session.commit()
+    # updated_at is maintained by the database (onupdate=now()), so after an
+    # UPDATE the loaded value is stale and SQLAlchemy marks it for refresh.
+    # Serialising without this raises MissingGreenlet: reading the attribute
+    # would issue a query, and the async session cannot do that lazily.
+    await session.refresh(hotel)
     return HotelOut.model_validate(hotel)
 
 
@@ -283,6 +300,204 @@ async def attach_source(
     )
 
 
+
+def _json_fragment(url: str) -> str:
+    """A stable slice of an endpoint URL, for matching it again next fetch.
+
+    The path without the query: query strings carry dates and ids that change
+    every run, so matching on the whole URL would match nothing tomorrow.
+    """
+    from urllib.parse import urlparse
+
+    path = urlparse(url).path or url
+    parts = [p for p in path.split("/") if p]
+    return "/" + "/".join(parts[-2:]) if len(parts) >= 2 else path
+
+
+def _detection_for_discovery(url: str):
+    """Wrap a discovered site in the same shape a known engine produces.
+
+    A generic profile, so everything downstream — the source row, the URL
+    template, the placeholders — behaves identically whether the config came
+    from a hand-written profile or from inspecting the page.
+    """
+    from urllib.parse import urlparse
+
+    from app.adapters.engines import Detection, EngineProfile, parameterise_url
+
+    host = (urlparse(url).hostname or "site").lower()
+    template, substituted = parameterise_url(url)
+    profile = EngineProfile(
+        key=host.replace(".", "-")[:60],
+        display_name=f"{host} (auto-discovered)",
+        adapter_key="playwright_direct_site",
+        domains=(host,),
+        adapter_config={},
+        notes="Configuration derived by inspecting the page, then verified "
+              "against the prices it displays.",
+    )
+    return Detection(profile=profile, url_template=template,
+                     external_id=None, substituted=substituted)
+
+
+@router.post(
+    "/hotels/{hotel_id}/sources/from-url",
+    response_model=HotelSourceOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_source_from_url(
+    hotel_id: int,
+    payload: AttachFromUrl,
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+):
+    """Attach a hotel by pasting its booking URL. Everything else is derived.
+
+    The URL already states which engine a hotel is on, and the engine
+    determines the adapter, the field mapping and where the property code
+    lives. Making an operator restate all three was busywork with three
+    chances to get it wrong.
+
+    A 422 for an unrecognised engine is the honest answer: this deliberately
+    will not invent a configuration for a site nobody has inspected. Run
+    scripts/probe_site.py, add a profile to app/adapters/engines.py, and every
+    hotel on that engine becomes a paste from then on.
+    """
+    await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+
+    detection = detect(str(payload.url))
+
+    discovered_config: dict | None = None
+    discovery_note: str | None = None
+    if detection is None:
+        # Unknown engine. Rather than refuse, inspect the page: load it, watch
+        # what JSON it fetches, and look for a room list whose prices also
+        # appear on screen. Slow (a browser, ~30-60s) but it happens once per
+        # hotel, and it is the difference between "we support your site" and
+        # "someone must write a profile first".
+        #
+        # Sync Playwright cannot run inside the event loop, so it goes to a
+        # worker thread.
+        from fastapi.concurrency import run_in_threadpool
+
+        from app.adapters.discovery import inspect_url
+
+        try:
+            result = await run_in_threadpool(inspect_url, str(payload.url))
+        except Exception as exc:  # noqa: BLE001 - reported, never leaked raw
+            log.warning("discovery_failed", url=str(payload.url)[:120], error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Could not inspect that page: {type(exc).__name__}. If it "
+                    f"showed a CAPTCHA or a bot wall, that is a refusal and this "
+                    f"hotel needs manual entry instead."
+                ),
+            ) from exc
+
+        if not result.ok:
+            reason = result.notes[-1] if result.notes else "nothing usable was found."
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Inspected the page but could not find prices it could trust. "
+                    f"{reason} This usually means the rates only load after "
+                    f"choosing dates inside the page. Try the URL you land on "
+                    f"AFTER clicking Book Now and picking dates — or track this "
+                    f"hotel by manual entry."
+                ),
+            )
+
+        best = result.best
+        fragment = _json_fragment(best.source_url)
+        discovered_config = best.as_adapter_config(fragment)
+        discovery_note = (
+            f"Auto-discovered: {best.room_count} rooms from {fragment}, "
+            f"{best.corroborated}/{len(best.sample_prices)} prices confirmed "
+            f"against the page."
+        )
+        detection = _detection_for_discovery(str(payload.url))
+        log.info("source_discovered", url=str(payload.url)[:120],
+                 rooms=best.room_count, fields=best.fields)
+    # A URL with no date parameter cannot ask for a specific night. That is a
+    # real limitation, not a reason to refuse: plenty of small hotels publish
+    # one standing rate rather than pricing per night, and tracking that rate
+    # is genuinely useful — it just is not the same thing.
+    #
+    # So it is accepted and LABELLED. The flag travels on the hotel source, and
+    # the target endpoint uses it to refuse a future-dated window, which is the
+    # only way this could produce a wrong number: filing today's rate under
+    # next Saturday.
+    standing_rate = not detection.is_complete
+
+    profile = detection.profile
+
+    # One source per engine, shared by every hotel on it. Created on first use
+    # and reused after, which is what makes the second hotel a paste.
+    source = await session.scalar(select(Source).where(Source.code == profile.key))
+    if source is None:
+        source = Source(
+            code=profile.key,
+            display_name=profile.display_name,
+            adapter_key=profile.adapter_key,
+            base_domain=profile.domains[0],
+            rate_limit_per_min=profile.rate_limit_per_min,
+            # Created disabled: a source is not fetched until a named human has
+            # recorded a Terms of Service review. Auto-detection resolves the
+            # technical question, never the permission one.
+            is_enabled=False,
+        )
+        session.add(source)
+        await session.flush()
+
+    existing = await session.scalar(
+        select(HotelSource).where(
+            HotelSource.hotel_id == hotel_id, HotelSource.source_id == source.id
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This hotel is already attached to {source.display_name!r}.",
+        )
+
+    hotel_source = HotelSource(
+        hotel_id=hotel_id,
+        source_id=source.id,
+        url=detection.url_template,
+        external_id=detection.external_id,
+        currency=payload.currency,
+        adapter_config={
+            **(discovered_config or profile.adapter_config),
+            **({"standing_rate": True} if standing_rate else {}),
+        },
+    )
+    session.add(hotel_source)
+    await session.flush()
+
+    await record_audit(
+        session, user=admin, action="attach_from_url", entity="hotel_source",
+        entity_id=hotel_source.id,
+        after={"engine": profile.key, "url_template": detection.url_template,
+               "external_id": detection.external_id},
+        request=request,
+    )
+    await session.commit()
+
+    log.info("source_detected_from_url", hotel_id=hotel_id, engine=profile.key,
+             external_id=detection.external_id, usable=source.is_usable,
+             standing_rate=standing_rate)
+
+    return HotelSourceOut(
+        **{k: getattr(hotel_source, k) for k in
+           ("id", "hotel_id", "source_id", "url", "external_id", "currency",
+            "adapter_config", "is_active", "last_verified_at")},
+        source_code=source.code,
+        adapter_key=source.adapter_key,
+    )
+
+
 @router.patch("/hotel-sources/{hotel_source_id}", response_model=HotelSourceOut)
 async def update_hotel_source(
     hotel_source_id: int,
@@ -319,6 +534,264 @@ async def update_hotel_source(
             "adapter_config", "is_active", "last_verified_at")},
         source_code=source.code if source else None,
         adapter_key=source.adapter_key if source else None,
+    )
+
+
+@router.post("/hotel-sources/{hotel_source_id}/replace-url", response_model=ReplaceUrlResult)
+async def replace_hotel_source_url(
+    hotel_source_id: int,
+    payload: ReplaceUrl,
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+):
+    """Repoint a hotel at the correct booking page.
+
+    WHY THIS IS NOT ``PATCH /hotel-sources/{id}`` WITH A URL
+    =======================================================
+    That endpoint stores the string it is given. What is stored here is a URL
+    *template*: the dates and guest counts were replaced with placeholders on
+    attach so the target follows a rolling window. Pasting a fresh address-bar
+    URL into the raw field would silently pin one night forever — every check
+    would fetch the same date and the prices would go stale while still looking
+    current. Re-detecting is the only way to correct a link safely, so it gets
+    its own verb.
+
+    WHY CHANGING THE PROPERTY NEEDS A CONFIRMATION
+    ==============================================
+    ``offer_key`` is built from hotel, source, room, dates and occupancy — not
+    from the URL. Prices fetched from a different property therefore land in
+    the SAME series as the old ones, and the comparison state machine reads the
+    gap between two hotels as a price change: a confirmed alert saying a room
+    moved from 1,850 to 4,200 when nothing moved at all.
+
+    The fix is to drop the baselines, not the history. ``price_series`` rows
+    hold "the last price we saw", so deleting them makes the next check a first
+    sighting — recorded, and told to nobody. ``price_observations`` are left
+    alone: they are what was genuinely on the screen at the time, and they are
+    the answer to "why does last week look like a different hotel?"
+    """
+    hotel_source = await get_object_or_404(
+        session, HotelSource, hotel_source_id, "Hotel source"
+    )
+
+    detection = detect(payload.url)
+    if detection is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"That URL is not on a booking engine this build knows. Known: "
+                f"{[e['display_name'] for e in known_engines()]}. Run "
+                f"scripts/probe_site.py against it to find out what it exposes."
+            ),
+        )
+    if not detection.is_complete:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "No check-in date parameter was found in that URL, so every "
+                "check would fetch the same night forever and the prices would "
+                "silently go stale. Paste the URL from a page showing rates for "
+                "specific dates."
+            ),
+        )
+
+    current_source = await session.get(Source, hotel_source.source_id)
+    # Identity is the DOMAIN, not the source's code. A source created by hand
+    # before the paste flow existed can carry any code at all, and rejecting a
+    # perfectly correct URL because a label does not match would be a puzzle
+    # with no way out from the dashboard. The adapter has to agree too: the
+    # stored one is what will fetch the new URL.
+    host = (urlparse(payload.url).hostname or "").lower()
+    same_engine = (
+        current_source is not None
+        and current_source.base_domain
+        and current_source.base_domain.lower() in host
+        and current_source.adapter_key == detection.profile.adapter_key
+    )
+    if not same_engine:
+        # A different engine means a different source, a different rate-limit
+        # budget and a different Terms of Service review. Moving the row would
+        # inherit an approval that was never given for this site.
+        current_name = current_source.display_name if current_source else "another engine"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"That URL is on {detection.profile.display_name}, but this link "
+                f"is attached to {current_name}. Attach it as a separate source "
+                "instead — each engine has its own Terms of Service review and "
+                "its own price history."
+            ),
+        )
+
+    property_changed = detection.external_id != hotel_source.external_id
+    if property_changed and not payload.discard_history:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"That URL is a different property ({hotel_source.external_id or 'unknown'}"
+                f" → {detection.external_id or 'unknown'}). Prices already "
+                "collected belong to the old one, and comparing them against the "
+                "new property would report the difference between two hotels as "
+                "a price change. Confirm to drop the stored baselines and start "
+                "fresh — the raw observations are kept."
+            ),
+        )
+
+    before = {"url": hotel_source.url, "external_id": hotel_source.external_id}
+
+    series_reset = 0
+    if property_changed:
+        result = await session.execute(
+            delete(PriceSeries).where(
+                PriceSeries.hotel_id == hotel_source.hotel_id,
+                PriceSeries.source_id == hotel_source.source_id,
+            )
+        )
+        series_reset = result.rowcount or 0
+
+    hotel_source.url = detection.url_template
+    hotel_source.external_id = detection.external_id
+
+    # The rest of adapter_config is deliberately left alone: the engine has not
+    # changed, so the profile defaults are the ones already stored, and
+    # overwriting would throw away any selector an operator hand-fixed during
+    # an outage.
+    #
+    # url_template is the exception, and it is not optional. The direct-site
+    # adapter reads `config.get("url_template") or context.url`, so a stale
+    # template there would keep fetching the OLD property while the row, the
+    # dashboard and the audit trail all said the link had been replaced —
+    # the worst kind of wrong, because everything visible agrees.
+    if hotel_source.adapter_config and "url_template" in hotel_source.adapter_config:
+        config = dict(hotel_source.adapter_config)
+        config["url_template"] = detection.url_template
+        hotel_source.adapter_config = config
+
+    hotel_source.last_verified_at = None
+
+    await record_audit(
+        session, user=admin, action="replace_url", entity="hotel_source",
+        entity_id=hotel_source_id, before=before,
+        after={"url": detection.url_template, "external_id": detection.external_id,
+               "property_changed": property_changed, "series_reset": series_reset},
+        request=request,
+    )
+    await session.commit()
+
+    log.info(
+        "hotel_source_url_replaced",
+        hotel_source_id=hotel_source_id,
+        engine=detection.profile.key,
+        property_changed=property_changed,
+        series_reset=series_reset,
+    )
+
+    return ReplaceUrlResult(
+        hotel_source=HotelSourceOut(
+            **{k: getattr(hotel_source, k) for k in
+               ("id", "hotel_id", "source_id", "url", "external_id", "currency",
+                "adapter_config", "is_active", "last_verified_at")},
+            source_code=current_source.code,
+            adapter_key=current_source.adapter_key,
+        ),
+        property_changed=property_changed,
+        series_reset=series_reset,
+    )
+
+
+@router.post("/hotels/{hotel_id}/purge", response_model=HotelPurgeResult)
+async def purge_hotel(
+    hotel_id: int,
+    payload: HotelPurge,
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+):
+    """Erase a hotel and everything ever collected for it. Not reversible.
+
+    WHY THIS IS SEPARATE FROM ``DELETE /hotels/{id}``
+    ================================================
+    That one deactivates: it stops the checks and keeps the history, because
+    history is the product and a competitor you stopped watching in March is
+    still the answer to "what did they charge last March?".
+
+    This exists for the other case, which is just as real: a hotel added by
+    mistake, or attached to the wrong property, whose entire recorded history
+    is noise. Leaving those in the list forever teaches people to ignore the
+    list.
+
+    THE NAME MUST BE TYPED
+    ======================
+    Not a checkbox and not a confirm dialog. This destroys data no backup
+    inside the application can return, and the cost of a mis-click is
+    permanent, so the confirmation is made to cost a deliberate ten seconds.
+
+    OBSERVATIONS ARE DELETED BY KEY, NOT BY CASCADE
+    ===============================================
+    ``price_observations`` has no ``hotel_id`` — it is keyed by ``offer_key``,
+    which is what makes the table cheap to write. So the cascade cannot reach
+    it, and skipping this step would leave rows that no query can ever return
+    and no retention policy will ever prune.
+    """
+    hotel = await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+
+    if payload.confirm_name.strip() != hotel.name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Type the hotel's name exactly to confirm. Expected "
+                f"{hotel.name!r}."
+            ),
+        )
+
+    offer_keys = list(
+        (
+            await session.scalars(
+                select(PriceSeries.offer_key).where(PriceSeries.hotel_id == hotel_id)
+            )
+        ).all()
+    )
+
+    observations = 0
+    if offer_keys:
+        result = await session.execute(
+            delete(PriceObservation).where(PriceObservation.offer_key.in_(offer_keys))
+        )
+        observations = result.rowcount or 0
+
+    changes = await session.scalar(
+        select(func.count(PriceChange.id)).where(PriceChange.hotel_id == hotel_id)
+    ) or 0
+
+    # Recorded BEFORE the row goes, so the audit trail keeps the name and the
+    # numbers after there is nothing left to look up.
+    await record_audit(
+        session, user=admin, action="purge", entity="hotel", entity_id=hotel_id,
+        before={"name": hotel.name, "slug": hotel.slug},
+        after={"series": len(offer_keys), "observations": observations,
+               "changes": changes},
+        request=request,
+    )
+
+    # A Core DELETE, not session.delete(): the ORM cascade would lazy-load
+    # every relationship to walk it, which an async session cannot do
+    # implicitly. The database's own ON DELETE CASCADE covers sources, rooms,
+    # targets, series, changes, errors and recipient links.
+    await session.execute(delete(Hotel).where(Hotel.id == hotel_id))
+    await session.commit()
+
+    log.info(
+        "hotel_purged", hotel_id=hotel_id, name=hotel.name,
+        series=len(offer_keys), observations=observations, changes=changes,
+    )
+
+    return HotelPurgeResult(
+        hotel_id=hotel_id,
+        name=hotel.name,
+        series_deleted=len(offer_keys),
+        observations_deleted=observations,
+        changes_deleted=changes,
     )
 
 

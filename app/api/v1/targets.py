@@ -21,6 +21,7 @@ from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, r
 from app.core.logging import get_logger
 from app.db.models import (
     CheckRun,
+    DateStrategy,
     CheckRunStatus,
     CircuitState,
     Hotel,
@@ -114,6 +115,23 @@ async def create_target(
     hotel_source = await get_object_or_404(
         session, HotelSource, payload.hotel_source_id, "Hotel source"
     )
+
+    # A standing-rate source publishes one price with no notion of a night.
+    # Watching it "7 days out" would store today's rate under next week's date:
+    # a number that is plausible, wrong, and impossible to notice later.
+    if (hotel_source.adapter_config or {}).get("standing_rate"):
+        ahead = payload.lead_time_days
+        if payload.date_strategy == DateStrategy.FIXED or (ahead or 0) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This source publishes one current rate rather than pricing "
+                    "per night, so it can only be watched for tonight. Set "
+                    "'nights ahead' to 0 — the rate still updates whenever the "
+                    "hotel changes it."
+                ),
+            )
+
     target = MonitorTarget(**payload.model_dump())
     # Due immediately: a newly added target should produce a first sighting on
     # the next sweep rather than in half an hour.
@@ -215,6 +233,29 @@ async def run_target_now(
             detail=(
                 f"Source {source.code!r} is not usable: it must be enabled and "
                 f"have a recorded Terms of Service review before anything is fetched."
+            ),
+        )
+
+    # A manual run must respect the same gates the scheduler does. Without
+    # these two checks, "Run now" quietly revives a target that was stopped for
+    # a reason -- a robots.txt refusal, say -- and the operator sees the failure
+    # in the Health tab minutes later instead of an answer at the button.
+    if not hotel_source.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This hotel's {source.code!r} source is deactivated, so it is not "
+                f"fetched. Deactivation is usually deliberate — a robots.txt "
+                f"refusal, a bot wall, or a wrong booking engine. Reactivate the "
+                f"source on the hotel page if the reason no longer applies."
+            ),
+        )
+    if not target.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This target is disabled. Enable it first — running a disabled "
+                "target by hand would hide whatever caused it to be turned off."
             ),
         )
 

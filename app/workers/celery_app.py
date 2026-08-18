@@ -95,8 +95,15 @@ celery_app.conf.update(
     },
 )
 
+# Make this the app that bare @shared_task decorators bind to. Without it, a
+# task module imported before this one (the API does exactly that to queue a
+# manual run) attaches to Celery's default app, whose broker is
+# amqp://localhost:5672 — and apply_async then fails with "connection refused"
+# while Redis is demonstrably healthy.
+celery_app.set_default()
+
 # Import for their side effect of registering tasks. Kept at the bottom so the
-# app object exists before any task decorator runs.
+# app object exists, and is the default, before any task decorator runs.
 celery_app.autodiscover_tasks(
     [
         "app.workers.tasks_fetch",

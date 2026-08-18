@@ -23,6 +23,8 @@ What this module guarantees for every fetch:
 """
 from __future__ import annotations
 
+import sys
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -168,6 +170,36 @@ def detect_bot_wall(page: Page) -> str | None:
     return None
 
 
+def _ensure_windows_subprocess_support() -> None:
+    """Make sure this process can spawn a subprocess, on Windows.
+
+    Playwright drives the browser through a Node process it starts itself.
+    Spawning that needs asyncio's **Proactor** event loop; the **Selector**
+    loop has no subprocess support on Windows and raises ``NotImplementedError``
+    — with an empty message, which makes it maddening to diagnose.
+
+    Celery installs the Selector policy on Windows, so a fetch that works when
+    run directly fails the moment the same code runs inside a worker. That is
+    exactly how this was found: identical adapter, identical config, success
+    inline and a blank "unknown" error under the scheduler.
+
+    A no-op everywhere else, including the Linux containers used in production,
+    where Proactor does not exist and the default policy is already correct.
+    """
+    if sys.platform != "win32":
+        return
+
+    import asyncio
+
+    proactor = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+    if proactor is None:
+        return
+    if not isinstance(asyncio.get_event_loop_policy(), proactor):
+        asyncio.set_event_loop_policy(proactor())
+        log.info("asyncio_policy_switched_to_proactor",
+                 reason="Playwright needs subprocess support on Windows")
+
+
 class BrowserPool:
     """One browser per worker process, many contexts.
 
@@ -177,18 +209,38 @@ class BrowserPool:
     """
 
     def __init__(self) -> None:
-        self._playwright = None
-        self._browser: Browser | None = None
+        # PER THREAD, not per process.
+        #
+        # Playwright's sync API is greenlet-based and bound to the thread that
+        # created it; touching it from another raises "Cannot switch to a
+        # different thread". A single shared browser looks fine until the pool
+        # hands a task to a different thread, and then every browser fetch
+        # fails with an error that says nothing about threads being the cause.
+        #
+        # threading.local gives each thread its own Playwright and browser, so
+        # the pool is safe wherever it is used — Celery's solo pool, a prefork
+        # child, or a web request handed to a threadpool.
+        self._local = threading.local()
+
+    @property
+    def _playwright(self):
+        return getattr(self._local, "playwright", None)
+
+    @property
+    def _browser(self) -> Browser | None:
+        return getattr(self._local, "browser", None)
 
     def _ensure_browser(self) -> Browser:
-        if self._browser is not None and self._browser.is_connected():
-            return self._browser
+        browser = self._browser
+        if browser is not None and browser.is_connected():
+            return browser
 
         settings = get_settings()
         if self._playwright is None:
-            self._playwright = sync_playwright().start()
+            _ensure_windows_subprocess_support()
+            self._local.playwright = sync_playwright().start()
 
-        self._browser = self._playwright.chromium.launch(
+        self._local.browser = self._local.playwright.chromium.launch(
             headless=settings.browser_headless,
             args=[
                 "--disable-dev-shm-usage",   # /dev/shm is tiny in containers
@@ -198,7 +250,7 @@ class BrowserPool:
                 "--disable-extensions",
             ],
         )
-        return self._browser
+        return self._local.browser
 
     @contextmanager
     def context(self, *, locale: str, timezone: str) -> Generator[BrowserContext, None, None]:
@@ -225,19 +277,25 @@ class BrowserPool:
                 pass
 
     def close(self) -> None:
+        """Shut down THIS thread's browser.
+
+        Only the calling thread's instance is touched: closing another
+        thread's browser from here would be the very cross-thread access this
+        design exists to avoid.
+        """
         try:
             if self._browser is not None:
                 self._browser.close()
         except PlaywrightError:
             pass
         finally:
-            self._browser = None
+            self._local.browser = None
             if self._playwright is not None:
                 try:
                     self._playwright.stop()
                 except Exception:  # noqa: BLE001
                     pass
-                self._playwright = None
+                self._local.playwright = None
 
 
 #: Module-level, therefore one per Celery worker process.

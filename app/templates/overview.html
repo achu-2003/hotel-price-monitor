@@ -1,43 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Overview · Hotel Price Monitor{% endblock %}
 
-{% block content %}
-<h1>Overview</h1>
-
 {#
-  Stale targets and open circuits are given the alarm styling, not the change
-  count. A day with no changes is normal; a day where checks silently stopped
-  looks identical on every other screen, and that is the failure that costs
-  money.
+  Three numbers, not seven.
+
+  The original had a tile for every counter the API could produce — active
+  hotels, targets enabled, checks this hour — which is inventory, not
+  information. None of them change what anyone does. What matters on opening
+  this page is: did anything move, is anything broken, and are the prices I am
+  looking at actually current.
+
+  Everything that needs a decision now lives on one page, and its tile only
+  appears when the count is non-zero.
 #}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p class="muted">{{ summary.hotels_active }} hotel(s) watched · checked every 30 minutes</p>
+  </div>
+  <a class="btn-link" href="/matrix">Open the Matrix →</a>
+</div>
+
 <section class="tiles">
   <div class="tile">
-    <span class="tile-value">{{ summary.hotels_active }}</span>
-    <span class="tile-label">Active hotels</span>
-  </div>
-  <div class="tile">
-    <span class="tile-value">{{ summary.targets_enabled }}</span>
-    <span class="tile-label">Targets enabled</span>
-  </div>
-  <div class="tile">
     <span class="tile-value">{{ summary.changes_24h }}</span>
-    <span class="tile-label">Changes (24h)</span>
+    <span class="tile-label">Price changes, 24h</span>
   </div>
-  <div class="tile {{ 'tile-alarm' if summary.stale_targets else '' }}">
-    <span class="tile-value">{{ summary.stale_targets }}</span>
-    <span class="tile-label">Stale targets</span>
+
+  {% if attention.total %}
+  <a class="tile tile-alarm" href="/attention">
+    <span class="tile-value">{{ attention.total }}</span>
+    <span class="tile-label">Needs your attention</span>
+  </a>
+  {% else %}
+  <div class="tile tile-quiet">
+    <span class="tile-value">✓</span>
+    <span class="tile-label">Nothing needs you</span>
   </div>
-  <div class="tile {{ 'tile-alarm' if summary.circuits_open else '' }}">
-    <span class="tile-value">{{ summary.circuits_open }}</span>
-    <span class="tile-label">Paused (circuit open)</span>
-  </div>
-  <div class="tile {{ 'tile-warn' if summary.unmatched else '' }}">
-    <span class="tile-value">{{ summary.unmatched }}</span>
-    <span class="tile-label"><a href="/unmatched">Rooms to map</a></span>
-  </div>
-  <div class="tile {{ 'tile-warn' if summary.unresolved_errors else '' }}">
-    <span class="tile-value">{{ summary.unresolved_errors }}</span>
-    <span class="tile-label"><a href="/health-tab">Open errors</a></span>
+  {% endif %}
+
+  <div class="tile">
+    <span class="tile-value">{{ summary.last_check or '—' }}</span>
+    <span class="tile-label">Last successful check</span>
   </div>
 </section>
 
@@ -51,7 +57,7 @@
     <tbody>
       {% for change, hotel_name, room_name in changes %}
       <tr>
-        <td class="nowrap muted">{{ change.changed_at.strftime('%d %b %H:%M') }}</td>
+        <td class="nowrap muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</td>
         <td>{{ hotel_name }}</td>
         <td>{{ room_name or '—' }}</td>
         <td class="num muted">{{ money(change.old_price, change.currency) }}</td>
@@ -74,29 +80,11 @@
   </table>
   <p><a href="/changes">All changes →</a></p>
   {% else %}
-  <p class="muted">No confirmed changes in the last 24 hours.</p>
-  {% endif %}
-</section>
-
-<section>
-  <h2>Open failures</h2>
-  {% if failures %}
-  <table class="grid">
-    <thead><tr><th>When</th><th>Hotel</th><th>Class</th><th>Message</th></tr></thead>
-    <tbody>
-      {% for error, hotel_name in failures %}
-      <tr>
-        <td class="nowrap muted">{{ error.occurred_at.strftime('%d %b %H:%M') }}</td>
-        <td>{{ hotel_name or '—' }}</td>
-        <td><span class="pill pill-{{ 'stop' if not error.is_transient else 'warn' }}">{{ error.error_class.value }}</span></td>
-        <td class="truncate">{{ error.message }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p><a href="/health-tab">Health tab →</a></p>
-  {% else %}
-  <p class="muted">Nothing is currently failing.</p>
+  <p class="muted">
+    No confirmed changes in the last 24 hours. A move must clear ₹50 and 2%,
+    and still be there on the next check, before it counts — so quiet days are
+    normal rather than suspicious.
+  </p>
   {% endif %}
 </section>
 {% endblock %}

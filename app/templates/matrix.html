@@ -37,7 +37,7 @@
           {% for cell in row.cells %}
           <span class="cell {{ 'cell-changed' if cell.changed_recently else '' }}
                        {{ 'cell-soldout' if not cell.is_available else '' }}"
-                title="Last checked {{ cell.last_checked_at.strftime('%d %b %H:%M') }}">
+                title="Last checked {{ cell.last_checked_at|localtime('%d %b %H:%M') }}">
             <span class="cell-room">{{ cell.room_name }}</span>
             <span class="cell-price">
               {% if cell.is_available %}{{ money(cell.price, cell.currency) }}
