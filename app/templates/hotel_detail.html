@@ -167,7 +167,7 @@
     {% endif %}
   </h2>
   <table class="grid">
-    <thead><tr><th>Stay</th><th>Room</th><th>Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
+    <thead><tr><th>Stay</th><th>Room</th><th class="num">Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
     <tbody>
       {% for series, room_name in prices %}
       <tr>
@@ -199,7 +199,7 @@
   <h2>What is being watched</h2>
   <table class="grid">
     <thead>
-      <tr><th>Stay</th><th>Guests</th><th>Every</th><th>Next run</th><th>Health</th><th></th></tr>
+      <tr><th>Stay</th><th class="num">Guests</th><th class="num">Every</th><th>Next run</th><th>Health</th><th></th></tr>
     </thead>
     <tbody>
       {% for target in targets %}
@@ -418,7 +418,7 @@
   <details class="panel">
     <summary>Room types <span class="muted">— {{ rooms|length }}, discovered from the site</span></summary>
     <table class="grid">
-      <thead><tr><th>Name</th><th>Matching key</th><th>Capacity</th></tr></thead>
+      <thead><tr><th>Name</th><th>Matching key</th><th class="num">Capacity</th></tr></thead>
       <tbody>
         {% for room in rooms %}
         <tr>

@@ -33,7 +33,7 @@
     elsewhere are stale while looking current.
   </p>
   <table class="grid">
-    <thead><tr><th>Hotel</th><th>Interval</th><th>Last success</th><th></th></tr></thead>
+    <thead><tr><th>Hotel</th><th class="num">Interval</th><th>Last success</th><th></th></tr></thead>
     <tbody>
       {% for target, hotel_id, hotel_name in stale %}
       <tr class="row-alarm">
@@ -63,7 +63,7 @@
     unwelcome requests.
   </p>
   <table class="grid">
-    <thead><tr><th>Hotel</th><th>State</th><th>Since</th><th>Failures</th><th></th></tr></thead>
+    <thead><tr><th>Hotel</th><th>State</th><th>Since</th><th class="num">Failures</th><th></th></tr></thead>
     <tbody>
       {% for target, hotel_id, hotel_name in paused %}
       <tr>
@@ -93,7 +93,7 @@
   </p>
   <table class="grid">
     <thead>
-      <tr><th>Hotel</th><th>Name on the site</th><th>Seen</th><th>Best guess</th><th>Map to</th></tr>
+      <tr><th>Hotel</th><th>Name on the site</th><th class="num">Seen</th><th>Best guess</th><th>Map to</th></tr>
     </thead>
     <tbody>
       {% for row, hotel_id, hotel_name, suggested_name in unmatched %}
