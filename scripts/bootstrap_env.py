@@ -79,7 +79,7 @@ def main() -> int:
         pass
 
     print(f"Wrote {args.out} with {len(replacements)} generated secrets.")
-    print(f"\nFirst admin login:\n  email    : (see ADMIN_EMAIL in .env)")
+    print("\nFirst admin login:\n  email    : (see ADMIN_EMAIL in .env)")
     print(f"  password : {replacements['ADMIN_PASSWORD']}")
     print("\nChange that password after your first login.")
     print("Back up CREDENTIAL_KEK somewhere other than your database backups:")

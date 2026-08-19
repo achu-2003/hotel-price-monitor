@@ -29,7 +29,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey,
     Index, Integer, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID

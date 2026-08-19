@@ -37,6 +37,7 @@ from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.security import decode_token
 from app.db.models import (
+    ChangeDirection,
     CheckRun,
     CircuitState,
     Hotel,
@@ -53,7 +54,7 @@ from app.db.models import (
     User,
 )
 from app.notifications.render import money
-from app.services.dates import local_today, next_weekend, resolve_stay_window
+from app.services.dates import local_today, next_weekend
 
 router = APIRouter(include_in_schema=False)
 log = get_logger("dashboard")
@@ -207,10 +208,6 @@ async def overview(request: Request, user: DashUser, session: DbSession):
     now = datetime.now(UTC)
     day_ago = now - timedelta(hours=24)
 
-    targets = (
-        await session.scalars(select(MonitorTarget).where(MonitorTarget.is_enabled.is_(True)))
-    ).all()
-
     recent_changes = (
         await session.execute(
             select(PriceChange, Hotel.name, RoomType.name)
@@ -237,13 +234,149 @@ async def overview(request: Request, user: DashUser, session: DbSession):
         # Rendered here rather than in the template so it uses the same
         # timezone conversion as every other timestamp on the page.
         "last_check": _localtime(last_success, "%d %b %H:%M") if last_success else None,
+        "last_check_ago": _ago(last_success, now),
     }
+
+    # Split the 24h count by direction. "5 changes" and "5 increases" are
+    # different news to someone deciding whether to reprice.
+    summary["increases_24h"] = await session.scalar(
+        select(func.count(PriceChange.id)).where(
+            PriceChange.changed_at >= day_ago,
+            PriceChange.direction == ChangeDirection.INCREASE,
+        )
+    )
+
+    hotels = await _tonight_by_hotel(session, now)
+    summary["rooms_today"] = sum(h["rooms"] for h in hotels)
 
     return await _render(
         request, user, session, "overview.html",
         summary=summary,
         changes=recent_changes,
+        hotels=hotels,
+        flat_move=_flat_move(recent_changes),
+        max_pct=max((abs(c.delta_pct or 0) for c, _, _ in recent_changes), default=0) or 1,
     )
+
+
+def _ago(moment: datetime | None, now: datetime) -> str | None:
+    """"18 minutes ago" — the form that answers "are these prices current?".
+
+    A clock time alone makes the reader do the subtraction, and the whole
+    question this tile exists for is how long ago, not when.
+    """
+    if moment is None:
+        return None
+    minutes = int((now - moment).total_seconds() // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} minute{'' if minutes == 1 else 's'} ago"
+    hours, rest = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {rest:02d}m ago"
+    return f"{hours // 24}d ago"
+
+
+def _flat_move(changes) -> dict | None:
+    """A move of the IDENTICAL rupee amount across differently-priced rooms.
+
+    Rooms priced from 1,000 to 3,600 do not all rise by exactly 81.25 because
+    a hotel repriced them; that is a per-booking fee or levy folded into the
+    rate. The table shows five separate rows and hides the one fact that
+    explains all of them, so it is stated once, above the noise.
+    """
+    priced = [c for c, _, _ in changes if c.delta is not None and c.delta != 0]
+    if len(priced) < 3:
+        return None
+    deltas = {c.delta for c in priced}
+    if len(deltas) != 1:
+        return None
+    hotels = {c.hotel_id for c in priced}
+    if len(hotels) != 1:
+        return None
+    return {"delta": priced[0].delta, "currency": priced[0].currency, "rooms": len(priced)}
+
+
+async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
+    """One card per hotel: how many rooms, how cheap, how fresh, and whether
+    the freshness can be trusted.
+
+    A hotel with prices on screen and no successful check behind them is the
+    failure this page exists to make visible, so the status is derived from
+    the check rather than from the presence of rows.
+    """
+    settings = get_settings()
+    today = local_today(settings.timezone)
+
+    rows = (
+        await session.execute(
+            select(
+                Hotel.id,
+                Hotel.name,
+                func.count(PriceSeries.offer_key),
+                func.min(PriceSeries.last_price),
+                func.max(PriceSeries.last_checked_at),
+            )
+            .join(
+                PriceSeries,
+                (PriceSeries.hotel_id == Hotel.id) & (PriceSeries.check_in == today),
+                isouter=True,
+            )
+            .where(Hotel.is_active.is_(True))
+            .group_by(Hotel.id, Hotel.name)
+            .order_by(Hotel.name)
+        )
+    ).all()
+
+    # Standing-rate sources quote one price regardless of date. Their rows are
+    # correct but they are not tracking nightly movement, and a card that said
+    # "Live" would overstate what is being watched.
+    standing = {
+        hotel_id
+        for hotel_id, config in (
+            await session.execute(select(HotelSource.hotel_id, HotelSource.adapter_config))
+        ).all()
+        if (config or {}).get("standing_rate")
+    }
+
+    # Staleness is decided by the same rule the silence alarm uses -- no
+    # success in three intervals -- rather than a second threshold invented
+    # here. Two definitions of "stale" that disagree is how a hotel ends up
+    # green on one screen and red on another.
+    quiet = {
+        hotel_id
+        for hotel_id, target in (
+            await session.execute(
+                select(HotelSource.hotel_id, MonitorTarget).join(
+                    MonitorTarget, MonitorTarget.hotel_source_id == HotelSource.id
+                ).where(MonitorTarget.is_enabled.is_(True))
+            )
+        ).all()
+        if target.is_stale(now)
+    }
+
+    out = []
+    for hotel_id, name, rooms, cheapest, checked in rows:
+        if not rooms:
+            status, tone = "No prices", "bad"
+        elif hotel_id in quiet:
+            status, tone = "Gone quiet", "warn"
+        elif hotel_id in standing:
+            status, tone = "Today only", "warn"
+        else:
+            status, tone = "Live", "ok"
+        out.append({
+            "id": hotel_id,
+            "name": name,
+            "rooms": rooms or 0,
+            "cheapest": cheapest,
+            "checked": _localtime(checked, "%H:%M") if checked else None,
+            "status": status,
+            "tone": tone,
+            "standing": hotel_id in standing,
+        })
+    return out
 
 
 # -- price matrix ----------------------------------------------------

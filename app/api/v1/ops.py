@@ -8,7 +8,6 @@ outage and a restart loop.
 """
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from app.core.errors import ErrorClass
 from app.core.logging import get_logger
 from app.db.models import (
     CheckRun,
-    CheckRunStatus,
     CircuitState,
     Hotel,
     Notification,

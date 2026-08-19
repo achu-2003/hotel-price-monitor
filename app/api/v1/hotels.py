@@ -471,6 +471,14 @@ async def attach_source_from_url(
         adapter_config={
             **(discovered_config or profile.adapter_config),
             **({"standing_rate": True} if standing_rate else {}),
+            # How this configuration was arrived at, kept next to the
+            # configuration itself. A hand-written engine profile can be read
+            # in the repository; a discovered one cannot be read anywhere, and
+            # "3 of 3 prices confirmed against the page" is the difference
+            # between a mapping someone can trust and one they have to
+            # re-derive by opening the site. adapter_config is returned by this
+            # endpoint, so it reaches the operator without a migration.
+            **({"discovery_note": discovery_note} if discovery_note else {}),
         },
     )
     session.add(hotel_source)

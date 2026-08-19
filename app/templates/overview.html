@@ -2,23 +2,27 @@
 {% block title %}Overview · Hotel Price Monitor{% endblock %}
 
 {#
-  Three numbers, not seven.
+  Three questions, in the order someone actually asks them.
 
-  The original had a tile for every counter the API could produce — active
-  hotels, targets enabled, checks this hour — which is inventory, not
-  information. None of them change what anyone does. What matters on opening
-  this page is: did anything move, is anything broken, and are the prices I am
-  looking at actually current.
+  Did anything move? Is anything broken? Are these prices current?
 
-  Everything that needs a decision now lives on one page, and its tile only
-  appears when the count is non-zero.
+  The original answered the first two and left the third to guesswork — a
+  hotel whose checks had silently stopped looked exactly like a healthy one,
+  because both had prices on screen. The freshness strip at the bottom is that
+  missing answer, and it leads with a WORD rather than a clock reading: the
+  reader should not have to subtract two timestamps to learn whether they are
+  looking at today's rates.
+
+  Counters that change nobody's actions still do not get a tile.
 #}
 
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Overview</h1>
-    <p class="muted">{{ summary.hotels_active }} hotel(s) watched · checked every 30 minutes</p>
+    <p class="muted">
+      {{ summary.hotels_active }} hotel(s) watched · {{ summary.rooms_today }} rooms priced · checked every 30 minutes
+    </p>
   </div>
   <a class="btn-link" href="/matrix">Open the Matrix →</a>
 </div>
@@ -27,12 +31,28 @@
   <div class="tile">
     <span class="tile-value">{{ summary.changes_24h }}</span>
     <span class="tile-label">Price changes, 24h</span>
+    {# Direction is the part that decides anything. Five increases and five
+       drops are the same number and opposite news. #}
+    {% if summary.changes_24h %}
+    <span class="tile-sub {{ 'up' if summary.increases_24h else 'down' }}">
+      {% if summary.increases_24h == summary.changes_24h %}all {{ summary.changes_24h }} increases
+      {% elif not summary.increases_24h %}all {{ summary.changes_24h }} decreases
+      {% else %}{{ summary.increases_24h }} up · {{ summary.changes_24h - summary.increases_24h }} down{% endif %}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="tile">
+    <span class="tile-value">{{ summary.rooms_today }}</span>
+    <span class="tile-label">Rooms priced today</span>
+    <span class="tile-sub">across {{ summary.hotels_active }} hotel(s)</span>
   </div>
 
   {% if attention.total %}
   <a class="tile tile-alarm" href="/attention">
     <span class="tile-value">{{ attention.total }}</span>
     <span class="tile-label">Needs your attention</span>
+    <span class="tile-sub">open the list →</span>
   </a>
   {% else %}
   <div class="tile tile-quiet">
@@ -41,18 +61,22 @@
   </div>
   {% endif %}
 
-  <div class="tile">
+  <div class="tile tile-quiet">
     <span class="tile-value">{{ summary.last_check or '—' }}</span>
     <span class="tile-label">Last successful check</span>
+    {% if summary.last_check_ago %}<span class="tile-sub">{{ summary.last_check_ago }}</span>{% endif %}
   </div>
 </section>
 
 <section>
-  <h2>Recent changes <span class="muted">last 24 hours</span></h2>
+  <h2>What moved <span class="muted">last 24 hours</span></h2>
   {% if changes %}
   <table class="grid">
     <thead>
-      <tr><th>When</th><th>Hotel</th><th>Room</th><th>Was</th><th>Now</th><th>Change</th></tr>
+      <tr>
+        <th>When</th><th>Hotel</th><th>Room</th><th>Compared</th>
+        <th class="num">Was</th><th class="num">Now</th><th class="num">Change</th><th style="width:132px">Move</th>
+      </tr>
     </thead>
     <tbody>
       {% for change, hotel_name, room_name in changes %}
@@ -60,6 +84,15 @@
         <td class="nowrap muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</td>
         <td>{{ hotel_name }}</td>
         <td>{{ room_name or '—' }}</td>
+        {# Which two prices this compared. "Was 1,040" means one thing for two
+           readings of the same night and quite another for consecutive ones. #}
+        <td class="nowrap">
+          {% if change.previous_offer_key %}
+            <span class="pill pill-pending" title="Tonight's opening price against last night's closing price for the same room">vs last night</span>
+          {% else %}
+            <span class="muted" title="Two readings of the same stay date, taken hours apart">same night</span>
+          {% endif %}
+        </td>
         <td class="num muted">{{ money(change.old_price, change.currency) }}</td>
         <td class="num strong">
           {% if change.direction.value == 'became_unavailable' %}
@@ -74,10 +107,34 @@
             {% if change.delta_pct %}<span class="muted">({{ '%.1f'|format(change.delta_pct|abs) }}%)</span>{% endif %}
           {% else %}—{% endif %}
         </td>
+        <td>
+          {% if change.delta_pct %}
+          <div class="movebar {{ 'movebar-up' if change.direction.value == 'increase' else 'movebar-down' }}"
+               title="{{ '%.1f'|format(change.delta_pct|abs) }}% — bars are scaled to the largest move on this page">
+            <span style="width: {{ (change.delta_pct|abs / max_pct * 100)|round|int }}%"></span>
+          </div>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+
+  {# The rows are five facts on screen and one fact in reality. #}
+  {% if flat_move %}
+  <p class="note" style="margin-top: var(--s3)">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <span>
+      <strong>All {{ flat_move.rooms }} rooms moved by exactly {{ money(flat_move.delta|abs, flat_move.currency) }}.</strong>
+      An identical amount across differently-priced rooms is a fee or a levy folded into the rate,
+      not the hotel repricing its rooms — worth checking what changed on their booking page.
+    </span>
+  </p>
+  {% endif %}
+
   <p><a href="/changes">All changes →</a></p>
   {% else %}
   <p class="muted">
@@ -85,6 +142,51 @@
     and still be there on the next check, before it counts — so quiet days are
     normal rather than suspicious.
   </p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Are these prices current?</h2>
+  {% if hotels %}
+  <div class="hotel-strip">
+    {% for hotel in hotels %}
+    <a class="hcard {{ 'hcard-warn' if hotel.tone == 'warn' else ('hcard-bad' if hotel.tone == 'bad' else '') }}"
+       href="/hotels/{{ hotel.id }}">
+      <span class="hcard-top">
+        <span class="hcard-name">{{ hotel.name }}</span>
+        <span class="pill {{ 'pill-ok' if hotel.tone == 'ok' else ('pill-warn' if hotel.tone == 'warn' else 'pill-stop') }}">{{ hotel.status }}</span>
+      </span>
+      <span class="hcard-figures">
+        <span class="hcard-count">{{ hotel.rooms }}</span>
+        <span class="hcard-sub">
+          rooms{% if hotel.cheapest is not none %} · from {{ money(hotel.cheapest, 'INR') }}{% endif %}
+        </span>
+      </span>
+      <span class="hcard-foot">
+        {% if hotel.tone == 'ok' %}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+          checked {{ hotel.checked }}
+        {% elif hotel.standing and hotel.tone != 'bad' %}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          site ignores dates — standing rate
+        {% else %}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          {% if hotel.checked %}last checked {{ hotel.checked }}{% else %}never collected{% endif %}
+        {% endif %}
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No active hotels yet.</p>
   {% endif %}
 </section>
 {% endblock %}

@@ -614,6 +614,27 @@ def _carry_over_change(
     if change is None:
         return
 
+    # First sighting happens once per series, so this should already be
+    # unique -- unless the series row was deleted and rebuilt, which recreates
+    # the "first" sighting of a stay date that has already been reported. The
+    # cost of being wrong here is telling someone twice about one price move,
+    # which is the exact failure the whole comparison layer exists to avoid,
+    # so the uniqueness is checked rather than assumed.
+    already = session.execute(
+        select(PriceChange.id).where(
+            PriceChange.offer_key == offer_key,
+            PriceChange.previous_offer_key == change.previous_offer_key,
+        )
+    ).first()
+    if already is not None:
+        log.info(
+            "carry_over_change_already_recorded",
+            hotel_id=ctx.hotel_id,
+            offer_key=offer_key[:12],
+            previous_offer_key=change.previous_offer_key[:12],
+        )
+        return
+
     row = PriceChange(
         offer_key=offer_key,
         hotel_id=ctx.hotel_id,

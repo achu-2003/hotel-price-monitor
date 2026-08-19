@@ -11,7 +11,7 @@ Four jobs, each addressing a way this system fails quietly rather than loudly:
 from __future__ import annotations
 
 import time
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from celery import shared_task

@@ -374,7 +374,6 @@ def _has_usable_json(payloads: list[tuple[str, Any]], page_text: str) -> bool:
 
 def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
     """Turn a DOM scan hit into the same Candidate the JSON route produces."""
-    from decimal import Decimal
 
     names = [str(n).strip() for n in (card.get("names") or []) if str(n).strip()]
     prices: list[Decimal] = []

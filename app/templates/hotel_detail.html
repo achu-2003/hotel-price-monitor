@@ -167,7 +167,7 @@
     {% endif %}
   </h2>
   <table class="grid">
-    <thead><tr><th>Stay</th><th>Room</th><th>Guests</th><th>Price</th><th>Last checked</th></tr></thead>
+    <thead><tr><th>Stay</th><th>Room</th><th>Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
     <tbody>
       {% for series, room_name in prices %}
       <tr>
@@ -445,7 +445,7 @@
   <details class="panel">
     <summary>Recent checks <span class="muted">— {{ runs|length }}</span></summary>
     <table class="grid">
-      <thead><tr><th>Started</th><th>Status</th><th>Offers</th><th>Unmatched</th><th>Changes</th><th>Took</th></tr></thead>
+      <thead><tr><th>Started</th><th>Status</th><th class="num">Offers</th><th class="num">Unmatched</th><th class="num">Changes</th><th class="num">Took</th></tr></thead>
       <tbody>
         {% for run in runs %}
         <tr>

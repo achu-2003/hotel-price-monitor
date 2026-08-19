@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    ARRAY, BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer,
+    ARRAY, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer,
     Numeric, String, Text, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship

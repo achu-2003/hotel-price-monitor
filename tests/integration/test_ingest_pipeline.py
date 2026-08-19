@@ -260,26 +260,45 @@ class TestRoomMatching:
         unmatched = session.scalars(select(UnmatchedOffer)).one()
         assert unmatched.occurrence_count == 3
 
-    def test_a_rename_resolves_through_fuzzy_matching_and_is_remembered(
+    def test_a_rename_is_queued_with_a_suggestion_rather_than_guessed(
         self, session, hotel_fixture
     ):
         """The rename case: "Deluxe Room" becomes "Deluxe Double Room".
 
-        Without this the series silently splits in two and the price history
-        breaks exactly where someone would want to look at it.
+        Resolving this automatically would be convenient, and the matcher
+        deliberately refuses. The shape of the change -- one qualifier added --
+        is identical to what separates "Deluxe Double Occupancy" from "Super
+        Deluxe Double Occupancy": two different rooms at very different rates,
+        which collapsed into a single price series on a real property until
+        score_similarity() started taking the minimum of two ratios.
+
+        The numbers leave no room to have it both ways. The rename scores 63.2
+        against the stored canonical name and the sibling scores 88.5, so any
+        threshold that accepted the first would also merge the second. Both go
+        to a person.
+
+        What the pipeline owes the operator is therefore not a guess but a
+        one-click mapping, which is what this pins: the offer is queued WITH
+        the room type it most likely belongs to, and nothing is written to the
+        price history until someone confirms it.
         """
         summary = ingest_fetch_result(
             session, _result(_offer(name="Deluxe Double Room")), _context(hotel_fixture)
         )
         session.flush()
 
-        assert summary.offers_matched == 1
-        alias = session.scalars(select(RoomTypeAlias)).one()
-        assert alias.room_type_id == hotel_fixture["room"].id
-        assert alias.match_method.value == "fuzzy"
-        # Scoped to the hotel, so the same name on another property is free to
-        # mean something else.
-        assert alias.hotel_id == hotel_fixture["hotel"].id
+        assert summary.offers_matched == 0
+        assert summary.offers_unmatched == 1
+
+        unmatched = session.scalars(select(UnmatchedOffer)).one()
+        assert unmatched.raw_room_name == "Deluxe Double Room"
+        # The near miss is carried, so the dashboard can offer the mapping.
+        assert unmatched.suggested_room_type_id == hotel_fixture["room"].id
+        assert 0.60 <= float(unmatched.suggested_confidence) < 0.90
+
+        # Nothing enters the price history on a guess.
+        assert session.scalar(select(func.count(PriceSeries.offer_key))) == 0
+        assert session.scalar(select(func.count(RoomTypeAlias.id))) == 0
 
 
 class TestIdempotency:

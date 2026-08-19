@@ -22,7 +22,7 @@
 <div class="scroll-x">
 <table class="grid matrix">
   <thead>
-    <tr><th>Hotel</th><th>Cheapest</th><th>Rooms</th></tr>
+    <tr><th>Hotel</th><th class="num">Cheapest</th><th>Rooms</th></tr>
   </thead>
   <tbody>
     {% for row in rows %}
@@ -52,11 +52,19 @@
   </tbody>
 </table>
 </div>
-<p class="muted">
-  Highlighted cells changed in the last 24 hours. Prices come from
-  <code>price_series</code> — the last confirmed value per offer, not the
-  latest raw observation.
-</p>
+{#
+  A highlighted cell used to mean "changed in the last 24 hours" only to
+  whoever had read this template. Stated beneath the grid, it means that to
+  everyone looking at it.
+#}
+<div class="legend">
+  <span class="legend-item"><span class="legend-swatch legend-changed"></span>changed in the last 24 hours</span>
+  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero</span>
+  <span class="legend-item"><span class="legend-own"></span>your property</span>
+  <span class="legend-note">
+    Prices are the last confirmed value per offer, not the latest raw reading.
+  </span>
+</div>
 {% else %}
 <p class="muted">
   Nothing has been collected for these dates and occupancy yet. Prices appear

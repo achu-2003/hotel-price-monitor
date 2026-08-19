@@ -219,3 +219,24 @@ def test_zero_baseline_does_not_divide_by_zero():
     )
     assert result is not None
     assert result.delta_pct == D("100.00")
+
+
+# -- the duplicate guard ---------------------------------------------
+def test_a_rebuilt_series_would_repeat_its_overnight_change():
+    """Why ingest checks for an existing row before writing one.
+
+    The overnight comparison runs at FIRST SIGHTING, which happens once per
+    stay date -- unless the series row is deleted and rebuilt, which makes a
+    stay date "first seen" for a second time. The comparison itself has no
+    memory and will happily report the same overnight move again, so the
+    uniqueness has to be enforced by the caller. This pins the behaviour that
+    makes that necessary, so nobody later removes the check believing the
+    comparison is self-limiting.
+    """
+    args = (previous("1040"), Observation(price=D("1121.25")))
+    first = compare_across_stay_dates(*args, DEFAULT, this_check_in=TODAY)
+    second = compare_across_stay_dates(*args, DEFAULT, this_check_in=TODAY)
+
+    assert first is not None
+    assert second is not None
+    assert (first.previous_offer_key, first.new_price) == (second.previous_offer_key, second.new_price)

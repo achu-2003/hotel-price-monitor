@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
     Integer, Numeric, String, Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID

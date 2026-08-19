@@ -20,7 +20,6 @@ from app.db.models import (
     ChangeDirection,
     Hotel,
     HotelSource,
-    MonitorTarget,
     PriceChange,
     PriceObservation,
     PriceSeries,

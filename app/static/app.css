@@ -203,14 +203,33 @@ section > h2:first-child { margin-top: 0; }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
 }
+/*
+ * A solid indigo band. The sheet's third rule -- colour loud at the edges,
+ * quiet inside the data -- applies to a table's own edge as much as to the
+ * page's: the header holds no numbers, so it can carry weight without making
+ * a single price harder to read, and the rows below stay near white.
+ *
+ * It also does the job the pale version only half did. These labels are 11px
+ * uppercase, the hardest text on the screen to read, and they were set in a
+ * mid-tone lavender on a near-white band.
+ */
 .grid th {
   text-align: left; font-size: 11px; font-weight: 650;
-  letter-spacing: .06em; text-transform: uppercase; color: #4c4a8a;
-  padding: 10px var(--s4);
-  background: linear-gradient(180deg, #f5f4ff, #eef0fb);
-  border-bottom: 1px solid #dfe0f2; white-space: nowrap;
+  letter-spacing: .06em; text-transform: uppercase; color: #fff;
+  padding: 11px var(--s4);
+  background: linear-gradient(180deg, var(--brand-1), #3f32b8);
+  border-bottom: 1px solid #3a2fa8; white-space: nowrap;
 }
+/* Rounded corners live on .grid, which clips its children -- except a sticky
+   or shadowed header, which needs its own radius to sit inside them cleanly. */
+.grid thead tr:first-child th:first-child { border-top-left-radius: var(--radius); }
+.grid thead tr:first-child th:last-child  { border-top-right-radius: var(--radius); }
+/* A header over a right-aligned column belongs on the right too. Left-aligned
+   above tabular numbers it sits at the far side of its own column, which reads
+   as belonging to the column before it -- the wider the column, the worse. */
+.grid th.num { text-align: right; }
 .grid td { padding: 11px var(--s4); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.grid tbody tr:first-child td { padding-top: 13px; }
 .grid tbody tr:last-child td { border-bottom: none; }
 .grid tbody tr:hover td { background: #f8f8ff; }
 
@@ -746,3 +765,95 @@ button.danger:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(190,
    reads as a form rather than as a list. */
 .row-actions { display: flex; align-items: center; gap: var(--s3); }
 .row-actions button { padding: 2px 8px; font-size: 12px; }
+
+/* -- overview: hotel freshness strip ---------------------------------- */
+/*
+ * "Are these prices current?" is the third question this page claims to
+ * answer and the only one it used to leave to guesswork: a frozen hotel and a
+ * healthy one looked identical, because both had prices on screen.
+ *
+ * So the card leads with the status word, not the time. A clock reading makes
+ * the reader do the subtraction; the word has already done it.
+ */
+.hotel-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: var(--s3);
+}
+.hcard {
+  display: flex; flex-direction: column; gap: var(--s2);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: var(--s4);
+  color: inherit;
+  transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
+}
+a.hcard:hover {
+  text-decoration: none; border-color: var(--accent);
+  box-shadow: var(--shadow-lg); transform: translateY(-2px);
+}
+.hcard-top { display: flex; align-items: flex-start; gap: var(--s2); }
+.hcard-name { font-weight: 600; line-height: 1.35; }
+.hcard-top .pill { margin-left: auto; }
+.hcard-figures { display: flex; align-items: baseline; gap: 6px; }
+.hcard-count {
+  font-size: 20px; font-weight: 650; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.hcard-sub { font-size: 12px; color: var(--muted); }
+.hcard-foot {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted);
+  border-top: 1px solid var(--line-soft); padding-top: 9px; margin-top: auto;
+}
+/* The two unhappy states tint the whole card, because a pill alone is easy to
+   miss in a row of four and this is the row you skim rather than read. */
+.hcard-warn { border-color: #f0d9a8; background: linear-gradient(180deg, var(--warn-bg), var(--panel)); }
+.hcard-warn .hcard-foot { color: var(--warn); border-top-color: #f5e6c0; }
+.hcard-bad  { border-color: #f5c2c7; background: linear-gradient(180deg, #fff5f5, var(--panel)); }
+.hcard-bad .hcard-foot { color: var(--up); border-top-color: #f7d7da; }
+
+/* -- a fact the table cannot state ------------------------------------ */
+/*
+ * Five rows that each moved by the identical amount are five separate facts
+ * on screen and one fact in reality. The table can only show the rows.
+ */
+.note {
+  display: flex; gap: var(--s3); align-items: flex-start;
+  background: var(--accent-bg); border: 1px solid #d6cdfb;
+  border-radius: var(--radius); padding: var(--s3) var(--s4);
+  color: var(--ink-2);
+}
+.note svg { flex: 0 0 auto; margin-top: 1px; }
+.note strong { font-weight: 650; }
+
+/* -- movement bar ----------------------------------------------------- */
+/*
+ * Length is percentage change, not rupees: a 81 rupee move means something
+ * very different on a 1,000 room and a 3,600 one, and the percentage is the
+ * comparable quantity. Purely supplementary — the number is right beside it.
+ */
+.movebar { height: 7px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
+.movebar span { display: block; height: 100%; border-radius: 999px; }
+.movebar-up   span { background: linear-gradient(90deg, var(--up-2), var(--up)); }
+.movebar-down span { background: linear-gradient(90deg, var(--down-2), var(--down)); }
+
+/* -- tile subtext ----------------------------------------------------- */
+.tile-sub { font-size: 11px; font-weight: 600; margin-top: 2px; color: var(--muted); }
+.tile-alarm .tile-sub { color: var(--up); }
+.tile-quiet .tile-sub { color: var(--down); }
+.tile-warn  .tile-sub { color: var(--warn); }
+
+/* -- legend ----------------------------------------------------------- */
+/*
+ * A highlighted cell meant "changed in the last 24 hours" only to whoever
+ * wrote the template. Stated once under the grid, it means that to everyone.
+ */
+.legend {
+  display: flex; align-items: center; gap: var(--s5); flex-wrap: wrap;
+  margin-top: var(--s3); color: var(--muted); font-size: 12px;
+}
+.legend-item { display: inline-flex; align-items: center; gap: 7px; }
+.legend-swatch { width: 22px; height: 13px; border-radius: 4px; flex: 0 0 auto; }
+.legend-changed { border: 1px solid var(--accent); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent-2); }
+.legend-soldout { background: var(--line-soft); border: 1px solid var(--line); }
+.legend-own { width: 3px; height: 13px; border-radius: 2px; background: var(--accent); }
+.legend-note { margin-left: auto; }
