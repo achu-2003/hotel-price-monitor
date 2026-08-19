@@ -596,6 +596,12 @@ def _popup_payload(change, hotel_name, room_name, check_in, check_out) -> dict:
             None if change.delta_pct is None else f"{abs(change.delta_pct):.1f}%"
         ),
         "when": _localtime(change.changed_at, "%d %b %H:%M"),
+        # An intraday move and an overnight move need different wording: "was
+        # 1,023.75" is ambiguous when the two prices belong to different
+        # nights, and a reader who assumes same-night would draw the wrong
+        # conclusion about how fast the hotel is repricing.
+        "basis": "overnight" if change.previous_offer_key else "intraday",
+        "was_label": "last night" if change.previous_offer_key else "was",
     }
 
 

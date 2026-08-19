@@ -43,6 +43,16 @@ _PARAM_ALIASES: dict[str, tuple[str, ...]] = {
     "{rooms}": ("rooms", "room", "noofrooms", "numrooms"),
 }
 
+#: Parameters that pack occupancy into ONE value, "adults-children" — Treebo's
+#: ``?roomconfig=2-0``. They need their own table because the replacement is a
+#: pattern rather than a whole value: left alone, the URL would keep asking for
+#: two adults forever while the target said four, and every price would be
+#: right for the wrong occupancy.
+_COMBINED_OCCUPANCY_PARAMS: tuple[str, ...] = (
+    "roomconfig", "roomconfigs", "occupancy", "paxconfig",
+)
+_COMBINED_OCCUPANCY_RE = re.compile(r"^(\d+)-(\d+)$")
+
 
 @dataclass(frozen=True, slots=True)
 class EngineProfile:
@@ -126,6 +136,59 @@ ENGINES: tuple[EngineProfile, ...] = (
         external_id_pattern=r"hotelCode=(\d+)",
         notes="Storefront for eZee; prices arrive via the getAvailability XHR.",
     ),
+    EngineProfile(
+        key="treebo",
+        display_name="Treebo (brand site)",
+        adapter_key="playwright_direct_site",
+        domains=("treebo.com",),
+        # DOM, not JSON -- and that is a rule here rather than a preference.
+        #
+        # Treebo's prices come from /api/v1/checkout_v2/.../room-prices/ and
+        # /api/v8/pricing/hotels/, and its robots.txt carries a blanket
+        # "Disallow: /api/". The hotel page is explicitly allowed; the
+        # endpoints behind it are not. So `json_url_contains` is deliberately
+        # absent: configuring it would read exactly what we have been asked
+        # not to. If a later probe finds an allowed JSON route, that is the
+        # upgrade -- until then the DOM is the only permitted surface.
+        adapter_config={
+            "wait_for": "#t-roomTypes",
+            # Treebo hashes every CSS class (styled-components: "sc-c8jr3n-0
+            # jaYzsn"), and those change on each deploy. What survives is the
+            # handful of semantic ids the site sets itself -- t-roomTypes,
+            # t-mainFooter, t-qna-question -- so the card is anchored on one
+            # of those, and the fields inside it on their own text.
+            "room_card": "#t-roomTypes",
+            "selectors": {
+                # Playwright's text engine matches the SMALLEST element
+                # containing the match, which is what makes these usable: a
+                # CSS ancestor selector would return the whole card and store
+                # "chevron_left chevron_right 10 Photos Deluxe Room (Maple)
+                # 150 sq.ft. ..." as the room name.
+                "room_name": r"text=/Room \(/",
+                "price": r"text=/^₹\s?[\d,]+$/",
+            },
+            "sold_out_markers": [
+                "no rooms available",
+                "sold out",
+                "fully booked",
+            ],
+        },
+        # The property code is the last number in the slug:
+        # /hotels-in-yelagiri/itsy-hotels-kurinji-stay-inn-...-3965/
+        external_id_pattern=r"-(\d+)/?(?:[?#]|$)",
+        # Slower than the engines above: this is one brand's own site rather
+        # than a multi-tenant engine, and there is no reason to lean on it.
+        rate_limit_per_min=3,
+        notes=(
+            "ONE room type per check, not the full list. The page shows only "
+            "the default (cheapest) room and hides the rest behind a 'View "
+            "All Rooms' control, so the series is this hotel's headline rate. "
+            "Prices are quoted tax-INCLUSIVE ('Incl. tax for 1 night'), which "
+            "the card's own wording tells the parser. Expect some session "
+            "variance: coupon and prepaid promotions move the figure by tens "
+            "of rupees between loads, which the alert thresholds absorb."
+        ),
+    ),
 )
 
 
@@ -174,10 +237,19 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
     substituted: dict[str, str] = {}
     rebuilt: list[tuple[str, str]] = []
     for key, value in pairs:
-        placeholder = lookup.get(key.lower().replace("-", "").replace("_", ""))
+        normalised = key.lower().replace("-", "").replace("_", "")
+        placeholder = lookup.get(normalised)
+        combined = (
+            _COMBINED_OCCUPANCY_RE.match(value)
+            if normalised in _COMBINED_OCCUPANCY_PARAMS and value
+            else None
+        )
         if placeholder and value:
             substituted[key] = f"{value} -> {placeholder}"
             rebuilt.append((key, placeholder))
+        elif combined:
+            substituted[key] = f"{value} -> {{adults}}-{{children}}"
+            rebuilt.append((key, "{adults}-{children}"))
         else:
             rebuilt.append((key, value))
 

@@ -24,6 +24,7 @@ THREE RULES THAT PREVENT FALSE ALARMS
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
@@ -31,6 +32,11 @@ from app.db.models.enums import ChangeDirection
 
 _CENTS = Decimal("0.01")
 _PCT = Decimal("0.01")
+
+# Beyond this many days between stay dates the comparison stops being
+# "the hotel repriced overnight" and becomes "these are two unrelated
+# nights", which is not a change anyone can act on.
+_MAX_CARRY_OVER_GAP_DAYS = 7
 
 
 class Outcome(StrEnum):
@@ -263,4 +269,115 @@ def compare(
         new_price=obs_price,
         delta=delta,
         delta_pct=pct,
+    )
+
+
+# ── carrying a series across stay dates ──────────────────────────────
+@dataclass(frozen=True, slots=True)
+class CarryOver:
+    """The settled state of the same room for an EARLIER stay date.
+
+    ``last_price`` is that series' closing price — the value it held after a
+    full day of checks — which is why this comparison needs no debounce of its
+    own. See :func:`compare_across_stay_dates`.
+    """
+
+    last_price: Decimal | None
+    is_available: bool
+    check_in: date
+    offer_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class CarryOverChange:
+    """A confirmed move between one stay date and the next."""
+
+    direction: ChangeDirection
+    old_price: Decimal
+    new_price: Decimal
+    delta: Decimal
+    delta_pct: Decimal
+    previous_offer_key: str
+    previous_check_in: date
+
+
+def compare_across_stay_dates(
+    previous: CarryOver | None,
+    observation: Observation,
+    thresholds: Thresholds | None = None,
+    *,
+    max_gap_days: int = _MAX_CARRY_OVER_GAP_DAYS,
+    this_check_in: date | None = None,
+) -> CarryOverChange | None:
+    """Did tonight's rate move against the last night we priced?
+
+    WHY THIS EXISTS
+    ===============
+    ``offer_key`` hashes the stay dates, so "Standard Room for the night of
+    18 Aug" and "Standard Room for the night of 19 Aug" are different series
+    and :func:`compare` will never see them together — correctly, because they
+    are different products.
+
+    But a rolling target with ``lead_time_days = 0`` asks a different question:
+    *"what is this hotel charging for tonight?"* Under that reading every
+    morning produces a brand-new key, every observation is a first sighting,
+    and nothing is ever compared to anything. This function supplies the
+    missing edge: it compares tonight's opening price against last night's
+    closing price for the same room under the same booking conditions.
+
+    WHY THERE IS NO DEBOUNCE HERE
+    =============================
+    :func:`compare` requires a move to persist across ``confirm_checks``
+    because an intraday reading can be a dynamic-pricing blip. Here there is
+    exactly ONE comparison per stay date, and the baseline is a price that
+    already survived a full day of checks, so there is nothing to debounce
+    against — waiting would simply mean never alerting. The significance
+    threshold still applies in full.
+
+    Returns ``None`` when there is nothing worth reporting, which covers:
+    no previous stay date, either side unpriced or sold out, a gap so long the
+    comparison would be misleading, and a move below the threshold.
+    """
+    t = thresholds or Thresholds()
+
+    if previous is None or previous.last_price is None:
+        return None
+
+    # A sold-out night has no price to compare, and reading its remembered
+    # last_price as though it were live would invent a change out of a room
+    # that was never on sale.
+    if not previous.is_available or not observation.is_available:
+        return None
+
+    new_price = _q(observation.price)
+    if new_price is None:
+        return None
+
+    # A gap means the monitor was off, or the hotel stopped listing the room.
+    # "The rate moved since three weeks ago" is true but not news, and dressing
+    # it up as an overnight change would be a lie about when it happened.
+    if this_check_in is not None:
+        gap = (this_check_in - previous.check_in).days
+        if gap < 1 or gap > max_gap_days:
+            return None
+
+    old_price = previous.last_price
+    if new_price == old_price:
+        return None
+
+    delta = _q(new_price - old_price)
+    pct = _pct_change(old_price, new_price)
+    assert delta is not None
+
+    if not _is_significant(delta, pct, t):
+        return None
+
+    return CarryOverChange(
+        direction=ChangeDirection.INCREASE if delta > 0 else ChangeDirection.DECREASE,
+        old_price=old_price,
+        new_price=new_price,
+        delta=delta,
+        delta_pct=pct,
+        previous_offer_key=previous.offer_key,
+        previous_check_in=previous.check_in,
     )

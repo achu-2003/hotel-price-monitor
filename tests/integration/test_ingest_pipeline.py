@@ -10,6 +10,7 @@ Skipped unless ``TEST_DATABASE_URL`` is set — see ``conftest.py``.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -34,7 +35,9 @@ pytestmark = pytest.mark.integration
 STAY = StayWindow(datetime(2026, 12, 20).date(), datetime(2026, 12, 21).date())
 
 
-def _context(fixture, *, checked_at=None, confirm_checks=2) -> IngestContext:
+def _context(
+    fixture, *, checked_at=None, confirm_checks=2, price_basis=PriceBasis.INCLUSIVE
+) -> IngestContext:
     return IngestContext(
         hotel_id=fixture["hotel"].id,
         source_id=fixture["source"].id,
@@ -43,7 +46,7 @@ def _context(fixture, *, checked_at=None, confirm_checks=2) -> IngestContext:
         adults=2,
         children=0,
         currency="INR",
-        price_basis=PriceBasis.INCLUSIVE,
+        price_basis=price_basis,
         thresholds=Thresholds(
             min_delta_abs=Decimal("50"),
             min_delta_pct=Decimal("2.0"),
@@ -316,3 +319,113 @@ class TestMealPlanIdentity:
         assert len(series) == 2
         assert {s.last_price for s in series} == {Decimal("3000.00"), Decimal("3400.00")}
         assert session.scalar(select(func.count(PriceChange.id))) == 0
+
+
+class TestBasisChange:
+    """Switching the comparison basis must not invent a price movement.
+
+    A room quoted "₹999 + ₹49.95 taxes" is ₹999 exclusive and ₹1,048.95
+    inclusive — one price, two components. Comparing the new component against
+    the stored one would read as a 4.8% drop on every room in the portfolio at
+    once, which is both wrong and the exact shape of an alert people learn to
+    ignore.
+    """
+
+    def _both_components(self, name="Deluxe Room"):
+        return NormalizedOffer(
+            raw_room_name=name,
+            price_inclusive=Decimal("1048.95"),
+            price_exclusive=Decimal("999.00"),
+            taxes_fees=Decimal("49.95"),
+            currency="INR",
+        )
+
+    def test_rebases_silently_and_records_no_change(self, session, hotel_fixture):
+        offer = self._both_components()
+        ingest_fetch_result(session, _result(offer), _context(hotel_fixture))
+        session.flush()
+
+        series = session.execute(select(PriceSeries)).scalar_one()
+        assert series.last_price == Decimal("1048.95")
+        assert series.last_price_basis is PriceBasis.INCLUSIVE
+
+        summary = ingest_fetch_result(
+            session,
+            _result(offer),
+            _context(hotel_fixture, price_basis=PriceBasis.EXCLUSIVE),
+        )
+        session.flush()
+
+        # The stored price is now the one the booking page prints...
+        series = session.execute(select(PriceSeries)).scalar_one()
+        assert series.last_price == Decimal("999.00")
+        assert series.last_price_basis is PriceBasis.EXCLUSIVE
+        # ...and nobody was told the price fell.
+        assert summary.changes_detected == 0
+        assert session.execute(select(func.count(PriceChange.id))).scalar_one() == 0
+
+    def test_next_check_compares_normally_again(self, session, hotel_fixture):
+        """The rebase is one check, not a permanent amnesia."""
+        offer = self._both_components()
+        ingest_fetch_result(session, _result(offer), _context(hotel_fixture))
+        session.flush()
+        ingest_fetch_result(
+            session, _result(offer), _context(hotel_fixture, price_basis=PriceBasis.EXCLUSIVE)
+        )
+        session.flush()
+
+        later = datetime.now(UTC) + timedelta(hours=1)
+        dearer = NormalizedOffer(
+            raw_room_name="Deluxe Room",
+            price_inclusive=Decimal("1574.95"),
+            price_exclusive=Decimal("1499.00"),
+            taxes_fees=Decimal("75.95"),
+            currency="INR",
+        )
+        for offset, ctx_time in enumerate((later, later + timedelta(hours=1))):
+            summary = ingest_fetch_result(
+                session,
+                _result(dearer),
+                _context(
+                    hotel_fixture, checked_at=ctx_time, price_basis=PriceBasis.EXCLUSIVE
+                ),
+            )
+            session.flush()
+
+        # Confirmed on the second sighting, and measured on the new basis:
+        # 999 -> 1499, not 1048.95 -> 1499.
+        assert summary.changes_detected == 1
+        change = session.execute(select(PriceChange)).scalar_one()
+        assert change.old_price == Decimal("999.00")
+        assert change.new_price == Decimal("1499.00")
+
+    def test_carry_over_does_not_fire_across_a_basis_change(
+        self, session, hotel_fixture
+    ):
+        """The other door into the same false alarm.
+
+        A stay date already priced on the old basis is a different series, and
+        a past one never rebases itself because nobody checks yesterday again.
+        The carry-over comparison has no debounce, so an unguarded mismatch
+        publishes the tax component as a price drop immediately.
+        """
+        yesterday = StayWindow(
+            STAY.check_in - timedelta(days=1), STAY.check_out - timedelta(days=1)
+        )
+        old_ctx = _context(hotel_fixture)
+        ingest_fetch_result(
+            session,
+            _result(self._both_components()),
+            replace(old_ctx, stay=yesterday),
+        )
+        session.flush()
+
+        summary = ingest_fetch_result(
+            session,
+            _result(self._both_components()),
+            _context(hotel_fixture, price_basis=PriceBasis.EXCLUSIVE),
+        )
+        session.flush()
+
+        assert summary.change_ids == []
+        assert session.execute(select(func.count(PriceChange.id))).scalar_one() == 0

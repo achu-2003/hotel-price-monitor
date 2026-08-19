@@ -517,6 +517,12 @@
     const room = alert.room + (alert.stay ? " · " + alert.stay : "");
     toast.appendChild(element("div", "toast-room", room));
 
+    // An overnight move compares two different nights. Saying so on the toast
+    // keeps a reader from assuming the hotel repriced in the last half hour.
+    if (alert.basis === "overnight") {
+      toast.appendChild(element("div", "toast-basis", "vs last night"));
+    }
+
     const prices = element("div", "toast-prices");
     prices.appendChild(element("s", "toast-was", alert.was));
     prices.appendChild(document.createTextNode(" → "));

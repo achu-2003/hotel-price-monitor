@@ -252,7 +252,10 @@ def _ingest(
             adults=payload["adults"],
             children=payload["children"],
             currency=payload["currency"],
-            price_basis=PriceBasis.INCLUSIVE,
+            # Configured, not assumed: see Settings.price_basis. A series
+            # recorded on the other basis is rebased by the ingest layer
+            # rather than reported as a price move.
+            price_basis=PriceBasis(get_settings().price_basis),
             # The target can be deleted between dispatch and ingest. The
             # observations are still worth keeping, so fall back to the global
             # sensitivity rather than discarding the fetch.
@@ -451,7 +454,7 @@ def record_manual_offers(
                 adults=entry.get("adults", 2),
                 children=entry.get("children", 0),
                 currency=offer.currency,
-                price_basis=PriceBasis.INCLUSIVE,
+                price_basis=PriceBasis(get_settings().price_basis),
                 thresholds=thresholds,
                 checked_at=now,
                 check_run_id=check_run_id,

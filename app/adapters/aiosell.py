@@ -265,21 +265,57 @@ class AiosellAdapter:
             if not isinstance(entry, dict) or entry.get("isActive") is False:
                 continue
 
-            # What the guest is charged, tax included -- the number printed on
-            # the booking page. Several equivalent fields are tried because
-            # Aiosell populates them slightly differently per property.
-            inclusive = _to_decimal(
+            # The rate as published, and the tax alongside it. Several
+            # equivalent fields are tried because Aiosell populates them
+            # slightly differently per property.
+            #
+            # The "_tax_inclusive" names cannot be taken at face value. On the
+            # properties seen so far they carry the SAME number as
+            # ``total_rate`` while ``total_tax`` is exactly 5% OF it -- 2502.50
+            # rate, 125.125 tax -- which is only consistent with 2502.50 being
+            # the pre-tax rate and the tax being owed on top. Believing the
+            # field name instead of the arithmetic yields an "exclusive" rate
+            # of 2377.375: a number printed on no page, on no invoice, and
+            # payable by nobody.
+            #
+            # So the two are compared. When they genuinely differ, the
+            # inclusive field is real and is used as published; when they are
+            # equal, the figure is the base rate and the all-in price is the
+            # sum. Both shapes therefore work without a per-property setting.
+            published_rate = _to_decimal(
                 _first_present(
-                    entry.get("total_rate_tax_inclusive"),
                     entry.get("total_rate"),
-                    _first_night(entry, "sellRateTaxInclusive", "sellRate"),
+                    _first_night(entry, "sellRate"),
                 )
             )
-            if inclusive is None:
+            published_inclusive = _to_decimal(
+                _first_present(
+                    entry.get("total_rate_tax_inclusive"),
+                    _first_night(entry, "sellRateTaxInclusive"),
+                )
+            )
+            taxes = _to_decimal(entry.get("total_tax"))
+
+            if published_inclusive is not None and published_rate is not None:
+                if published_inclusive == published_rate:
+                    exclusive = published_rate
+                    inclusive = (
+                        exclusive + taxes if taxes is not None else published_inclusive
+                    )
+                else:
+                    inclusive = published_inclusive
+                    exclusive = published_rate
+            elif published_inclusive is not None:
+                inclusive = published_inclusive
+                exclusive = inclusive - taxes if taxes is not None else None
+            elif published_rate is not None:
+                exclusive = published_rate
+                inclusive = exclusive + taxes if taxes is not None else exclusive
+            else:
                 continue
 
-            taxes = _to_decimal(entry.get("total_tax"))
-            exclusive = inclusive - taxes if taxes is not None else None
+            if inclusive is None:
+                continue
 
             code = str(plan_code).strip().upper()
             offers.append(

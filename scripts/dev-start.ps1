@@ -29,6 +29,22 @@ function Test-Port($port) {
     $null -ne (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
 }
 
+# Wait for a port to come up, checking often, instead of sleeping a flat guess.
+#
+# A fixed "Start-Sleep 3" is a bet on how long a service takes to bind, and it
+# loses in exactly the case that matters: a restart, where the previous
+# instance has not yet released the port. Redis lost that bet, was declared
+# FAILED, and Celery then came up with no broker -- the half-started stack this
+# script's header warns about, arriving through a different door.
+function Wait-Port($port, $seconds = 20) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Port $port) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $false
+}
+
 Set-Location $proj
 
 # -- PostgreSQL ------------------------------------------------------
@@ -37,8 +53,7 @@ if (Test-Port 5432) {
 } else {
     & "$local\pgsql\bin\pg_ctl.exe" -D "$local\pgdata" -l "$local\pg.log" `
         -o "-p 5432 -c listen_addresses=127.0.0.1" start | Out-Null
-    Start-Sleep -Seconds 3
-    if (Test-Port 5432) { Write-Host "postgres  : started" -ForegroundColor Green }
+    if (Wait-Port 5432 30) { Write-Host "postgres  : started" -ForegroundColor Green }
     else { Write-Host "postgres  : FAILED - see .local\pg.log" -ForegroundColor Red }
 }
 
@@ -48,22 +63,27 @@ if (Test-Port 6379) {
 } else {
     Start-Process -FilePath "$local\redis\redis-server.exe" `
         -ArgumentList "`"$local\redis.conf`"" -WindowStyle Hidden
-    Start-Sleep -Seconds 3
-    if (Test-Port 6379) { Write-Host "redis     : started" -ForegroundColor Green }
+    if (Wait-Port 6379 30) { Write-Host "redis     : started" -ForegroundColor Green }
     else { Write-Host "redis     : FAILED to bind 6379" -ForegroundColor Red }
 }
 
 # -- API -------------------------------------------------------------
 # --reload watches app\ and restarts on save, so editing a route or a template
 # needs nothing from you.
+# "Already listening" is reported, never assumed to be ours and never assumed
+# to be current: a survivor from before a stop is exactly what this used to
+# skip past, leaving hours-old code serving the dashboard.
 if (Test-Port 8000) {
-    Write-Host "api       : already listening on 8000" -ForegroundColor DarkGray
+    Write-Host "api       : already listening on 8000 -- if you just edited an" -ForegroundColor Yellow
+    Write-Host "            adapter, run .\scripts\dev-stop.ps1 first: this is" -ForegroundColor Yellow
+    Write-Host "            an EXISTING process and it has the OLD code loaded." -ForegroundColor Yellow
 } else {
     Start-Process -FilePath "$py\uvicorn.exe" `
         -ArgumentList "app.main:app","--host","127.0.0.1","--port","8000","--reload","--reload-dir","app" `
         -WorkingDirectory $proj -WindowStyle Hidden `
         -RedirectStandardOutput "$local\api.log" -RedirectStandardError "$local\api.err.log"
-    Write-Host "api       : started" -ForegroundColor Green
+    if (Wait-Port 8000 30) { Write-Host "api       : started" -ForegroundColor Green }
+    else { Write-Host "api       : FAILED to bind 8000 - see .local\api.err.log" -ForegroundColor Red }
 }
 
 # -- Celery worker + beat --------------------------------------------

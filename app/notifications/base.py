@@ -37,6 +37,11 @@ class ChangeLine:
     check_in: str
     check_out: str
     meal_plan: str | None = None
+    # True when the two prices belong to consecutive stay dates rather than to
+    # one night read twice. Without it a digest saying "1,023.75 -> 1,121.25"
+    # reads as an intraday move, and the reader misjudges how fast the hotel
+    # is repricing.
+    is_overnight: bool = False
 
     @property
     def is_availability_event(self) -> bool:

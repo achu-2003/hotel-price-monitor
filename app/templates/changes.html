@@ -32,7 +32,7 @@
 
 <table class="grid">
   <thead>
-    <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Was</th><th>Now</th><th>Change</th><th>Told</th></tr>
+    <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Compared</th><th>Was</th><th>Now</th><th>Change</th><th>Told</th></tr>
   </thead>
   <tbody>
     {% for change, hotel_name, room_name, check_in, check_out in changes %}
@@ -41,6 +41,16 @@
       <td><a href="/hotels/{{ change.hotel_id }}">{{ hotel_name }}</a></td>
       <td>{{ room_name or '—' }}</td>
       <td class="nowrap muted">{{ check_in }} → {{ check_out }}</td>
+      {# Which two prices this row compared. "Was 1,023.75" means one thing
+         when both prices are the same night and quite another when they are
+         consecutive nights, so the basis is shown rather than implied. #}
+      <td class="nowrap muted">
+        {% if change.previous_offer_key %}
+          <span class="pill" title="Tonight's opening price against last night's closing price for the same room">vs last night</span>
+        {% else %}
+          <span class="muted" title="Two readings of the same stay date, taken hours apart">same night</span>
+        {% endif %}
+      </td>
       <td class="num muted">{{ money(change.old_price, change.currency) }}</td>
       <td class="num strong">
         {% if change.direction.value == 'became_unavailable' %}
@@ -63,7 +73,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="muted">No confirmed changes in this window.</td></tr>
+    <tr><td colspan="9" class="muted">No confirmed changes in this window.</td></tr>
     {% endfor %}
   </tbody>
 </table>

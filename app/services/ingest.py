@@ -53,7 +53,15 @@ from app.db.models import (
     UnmatchedOffer,
 )
 from app.services import room_matching
-from app.services.comparison import Observation, Outcome, SeriesState, Thresholds, compare
+from app.services.comparison import (
+    CarryOver,
+    Observation,
+    Outcome,
+    SeriesState,
+    Thresholds,
+    compare,
+    compare_across_stay_dates,
+)
 from app.services.dates import StayWindow
 from app.services.offer_key import compute_offer_key
 
@@ -388,6 +396,25 @@ def _apply_comparison(
         select(PriceSeries).where(PriceSeries.offer_key == offer_key).with_for_update()
     ).scalar_one_or_none()
 
+    # A series recorded on the other basis cannot be compared against this
+    # observation: ₹1,048.95 inclusive and ₹999 exclusive are the SAME price,
+    # and subtracting one from the other invents a 4.8% drop, records a
+    # price_changes row for it and buzzes somebody's phone. Passing no state
+    # re-baselines the series instead -- the new number is stored, the pending
+    # counter is cleared and nothing is reported. One quiet check per series,
+    # once, when the basis is changed.
+    rebased = series is not None and series.last_price_basis != ctx.price_basis
+    if rebased:
+        log.info(
+            "price_series_rebased",
+            offer_key=offer_key[:12],
+            hotel_id=ctx.hotel_id,
+            from_basis=series.last_price_basis.value,
+            to_basis=ctx.price_basis.value,
+            old_price=str(series.last_price),
+            new_price=str(observation.price),
+        )
+
     state = (
         SeriesState(
             last_price=series.last_price,
@@ -395,7 +422,7 @@ def _apply_comparison(
             pending_price=series.pending_price,
             pending_count=series.pending_count,
         )
-        if series is not None
+        if series is not None and not rebased
         else None
     )
 
@@ -421,12 +448,34 @@ def _apply_comparison(
         )
         session.add(series)
 
+    is_first_sight = decision.outcome is Outcome.FIRST_SIGHT
+
     series.last_price = new_state.last_price
+    series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available
     series.pending_price = new_state.pending_price
     series.pending_since = ctx.checked_at if new_state.pending_price is not None else None
     series.pending_count = new_state.pending_count
     series.last_checked_at = ctx.checked_at
+
+    if is_first_sight:
+        # A new stay date has no history of its own, so `compare` correctly
+        # said nothing. But under a rolling target this IS tonight's rate, and
+        # last night's rate for the same room is the baseline a human would
+        # use. That comparison is the whole point of the monitor and lives
+        # nowhere else -- without it a lead_time_days=0 target can never
+        # produce a single alert, because every day is a first sighting.
+        _carry_over_change(
+            session,
+            offer_key=offer_key,
+            room_type_id=room_type_id,
+            observation=observation,
+            offer=offer,
+            observation_id=observation_id,
+            currency=series.currency,
+            ctx=ctx,
+            summary=summary,
+        )
 
     if decision.should_record_change:
         series.last_changed_at = ctx.checked_at
@@ -456,6 +505,144 @@ def _apply_comparison(
         )
 
     return decision.outcome
+
+
+def _previous_stay_series(
+    session: Session,
+    *,
+    room_type_id: int,
+    offer: NormalizedOffer,
+    ctx: IngestContext,
+) -> PriceSeries | None:
+    """The same room, same booking conditions, most recent EARLIER stay date.
+
+    Everything the offer key holds constant is held constant here too, except
+    the dates themselves — plus the stay LENGTH, because a one-night rate and a
+    two-night rate are not comparable even for the same room.
+
+    ``check_in < ctx.stay.check_in`` rather than ``= yesterday`` so a monitor
+    that was switched off over a weekend still finds its last real baseline;
+    how far back is too far is the caller's judgement, enforced in
+    :func:`compare_across_stay_dates`.
+    """
+    nights = (ctx.stay.check_out - ctx.stay.check_in).days
+    meal_plan = offer.meal_plan
+    refundable = offer.refundable
+    currency = (offer.currency or ctx.currency)[:3].upper()
+
+    conditions = [
+        PriceSeries.hotel_id == ctx.hotel_id,
+        PriceSeries.source_id == ctx.source_id,
+        PriceSeries.room_type_id == room_type_id,
+        PriceSeries.adults == ctx.adults,
+        PriceSeries.children == ctx.children,
+        PriceSeries.currency == currency,
+        PriceSeries.check_in < ctx.stay.check_in,
+        (PriceSeries.check_out - PriceSeries.check_in) == nights,
+    ]
+    # NULL is a real value for these two -- "meal plan unknown" is a different
+    # offer from "room only" -- so they need IS NULL, not = NULL, which never
+    # matches anything and would silently disable the whole comparison.
+    conditions.append(
+        PriceSeries.meal_plan.is_(None) if meal_plan is None
+        else PriceSeries.meal_plan == meal_plan
+    )
+    conditions.append(
+        PriceSeries.refundable.is_(None) if refundable is None
+        else PriceSeries.refundable == refundable
+    )
+
+    return session.execute(
+        select(PriceSeries)
+        .where(*conditions)
+        .order_by(PriceSeries.check_in.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _carry_over_change(
+    session: Session,
+    *,
+    offer_key: str,
+    room_type_id: int,
+    observation: Observation,
+    offer: NormalizedOffer,
+    observation_id: int | None,
+    currency: str,
+    ctx: IngestContext,
+    summary: IngestSummary,
+) -> None:
+    """Compare a brand-new series against the last stay date we priced.
+
+    Called ONLY on first sighting, which is what makes it safe to run without
+    a debounce: a given stay date is first seen exactly once, so this can emit
+    at most one row per series no matter how often the target is checked.
+    """
+    previous = _previous_stay_series(
+        session, room_type_id=room_type_id, offer=offer, ctx=ctx
+    )
+    if previous is None:
+        return
+
+    # The main path rebases a series when the configured basis changes, but
+    # this one reads a DIFFERENT series -- an earlier stay date, which may hold
+    # a price recorded on the old basis and, its date having passed, may never
+    # be checked again to rebase itself. Comparing across the two bases would
+    # publish the tax component as a price move, with no debounce to catch it.
+    if previous.last_price_basis != ctx.price_basis:
+        log.info(
+            "carry_over_skipped_basis_mismatch",
+            hotel_id=ctx.hotel_id,
+            offer_key=offer_key[:12],
+            previous_offer_key=previous.offer_key[:12],
+            previous_basis=previous.last_price_basis.value,
+            basis=ctx.price_basis.value,
+        )
+        return
+
+    change = compare_across_stay_dates(
+        CarryOver(
+            last_price=previous.last_price,
+            is_available=previous.is_available,
+            check_in=previous.check_in,
+            offer_key=previous.offer_key,
+        ),
+        observation,
+        ctx.thresholds,
+        this_check_in=ctx.stay.check_in,
+    )
+    if change is None:
+        return
+
+    row = PriceChange(
+        offer_key=offer_key,
+        hotel_id=ctx.hotel_id,
+        changed_at=ctx.checked_at,
+        old_price=change.old_price,
+        new_price=change.new_price,
+        delta=change.delta,
+        delta_pct=change.delta_pct,
+        currency=currency,
+        direction=change.direction,
+        observation_id_new=observation_id,
+        previous_offer_key=change.previous_offer_key,
+        notified=False,
+    )
+    session.add(row)
+    session.flush()  # the notify task is handed the id
+    summary.change_ids.append(row.id)
+    log.info(
+        "carry_over_change_confirmed",
+        hotel_id=ctx.hotel_id,
+        offer_key=offer_key[:12],
+        previous_offer_key=change.previous_offer_key[:12],
+        previous_check_in=str(change.previous_check_in),
+        check_in=str(ctx.stay.check_in),
+        direction=str(change.direction),
+        old_price=str(change.old_price),
+        new_price=str(change.new_price),
+        delta_pct=str(change.delta_pct),
+    )
 
 
 # -- disappearance ---------------------------------------------------

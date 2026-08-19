@@ -86,9 +86,10 @@ def _headline(line: ChangeLine) -> str:
         return f"✅ {line.room_name} — available again at {money(line.new_price, line.currency)}"
     arrow = "▲" if line.direction == "increase" else "▼"
     word = "Increase" if line.direction == "increase" else "Decrease"
+    basis = " vs last night" if line.is_overnight else ""
     return (
         f"{arrow} {line.room_name}: {money(line.old_price, line.currency)} → "
-        f"{money(line.new_price, line.currency)}  "
+        f"{money(line.new_price, line.currency)}{basis}  "
         f"({word} {money(abs(line.delta) if line.delta else None, line.currency)}, "
         f"{_pct(line.delta_pct)})"
     )

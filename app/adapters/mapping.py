@@ -173,6 +173,13 @@ def offer_from_mapping(
 
     if inclusive is None and exclusive is not None and taxes is not None:
         inclusive = exclusive + taxes
+    # The mirror image, and it matters as much: a site that publishes an all-in
+    # figure alongside its tax line has told us the pre-tax rate too, and that
+    # is the number printed on the page. Without this the exclusive basis
+    # silently falls back to the inclusive figure and the dashboard shows a
+    # price the guest never sees.
+    if exclusive is None and inclusive is not None and taxes is not None:
+        exclusive = inclusive - taxes
 
     rooms_left = dig(node, mapping["rooms_left"], None) if mapping.get("rooms_left") else None
     try:

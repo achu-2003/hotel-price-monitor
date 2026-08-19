@@ -187,6 +187,13 @@ class PriceChange(Base):
     observation_id_old: Mapped[int | None] = mapped_column(BigInteger)
     observation_id_new: Mapped[int | None] = mapped_column(BigInteger)
 
+    # Set only when this row came from comparing two DIFFERENT stay dates --
+    # tonight's opening price against last night's closing price for the same
+    # room. NULL means the ordinary intraday comparison, where both prices
+    # belong to one offer_key. Storing the key rather than a bare flag means
+    # the baseline can always be traced back to the series it came from.
+    previous_offer_key: Mapped[str | None] = mapped_column(String(OFFER_KEY_LEN))
+
     notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     def __repr__(self) -> str:

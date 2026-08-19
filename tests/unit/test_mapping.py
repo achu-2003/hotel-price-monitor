@@ -112,6 +112,26 @@ class TestOfferFromMapping:
         assert offer.rooms_left == 3
         assert offer.refundable is True
 
+    def test_derives_the_exclusive_rate_from_an_all_in_price_and_its_tax(self):
+        """The number the booking page prints in large type.
+
+        A site publishing "total 2500, taxes 450" has also told us the rate is
+        2050, and that is what the guest sees before checkout. Without the
+        derivation the exclusive basis falls back to the all-in figure and the
+        dashboard shows a price that appears nowhere on the source page.
+        """
+        offer = offer_from_mapping(PAYLOAD["data"]["rooms"][0], MAPPING)
+        assert offer.price_exclusive == Decimal("2050")
+        assert offer.price_inclusive == Decimal("2500")
+        assert offer.price_on("exclusive") == Decimal("2050")
+        assert offer.price_on("inclusive") == Decimal("2500")
+
+    def test_exclusive_basis_falls_back_when_no_tax_is_published(self):
+        """A site that shows only one figure keeps showing that figure."""
+        offer = offer_from_mapping(PAYLOAD["data"]["rooms"][1], MAPPING)
+        assert offer.price_exclusive is None
+        assert offer.price_on("exclusive") == Decimal("8900")
+
     def test_parses_a_display_string_price(self):
         """Plenty of endpoints return "₹8,900" rather than a number."""
         offer = offer_from_mapping(PAYLOAD["data"]["rooms"][1], MAPPING)

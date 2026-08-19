@@ -33,10 +33,15 @@ acting on that is the caller's decision.
 """
 from __future__ import annotations
 
+import asyncio
 import re
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlparse
 
 from app.adapters.parsing import MAX_PLAUSIBLE_PRICE, MIN_PLAUSIBLE_PRICE
 from app.core.logging import get_logger
@@ -88,11 +93,19 @@ _ROOMY = re.compile(
 
 @dataclass(slots=True)
 class Candidate:
-    """One possible room list, with the paths needed to read it."""
+    """One possible room list, with what is needed to read it again.
+
+    Covers both routes. A JSON candidate carries dotted paths into a captured
+    payload; a DOM candidate carries CSS selectors into the rendered page. They
+    are scored and corroborated identically, so the caller does not care which
+    one won — only that its prices were confirmed against the page.
+    """
 
     source_url: str
     rooms_path: str
     fields: dict[str, str]
+    #: "json" or "dom". Decides which adapter_config shape is produced.
+    kind: str = "json"
     sample_names: list[str] = field(default_factory=list)
     sample_prices: list[Decimal] = field(default_factory=list)
     room_count: int = 0
@@ -111,6 +124,17 @@ class Candidate:
         return bool(self.sample_prices) and self.corroborated * 2 >= len(self.sample_prices)
 
     def as_adapter_config(self, json_fragment: str) -> dict[str, Any]:
+        if self.kind == "dom":
+            # CSS selectors are far more fragile than a JSON contract: a
+            # restyle breaks them where an API shrugs. That is not a reason to
+            # refuse — it is a reason the adapter raises SchemaDriftError with
+            # a screenshot instead of writing a guessed number.
+            return {
+                "room_card": self.rooms_path,
+                "wait_for": self.rooms_path,
+                "wait_timeout_ms": 45000,
+                "selectors": dict(self.fields),
+            }
         return {
             "json_url_contains": [json_fragment],
             "rooms_path": self.rooms_path,
@@ -340,6 +364,44 @@ def analyse(
 
 
 
+def _has_usable_json(payloads: list[tuple[str, Any]], page_text: str) -> bool:
+    """Whether the JSON route already produced something corroborated.
+
+    Runs before the browser closes so the DOM scan can still happen if not.
+    """
+    return analyse(payloads, page_text).ok
+
+
+def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
+    """Turn a DOM scan hit into the same Candidate the JSON route produces."""
+    from decimal import Decimal
+
+    names = [str(n).strip() for n in (card.get("names") or []) if str(n).strip()]
+    prices: list[Decimal] = []
+    for value in card.get("prices") or []:
+        parsed = _as_price(value)
+        if parsed is not None:
+            prices.append(parsed)
+    if not names or not prices:
+        return None
+
+    return Candidate(
+        source_url=source_url,
+        rooms_path=card["card"],
+        fields={
+            "room_name": card["name_selector"],
+            "price": card["price_selector"],
+        },
+        kind="dom",
+        sample_names=names[:8],
+        sample_prices=prices[:8],
+        room_count=int(card.get("count") or len(names)),
+        # Scored below a JSON find of equal quality: selectors break on a
+        # restyle, an API contract usually does not.
+        score=20.0 + min(int(card.get("matched") or 0), 10),
+    )
+
+
 def _open_booking_widget(page) -> None:
     """Click whatever opens the rates, if anything obvious is on the page.
 
@@ -374,6 +436,102 @@ def _open_booking_widget(page) -> None:
 
 
 # ── driving the page ─────────────────────────────────────────────────
+
+@contextmanager
+def _subprocess_capable_loop_policy() -> Iterator[None]:
+    """Let Playwright spawn its Node driver from inside the API process.
+
+    On Windows, uvicorn installs a PROCESS-WIDE
+    ``WindowsSelectorEventLoopPolicy`` (uvicorn/loops/asyncio.py).
+    ``SelectorEventLoop`` implements no subprocess support whatsoever:
+    ``loop.subprocess_exec`` reaches ``_make_subprocess_transport`` and raises
+    a bare ``NotImplementedError`` whose message is the empty string.
+
+    Sync Playwright calls ``asyncio.new_event_loop()``, which honours that
+    policy, and then tries to launch ``node.exe`` to drive the browser. So
+    discovery died with "Could not inspect that page: NotImplementedError" --
+    an error with no message, from a page that was never even opened.
+
+    Celery never loads uvicorn, keeps the default Proactor policy, and so
+    fetches browsers perfectly well. That asymmetry is why scheduled checks
+    worked while the dashboard's Detect button did not.
+
+    Swapping the policy affects only loops created after this point; uvicorn's
+    own loop is already running and keeps its selector implementation. The
+    previous policy is restored on the way out.
+    """
+    if sys.platform != "win32":
+        yield
+        return
+
+    previous = asyncio.get_event_loop_policy()
+    if isinstance(previous, asyncio.WindowsProactorEventLoopPolicy):
+        yield  # already capable -- e.g. running under Celery
+        return
+
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop_policy(previous)
+
+
+
+def _note_robots_disallowed_payloads(
+    result: DiscoveryResult, payloads: list[tuple[str, Any]], target: str
+) -> None:
+    """Say so when the prices are somewhere we have been asked not to read.
+
+    A page is allowed while the endpoints it calls are not -- Treebo publishes
+    its rates through /api/, and its robots.txt disallows /api/ wholesale.
+    Without this, discovery reports only that the prices "do not appear on the
+    page", which reads as a parsing problem and sends someone off to find a
+    better field path. There is no field path: the answer is a DOM source or
+    manual entry, and knowing that immediately saves the search.
+
+    Advisory only. Nothing here blocks anything -- the adapters enforce
+    robots.txt at fetch time, which is where refusing belongs.
+    """
+    if not payloads:
+        return
+
+    from app.adapters.robots import RobotsChecker
+    from app.adapters.playwright_base import build_user_agent
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.respect_robots_txt:
+        return
+
+    checker = RobotsChecker(build_user_agent(settings.browser_user_agent_suffix), enabled=True)
+
+    considered = {url for url, _ in payloads}
+    for candidate in ([result.best] if result.best else []) + list(result.others):
+        if getattr(candidate, "source_url", None):
+            considered.add(candidate.source_url)
+
+    disallowed: list[str] = []
+    for url in considered:
+        try:
+            if not checker.check(url).allowed:
+                disallowed.append(url)
+        except Exception:  # noqa: BLE001
+            # A robots lookup that fails is not evidence of anything, and this
+            # is a note on a screen rather than a decision. Stay quiet.
+            continue
+
+    if not disallowed:
+        return
+
+    paths = sorted({urlparse(u).path[:60] for u in disallowed})[:4]
+    log.info("discovery_robots_disallowed", url=target[:120], count=len(disallowed))
+    result.notes.append(
+        f"{len(disallowed)} of the JSON endpoint(s) behind this page are "
+        f"disallowed by its robots.txt ({', '.join(paths)}). The page itself "
+        f"may be readable, but those responses are off-limits, so this hotel "
+        f"needs a DOM-based source or manual entry rather than a JSON one."
+    )
+
 def inspect_url(
     url: str,
     *,
@@ -424,8 +582,9 @@ def inspect_url(
         )
 
     payloads: list[tuple[str, Any]] = []
+    dom_cards: list[dict] = []
 
-    with sync_playwright() as playwright:
+    with _subprocess_capable_loop_policy(), sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=settings.browser_headless,
             args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"],
@@ -468,6 +627,15 @@ def inspect_url(
                     context={"url": target, "marker": marker},
                 )
             page_text = page.inner_text("body", timeout=5_000) or ""
+
+            # JSON first, because an API contract survives a restyle and CSS
+            # does not. The DOM scan is the fallback for pages that render
+            # their prices server-side -- common among small independent
+            # hotels, and the case that made this necessary.
+            if not _has_usable_json(payloads, page_text):
+                from app.adapters.dom_discovery import find_room_cards
+
+                dom_cards = find_room_cards(page)
         finally:
             try:
                 browser.close()
@@ -475,8 +643,35 @@ def inspect_url(
                 pass
 
     result = analyse(payloads, page_text)
+
+    if not result.ok and dom_cards:
+        dom_candidate = _candidate_from_dom(dom_cards[0], target)
+        if dom_candidate is not None:
+            _corroborate(dom_candidate, page_text)
+            if dom_candidate.is_verified:
+                # A verified DOM finding beats an unverified JSON one: the
+                # whole point of corroboration is that confirmed beats
+                # plausible, whatever it was read from.
+                if result.best is not None:
+                    result.others.insert(0, result.best)
+                result.best = dom_candidate
+                result.notes.append(
+                    f"No usable JSON, so the rendered page was scanned: found "
+                    f"{dom_candidate.room_count} room cards."
+                )
+            else:
+                result.notes.append(
+                    "Scanned the rendered page too, but its prices could not be "
+                    "confirmed against what the page displays."
+                )
+
+    _note_robots_disallowed_payloads(result, payloads, target)
+
     result.notes.insert(
-        0, f"Inspected {len(payloads)} JSON response(s) from {target[:90]}"
+        0,
+        f"Inspected {len(payloads)} JSON response(s)"
+        + (f" and {len(dom_cards)} DOM candidate(s)" if dom_cards else "")
+        + f" from {target[:80]}",
     )
     log.info(
         "discovery_complete",

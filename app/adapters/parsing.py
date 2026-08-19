@@ -39,6 +39,21 @@ _SOLD_OUT_MARKERS = (
     "fully booked", "no availability", "houseful",
 )
 
+# Plenty of booking pages say in words which side of the tax their headline
+# number sits on -- "Room Rates Exclusive of Tax Rs 3,200.00" is a real
+# example. Read literally it is free, reliable information about a figure we
+# would otherwise have to label by guesswork.
+_TAX_EXCLUSIVE_MARKERS = (
+    "exclusive of tax", "excluding tax", "excluding taxes", "excl. tax",
+    "excl tax", "before tax", "plus tax", "plus taxes", "+ tax", "+ taxes",
+    "tax extra", "taxes extra", "extra taxes",
+)
+_TAX_INCLUSIVE_MARKERS = (
+    "inclusive of tax", "including tax", "including taxes", "incl. tax",
+    "incl tax", "tax included", "taxes included", "all inclusive",
+    "inclusive of all taxes",
+)
+
 
 def detect_currency(text: str, default: str = "INR") -> str:
     lowered = text.lower()
@@ -154,3 +169,28 @@ def parse_rooms_left(text: str | None) -> int | None:
 def looks_urgency(text: str) -> bool:
     lowered = text.lower()
     return any(w in lowered for w in ("left", "remaining", "last", "only"))
+
+
+def declared_tax_basis(text: str | None) -> str | None:
+    """Which side of the tax a page says its headline price is on.
+
+    Returns ``"exclusive"``, ``"inclusive"`` or ``None`` when the page does not
+    say. Only stated intent counts -- nothing is inferred from the number
+    itself, because a rate that merely looks round is not evidence.
+
+    Both phrasings on one card means the page is describing two different
+    figures ("Rs 3,200 exclusive of tax, Rs 3,360 inclusive"), and the scraper
+    has only captured one of them. Which one is unknowable from here, so the
+    honest answer is ``None``: the caller keeps its existing behaviour instead
+    of labelling a number on a coin toss.
+    """
+    if not text:
+        return None
+    lowered = " ".join(text.lower().split())
+    exclusive = any(marker in lowered for marker in _TAX_EXCLUSIVE_MARKERS)
+    inclusive = any(marker in lowered for marker in _TAX_INCLUSIVE_MARKERS)
+    if exclusive and not inclusive:
+        return "exclusive"
+    if inclusive and not exclusive:
+        return "inclusive"
+    return None

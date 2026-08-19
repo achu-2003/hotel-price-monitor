@@ -381,6 +381,7 @@ def _render_lines(
             check_in=entry.check_in.isoformat() if entry else "",
             check_out=entry.check_out.isoformat() if entry else "",
             meal_plan=entry.meal_plan if entry else None,
+            is_overnight=change.previous_offer_key is not None,
         )
     return lines
 

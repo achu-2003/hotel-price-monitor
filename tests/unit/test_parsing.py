@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 
 from app.adapters.parsing import (
+    declared_tax_basis,
     detect_currency,
     looks_sold_out,
     parse_price,
@@ -130,3 +131,51 @@ def test_a_bare_number_is_not_treated_as_stock():
 
 def test_implausible_stock_counts_are_dropped():
     assert parse_rooms_left("Only 500 rooms left") is None
+
+
+class TestDeclaredTaxBasis:
+    """Reading a page's own statement about which side of the tax it quotes.
+
+    The consequence of getting this wrong is a rate with the tax deducted from
+    it twice, so nothing here guesses: only an explicit phrase counts.
+    """
+
+    # Verbatim from a monitored property.
+    CARD = (
+        "Standard Room non A/C Room Capacity 3 1 Room Rates Exclusive of Tax "
+        "Rs 3,200.00 Price for 1 Night 2 Adults , 0 Child, 1 Room add to "
+        "compare Add To Compare Room Info Enquire 9 Rooms Left Add Room"
+    )
+
+    def test_reads_a_real_cards_declaration(self):
+        assert declared_tax_basis(self.CARD) == "exclusive"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["Rs 3,200 + taxes", "Rs 3,200 plus taxes", "₹3,200 excl. tax",
+         "Tariff before tax", "Rate 3200, taxes extra"],
+    )
+    def test_recognises_the_common_phrasings(self, text):
+        assert declared_tax_basis(text) == "exclusive"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["₹3,360 inclusive of tax", "Rs 3,360 including taxes",
+         "Total 3360 (tax included)", "₹3,360 inclusive of all taxes"],
+    )
+    def test_recognises_the_inclusive_phrasings(self, text):
+        assert declared_tax_basis(text) == "inclusive"
+
+    def test_silence_is_not_a_declaration(self):
+        assert declared_tax_basis("Deluxe Room ₹3,200 per night") is None
+        assert declared_tax_basis("") is None
+        assert declared_tax_basis(None) is None
+
+    def test_a_card_stating_both_declares_nothing(self):
+        """Two figures described, one captured — which one is unknowable."""
+        both = "Rs 3,200 exclusive of tax. Rs 3,360 inclusive of tax."
+        assert declared_tax_basis(both) is None
+
+    def test_line_breaks_and_spacing_do_not_hide_the_phrase(self):
+        card = "Room Rates\n  Exclusive   of Tax\nRs 3,200.00"
+        assert declared_tax_basis(card) == "exclusive"

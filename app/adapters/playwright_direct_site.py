@@ -40,6 +40,7 @@ from playwright.sync_api import Error as PlaywrightError, TimeoutError as Playwr
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import dig, offer_from_mapping, render_template
 from app.adapters.parsing import (
+    declared_tax_basis,
     detect_currency,
     looks_sold_out,
     parse_price,
@@ -263,12 +264,26 @@ class PlaywrightDirectSiteAdapter:
 
         exclusive_text = _text_in(card, selectors.get("price_exclusive"))
         taxes_text = _text_in(card, selectors.get("taxes_fees"))
+        exclusive = parse_price_or_none(exclusive_text, field_name="price_exclusive")
+        taxes = parse_price_or_none(taxes_text, field_name="taxes_fees")
+
+        # One scraped number has to be filed as one component or the other, and
+        # the card usually says which: "Room Rates Exclusive of Tax Rs 3,200".
+        # Filing a stated pre-tax rate as the all-in price is harmless while it
+        # is the only figure we hold -- the offer falls back to whichever
+        # exists -- but it stops being harmless the moment a tax line is also
+        # captured, because the pre-tax rate then gets the tax subtracted from
+        # it a second time. Believing the page costs nothing and closes that.
+        inclusive = price
+        if price is not None and exclusive is None:
+            if declared_tax_basis(card_text) == "exclusive":
+                exclusive, inclusive = price, None
 
         return NormalizedOffer(
             raw_room_name=name,
-            price_inclusive=price,
-            price_exclusive=parse_price_or_none(exclusive_text, field_name="price_exclusive"),
-            taxes_fees=parse_price_or_none(taxes_text, field_name="taxes_fees"),
+            price_inclusive=inclusive,
+            price_exclusive=exclusive,
+            taxes_fees=taxes,
             currency=detect_currency(price_text or "", default=context.currency),
             meal_plan=_text_in(card, selectors.get("meal_plan")),
             refundable=_refundable(card, selectors),

@@ -15,6 +15,10 @@ AIOSELL = ("https://be.aiosell.com/book/b3cee25963"
            "?checkin=2026-08-18&checkout=2026-08-19&noOfGuests=2&noOfRooms=1")
 LETSBOOK = ("https://letsbook.me/booking/hotelgoldennest"
             "?checkin=2026-08-18&checkout=2026-08-19&adults=2&children=0")
+TREEBO = ("https://www.treebo.com/hotels-in-yelagiri/"
+          "itsy-hotels-kurinji-stay-inn-with-swimming-pool-athanavoor-3965/"
+          "?bookingSource=GoogleCPC&checkin=2026-08-19&checkout=2026-08-20"
+          "&roomconfig=2-0&roomtype=maple&utm_source=googlehotelads")
 
 
 class TestDetection:
@@ -114,11 +118,82 @@ class TestProfiles:
         assert listed and all("domains" in e for e in listed)
 
 
+class TestTreebo:
+    """A brand site whose prices are DOM-only, by permission rather than choice.
+
+    Treebo publishes prices through /api/ endpoints that its own robots.txt
+    disallows, so the profile reads the rendered page instead. The test that
+    matters most here is the last one: a future edit that "upgrades" this
+    profile to the JSON endpoints would be reading what the site asked us not
+    to, and nothing else in the suite would notice.
+    """
+
+    def test_is_recognised_with_its_property_code(self):
+        d = detect(TREEBO)
+        assert d is not None
+        assert d.profile.key == "treebo"
+        assert d.profile.adapter_key == "playwright_direct_site"
+        # The trailing number in the slug, not a query parameter.
+        assert d.external_id == "3965"
+
+    def test_the_stored_template_varies_by_date(self):
+        d = detect(TREEBO)
+        assert d.is_complete
+        assert "checkin={check_in}" in d.url_template
+        assert "checkout={check_out}" in d.url_template
+        assert "2026-08-19" not in d.url_template
+
+    def test_occupancy_is_not_pinned_to_two_adults(self):
+        """`roomconfig=2-0` packs both numbers into one value.
+
+        Left alone it would keep asking for two adults while the target said
+        four -- every price correct, every price for the wrong occupancy.
+        """
+        d = detect(TREEBO)
+        assert "roomconfig={adults}-{children}" in d.url_template
+
+    def test_the_card_is_anchored_on_an_id_not_a_hashed_class(self):
+        """Treebo's CSS classes are styled-components hashes and rotate on
+        every deploy; its `t-` ids are semantic and do not."""
+        config = detect(TREEBO).profile.adapter_config
+        assert config["room_card"] == "#t-roomTypes"
+        assert "sc-" not in str(config["selectors"])
+
+    def test_it_does_not_read_the_robots_disallowed_api(self):
+        config = detect(TREEBO).profile.adapter_config
+        assert "json_url_contains" not in config, (
+            "Treebo's robots.txt disallows /api/, where its price endpoints "
+            "live. This profile must read the rendered page only."
+        )
+
+
 @pytest.mark.parametrize("url,expected", [
     (AIOSELL, "aiosell"),
     (LETSBOOK, "ezee-letsbook"),
+    (TREEBO, "treebo"),
     ("https://commonservice.ipms247.com/YCSAPIServices/booking/x?checkin=2026-01-01",
      "ezee-letsbook"),
 ])
 def test_detection_table(url, expected):
     assert detect(url).profile.key == expected
+
+
+class TestCombinedOccupancyParameter:
+    """`?roomconfig=2-0` -- two numbers in one parameter."""
+
+    def test_it_is_templated(self):
+        url, changed = parameterise_url("https://x.example/book?roomconfig=2-0")
+        assert "roomconfig={adults}-{children}" in url
+        assert changed["roomconfig"] == "2-0 -> {adults}-{children}"
+
+    def test_a_value_that_is_not_two_numbers_is_left_alone(self):
+        """Only the shape we have actually seen is rewritten."""
+        url, changed = parameterise_url("https://x.example/book?roomconfig=deluxe")
+        assert "roomconfig=deluxe" in url
+        assert "roomconfig" not in changed
+
+    def test_other_parameters_are_untouched(self):
+        url, _ = parameterise_url(
+            "https://x.example/book?roomconfig=2-0&utm_source=googlehotelads"
+        )
+        assert "utm_source=googlehotelads" in url

@@ -69,6 +69,20 @@ class Settings(BaseSettings):
     default_currency: str = "INR"
     dispatch_jitter_seconds: int = 180
 
+    # Which of the stored price components is the one we show and compare on.
+    #
+    # "exclusive" is the default because it is the number the booking engines
+    # print in large type -- a page quoting "₹999 + ₹49.95 taxes & fees" is
+    # read by everyone, guest and revenue manager alike, as a ₹999 room. A
+    # dashboard showing ₹1,048.95 for it looks wrong even when it is arguably
+    # more honest, and a price nobody can find on the source page cannot be
+    # checked.
+    #
+    # Sites that publish only an all-in figure are unaffected: the offer falls
+    # back to whichever component exists (NormalizedOffer.price_on), so they
+    # keep showing their own headline number.
+    price_basis: Literal["inclusive", "exclusive"] = "exclusive"
+
     # ── playwright ───────────────────────────────────────────────────
     browser_headless: bool = True
     browser_locale: str = "en-IN"

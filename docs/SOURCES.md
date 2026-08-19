@@ -7,6 +7,7 @@ outcome in `docs/TOS_REVIEW.md` before that source is enabled.
 | URL | Verdict | Adapter | robots.txt | JSON API | Prices found |
 |---|---|---|---|---|---|
 | https://letsbook.me/booking/hotelgoldennest?checkin=2026-08- | BEST - JSON endpoint available (use HttpJsonAdapter) | `http_json` | allowed | yes | 7 |
+| https://www.treebo.com/hotels-in-yelagiri/itsy-hotels-kurinj | DOM ONLY - prices are behind `/api/`, which robots.txt disallows; the hotel page itself is allowed and shows the tax-inclusive rate | `playwright_direct_site` | page allowed, **`/api/` disallowed** | yes, but off-limits | 1 |
 
 ## Next steps
 

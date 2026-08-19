@@ -6,49 +6,73 @@
  * nothing. Everything derives from the tokens below, so changing spacing or
  * colour happens in one place rather than twelve.
  *
- * TWO RULES THE WHOLE SHEET FOLLOWS
- * =================================
+ * THREE RULES THE WHOLE SHEET FOLLOWS
+ * ===================================
  * 1. Colour never carries meaning alone. Every state also has a word -- "sold
  *    out", "stale", "paused" -- so the screens stay readable for anyone who
  *    cannot separate red from green, and in a screenshot pasted into a chat.
  * 2. Numbers that get compared are tabular and right-aligned. Prices in a
  *    column that do not line up are measurably slower to scan, and comparing
  *    prices is the entire job.
+ * 3. Colour is loud at the edges -- the bar, the tile caps, the buttons -- and
+ *    quiet inside the data. The tables are where the work happens, and a
+ *    rainbow behind a price column makes the price harder to read, not
+ *    easier. So the chrome carries the personality and the rows stay near
+ *    white; the only saturated fills inside a table are the ones that mean
+ *    something, and each of those still has a word next to it.
  */
 
 /* -- tokens ---------------------------------------------------------- */
 :root {
-  /* A slightly warm grey reads softer than pure neutral on the long tables
-     people stare at all day. */
-  --ink:        #16181d;
-  --ink-2:      #3f4552;
+  /* Text sits on tinted paper now, so the greys lean very slightly indigo:
+     a dead-neutral grey over a lavender wash reads as dirty rather than calm. */
+  --ink:        #14161f;
+  --ink-2:      #3c4257;
   --muted:      #6b7280;
-  --line:       #e6e8ec;
-  --line-soft:  #f1f2f5;
-  --bg:         #f6f7f9;
+  --line:       #e3e5ef;
+  --line-soft:  #f0f1f8;
+  --bg:         #f4f5fb;
   --panel:      #ffffff;
 
-  /* Semantics: up is bad for us (a competitor raised), down is good. */
+  /* The brand ramp. Three stops, always used in this order, so every gradient
+     on the page looks like it came from the same light source. */
+  --brand-1:   #4338ca;   /* indigo */
+  --brand-2:   #7c3aed;   /* violet */
+  --brand-3:   #0ea5e9;   /* sky    */
+  --grad-brand: linear-gradient(100deg, var(--brand-1), var(--brand-2) 52%, var(--brand-3));
+
+  /* Semantics: up is bad for us (a competitor raised), down is good. These
+     stay close to the classic red and green, because that is how every
+     hotelier already reads a rate sheet. The new colours went everywhere
+     else instead. */
   --up:        #c02626;
+  --up-2:      #f43f5e;
   --up-bg:     #fef2f2;
   --down:      #047857;
+  --down-2:    #10b981;
   --down-bg:   #ecfdf5;
   --warn:      #b45309;
+  --warn-2:    #f59e0b;
   --warn-bg:   #fffbeb;
-  --accent:    #2b53d8;
-  --accent-bg: #eff3ff;
+  --accent:    #4f46e5;
+  --accent-2:  #7c3aed;
+  --accent-bg: #eef0ff;
 
   /* One spacing scale keeps vertical rhythm consistent across pages. */
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
   --s5: 24px; --s6: 32px; --s7: 48px;
 
-  --radius:    10px;
-  --radius-sm: 6px;
+  --radius:    12px;
+  --radius-sm: 7px;
 
-  /* Almost invisible on purpose: enough to lift a card off the page, not
-     enough to make a dense screen feel busy. */
-  --shadow:    0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
-  --shadow-lg: 0 4px 6px -1px rgba(16,24,40,.07), 0 10px 24px -4px rgba(16,24,40,.10);
+  /* Tinted rather than grey: a neutral black shadow over a lavender page
+     looks like a smudge, an indigo one looks like depth. */
+  --shadow:       0 1px 2px rgba(58,45,140,.05), 0 2px 6px rgba(58,45,140,.06);
+  --shadow-lg:    0 4px 10px -2px rgba(58,45,140,.10), 0 14px 32px -8px rgba(58,45,140,.18);
+  --shadow-brand: 0 2px 6px rgba(79,70,229,.28);
+
+  /* Default cap colour for a tile; overridden per tile further down. */
+  --tile-accent: var(--grad-brand);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -62,13 +86,20 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                "Helvetica Neue", Arial, sans-serif;
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* Two faint washes pinned to the top corners over the flat page colour.
+     Fixed, so they do not scroll away and leave the bottom of a long table
+     sitting on bare grey. */
+  background:
+    radial-gradient(900px 420px at 8% -8%,  rgba(124,58,237,.10), transparent 65%),
+    radial-gradient(760px 380px at 96% -4%, rgba(14,165,233,.12), transparent 62%),
+    var(--bg);
+  background-attachment: fixed;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -78,36 +109,71 @@ a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* -- top bar --------------------------------------------------------- */
+/*
+ * The one genuinely saturated surface in the product. It is on every screen
+ * and it holds no data, so it is where the thing gets to have a colour
+ * without competing with a price.
+ */
 .topbar {
   display: flex; align-items: center; gap: var(--s5);
   height: 56px; padding: 0 var(--s5);
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  background: var(--grad-brand);
+  border-bottom: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 1px 12px rgba(49,36,140,.28);
   position: sticky; top: 0; z-index: 20;
+  color: #fff;
 }
-.brand { font-weight: 650; font-size: 15px; color: var(--ink); letter-spacing: -.01em; white-space: nowrap; }
+.brand {
+  font-weight: 650; font-size: 15px; color: #fff;
+  letter-spacing: -.01em; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: var(--s2);
+}
 .brand:hover { text-decoration: none; }
+/* A small mint dot, so the bar carries a mark and not only words. */
+.brand::before {
+  content: ""; width: 9px; height: 9px; border-radius: 50%;
+  background: #a7f3d0; box-shadow: 0 0 0 3px rgba(167,243,208,.25);
+  flex: 0 0 auto;
+}
 
 .topbar nav { display: flex; gap: var(--s1); align-items: center; }
 .topbar nav a {
-  color: var(--ink-2); padding: 6px 10px; border-radius: var(--radius-sm);
+  color: rgba(255,255,255,.82); padding: 6px 11px; border-radius: 999px;
   font-weight: 500; white-space: nowrap;
+  transition: background-color .14s ease, color .14s ease;
 }
-.topbar nav a:hover { background: var(--line-soft); color: var(--ink); text-decoration: none; }
-/* The current page, marked by weight and a tint rather than a heavy bar. */
-.topbar nav a.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.topbar nav a:hover { background: rgba(255,255,255,.15); color: #fff; text-decoration: none; }
+/* The current page, marked by weight and a solid chip rather than a heavy bar. */
+.topbar nav a.active {
+  background: #fff; color: var(--brand-1); font-weight: 650;
+  box-shadow: 0 1px 3px rgba(23,16,72,.25);
+}
 
 .topbar .user {
   margin-left: auto; display: flex; align-items: center; gap: var(--s3);
-  color: var(--muted); font-size: 13px;
+  color: rgba(255,255,255,.78); font-size: 13px;
 }
+.topbar .user a { color: #fff; }
 
 main { padding: var(--s5); max-width: 1360px; margin: 0 auto; }
 footer { padding: var(--s5) var(--s5) var(--s6); color: var(--muted); font-size: 12px; text-align: center; }
 
 /* -- typography ------------------------------------------------------ */
 h1 { font-size: 24px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 var(--s1); }
-h2 { font-size: 15px; font-weight: 650; letter-spacing: -.01em; margin: var(--s6) 0 var(--s3); }
+h2 {
+  font-size: 15px; font-weight: 650; letter-spacing: -.01em;
+  margin: var(--s6) 0 var(--s3);
+  display: flex; align-items: center; gap: var(--s2);
+}
+/* A short gradient rule in front of every section heading. It breaks a long
+   page into blocks at a glance without putting a box around each one. */
+h2::before {
+  content: ""; width: 4px; height: 15px; border-radius: 2px;
+  background: var(--grad-brand); flex: 0 0 auto;
+}
+/* Two headings are labels rather than section titles, and a 15px bar next to
+   11px text reads as a stray mark. */
+.muted-head::before, .setup-title::before { display: none; }
 h2 .muted { font-weight: 400; font-size: 13px; }
 .muted-head {
   color: var(--muted); font-size: 11px; font-weight: 650;
@@ -119,6 +185,17 @@ section > h2:first-child { margin-top: 0; }
 .page-head { display: flex; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s5); }
 .page-head p { margin: 0; }
 .page-head > a, .page-head .btn-link { margin-left: auto; align-self: center; }
+/* One coloured word per screen: the title carries the ramp itself, so the
+   page announces itself without needing a banner. */
+.page-head h1 {
+  background: var(--grad-brand);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+  width: fit-content;
+}
+/* Clipping the background to the text clips it to descendant glyphs too, so a
+   pill sitting in the hotel title would lose its own ink. It gets it back. */
+.page-head h1 .pill, .page-head h1 .badge { -webkit-text-fill-color: initial; }
 
 /* -- tables ---------------------------------------------------------- */
 .grid {
@@ -127,14 +204,15 @@ section > h2:first-child { margin-top: 0; }
   border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
 }
 .grid th {
-  text-align: left; font-size: 11px; font-weight: 600;
-  letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
-  padding: 10px var(--s4); background: #fbfbfc;
-  border-bottom: 1px solid var(--line); white-space: nowrap;
+  text-align: left; font-size: 11px; font-weight: 650;
+  letter-spacing: .06em; text-transform: uppercase; color: #4c4a8a;
+  padding: 10px var(--s4);
+  background: linear-gradient(180deg, #f5f4ff, #eef0fb);
+  border-bottom: 1px solid #dfe0f2; white-space: nowrap;
 }
 .grid td { padding: 11px var(--s4); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .grid tbody tr:last-child td { border-bottom: none; }
-.grid tbody tr:hover td { background: #fcfdff; }
+.grid tbody tr:hover td { background: #f8f8ff; }
 
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .strong { font-weight: 600; }
@@ -143,8 +221,12 @@ section > h2:first-child { margin-top: 0; }
 .truncate { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .up { color: var(--up); font-weight: 600; }
 .down { color: var(--down); font-weight: 600; }
+/* The two tinted rows also get a solid edge, so they survive a greyscale
+   print and a screenshot run through a filter. */
 .row-alarm td { background: var(--up-bg); }
+.row-alarm td:first-child { box-shadow: inset 3px 0 0 var(--up-2); }
 .own-property td { background: var(--accent-bg); }
+.own-property td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .scroll-x { overflow-x: auto; border-radius: var(--radius); }
 
 /* -- tiles ----------------------------------------------------------- */
@@ -153,58 +235,89 @@ section > h2:first-child { margin-top: 0; }
   gap: var(--s3); margin-bottom: var(--s5);
 }
 .tile {
+  position: relative; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s4) var(--s5); min-height: 88px;
   display: flex; flex-direction: column; gap: 2px; justify-content: center;
   transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
 }
+/* A cap rather than a full flood: the number stays on white where it reads
+   fastest, and the colour still tells the tiles apart down a row. */
+.tile::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 4px;
+  background: var(--tile-accent);
+}
+/* Neighbouring tiles differ without a template having to name a colour. */
+.tiles .tile:nth-child(3n+2) { --tile-accent: linear-gradient(90deg, var(--brand-3), #22d3ee); }
+.tiles .tile:nth-child(3n+3) { --tile-accent: linear-gradient(90deg, var(--brand-2), #d946ef); }
+
 .tile-value { font-size: 28px; font-weight: 650; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .tile-label { font-size: 12px; color: var(--muted); font-weight: 500; }
 a.tile { color: inherit; }
-a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: var(--shadow-lg); transform: translateY(-2px); }
 
-.tile-alarm { border-color: #f3c6c6; background: var(--up-bg); }
+/* The three states that mean something override the decorative ramp, so a
+   tile that is shouting never looks like one that is merely third in the row. */
+.tile-alarm {
+  border-color: #f5c2c7; background: linear-gradient(180deg, #fff5f5, var(--panel));
+  --tile-accent: linear-gradient(90deg, var(--up), var(--up-2));
+}
 .tile-alarm .tile-value { color: var(--up); }
-.tile-warn  { border-color: #f0d9a8; background: var(--warn-bg); }
-.tile-quiet { border-color: #b9e8d2; background: var(--down-bg); }
+.tile-warn {
+  border-color: #f0d9a8; background: linear-gradient(180deg, var(--warn-bg), var(--panel));
+  --tile-accent: linear-gradient(90deg, var(--warn), var(--warn-2));
+}
+.tile-warn .tile-value { color: var(--warn); }
+.tile-quiet {
+  border-color: #a7e5cb; background: linear-gradient(180deg, #f0fdf7, var(--panel));
+  --tile-accent: linear-gradient(90deg, var(--down), var(--down-2));
+}
 .tile-quiet .tile-value { color: var(--down); }
 
 /* -- pills, badges, chips -------------------------------------------- */
+/* Every pill carries its own word, so its colour is reinforcement. The thin
+   border is what keeps it legible when it lands on a tinted row. */
 .pill {
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  font-size: 11px; font-weight: 600; line-height: 1.5; white-space: nowrap;
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 650; line-height: 1.5; white-space: nowrap;
+  border: 1px solid transparent;
 }
-.pill-ok      { background: #d1fae5; color: #065f46; }
-.pill-warn    { background: #fef3c7; color: #92400e; }
-.pill-stop    { background: #fee2e2; color: #991b1b; }
-.pill-off     { background: #eef0f3; color: #4b5563; }
-.pill-own     { background: #dbeafe; color: #1e40af; }
-.pill-soldout { background: #eef0f3; color: #6b7280; }
-.pill-pending { background: #ede9fe; color: #5b21b6; }
+.pill-ok      { background: #d1fae5; color: #065f46; border-color: #a7e5cb; }
+.pill-warn    { background: #fef3c7; color: #92400e; border-color: #f5d98a; }
+.pill-stop    { background: #ffe4e6; color: #9f1239; border-color: #fbc4cb; }
+.pill-off     { background: #eceef5; color: #4b5563; border-color: #dfe2ec; }
+.pill-own     { background: #dbeafe; color: #1e40af; border-color: #bcd4fb; }
+.pill-soldout { background: #eceef5; color: #6b7280; border-color: #dfe2ec; }
+.pill-pending { background: #ede9fe; color: #5b21b6; border-color: #d6cdfb; }
 
 .badge {
   font-size: 10px; font-weight: 700; letter-spacing: .04em;
-  text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
 }
 .badge-admin  { background: var(--accent-bg); color: var(--accent); }
-.badge-viewer { background: #eef0f3; color: #4b5563; }
+.badge-viewer { background: #eceef5; color: #4b5563; }
+/* A pale tint vanishes on the gradient bar, so it inverts up there. */
+.topbar .badge-admin { background: rgba(255,255,255,.22); color: #fff; }
 
 .chips { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s3); }
 .chip {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
-  padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow);
+  background: var(--panel); border: 1px solid #dcdcf1; border-radius: 999px;
+  padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow); color: var(--ink-2);
 }
 
 /* Present only when non-zero, so its presence is the signal and it can afford
-   to be loud. */
-.nav-alert { color: var(--up) !important; font-weight: 600; }
-.nav-alert:hover { background: var(--up-bg) !important; }
+   to be loud. Red text on the gradient bar is unreadable, so up there it
+   becomes a solid chip instead. */
+.topbar nav a.nav-alert { background: #e11d48; color: #fff; font-weight: 650; }
+.topbar nav a.nav-alert:hover { background: #be123c; color: #fff; }
+.topbar nav a.nav-alert.active { background: #fff; color: #be123c; }
 .nav-count {
   display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 2px;
-  border-radius: 999px; background: var(--up); color: #fff;
+  border-radius: 999px; background: #fff; color: #be123c;
   font-size: 11px; font-weight: 700; text-align: center;
 }
+.topbar nav a.nav-alert.active .nav-count { background: #be123c; color: #fff; }
 
 /* -- matrix cells ---------------------------------------------------- */
 .cells { display: flex; gap: var(--s2); flex-wrap: wrap; }
@@ -215,15 +328,21 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 }
 .cell-room  { font-size: 11px; color: var(--muted); }
 .cell-price { font-weight: 650; font-variant-numeric: tabular-nums; }
-.cell-changed { border-color: var(--accent); background: var(--accent-bg); }
+.cell-changed { border-color: var(--accent); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent-2); }
 .cell-soldout { background: var(--line-soft); color: var(--muted); }
 
 /* -- forms ----------------------------------------------------------- */
 .filters {
+  position: relative; overflow: hidden;
   display: flex; gap: var(--s4); align-items: flex-end; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--line);
+  background: linear-gradient(180deg, #fbfaff, var(--panel));
+  border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s4); margin-bottom: var(--s4);
+}
+.filters::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--grad-brand); opacity: .85;
 }
 .filters label, .stack label {
   display: flex; flex-direction: column; gap: 4px;
@@ -234,53 +353,69 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 
 input, select, textarea {
   font: inherit; padding: 7px 10px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  border: 1px solid #d9dbe9; border-radius: var(--radius-sm);
   background: #fff; color: var(--ink);
   transition: border-color .12s ease, box-shadow .12s ease;
 }
-input:hover, select:hover, textarea:hover { border-color: #d3d7de; }
+input:hover, select:hover, textarea:hover { border-color: #b9bcd8; }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(43,83,216,.12);
+  box-shadow: 0 0 0 3px rgba(79,70,229,.16);
 }
 input::placeholder, textarea::placeholder { color: #9aa1ad; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 button {
   font: inherit; font-weight: 600; padding: 7px 14px;
-  border: 1px solid var(--accent); border-radius: var(--radius-sm);
-  background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap;
-  transition: filter .12s ease, opacity .12s ease;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--brand-1), var(--accent-2));
+  color: #fff; cursor: pointer; white-space: nowrap;
+  box-shadow: var(--shadow-brand);
+  transition: filter .12s ease, opacity .12s ease, box-shadow .12s ease, transform .08s ease;
 }
-button:hover { filter: brightness(1.08); }
-button:active { filter: brightness(.95); }
-button:disabled { opacity: .5; cursor: default; filter: none; }
+button:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(79,70,229,.34); }
+button:active { filter: brightness(.95); transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: default; filter: none; box-shadow: none; }
 
-/* Row actions in dense tables should not shout. */
+/* Row actions in dense tables should not shout. A table with a gradient
+   button on every line reads as a toolbar rather than as a list. */
 .grid button {
   padding: 4px 10px; font-size: 12px;
-  background: var(--panel); color: var(--ink-2); border-color: var(--line);
+  background: var(--panel); color: var(--ink-2);
+  border-color: #dcdcf1; box-shadow: none;
 }
-.grid button:hover { background: var(--line-soft); border-color: #d3d7de; filter: none; }
+.grid button:hover {
+  background: var(--accent-bg); border-color: var(--accent); color: var(--accent);
+  filter: none; box-shadow: none;
+}
 
 .btn-link {
   display: inline-block; padding: 7px 14px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  border: 1px solid #dcdcf1; border-radius: var(--radius-sm);
   background: var(--panel); font-weight: 600; box-shadow: var(--shadow);
+  transition: border-color .12s ease, box-shadow .12s ease, transform .1s ease;
 }
-.btn-link:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.btn-link:hover {
+  border-color: var(--accent); color: var(--accent); text-decoration: none;
+  box-shadow: var(--shadow-lg); transform: translateY(-1px);
+}
 
 .panel {
   background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid #dcdcf1;
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s3) var(--s4); margin: var(--s3) 0;
+  transition: border-left-color .15s ease;
 }
+/* The open one is the one being worked in, so it is the one that lights up. */
+.panel[open] { border-left-color: var(--accent); }
 .panel summary {
   cursor: pointer; font-weight: 600; list-style: none;
   display: flex; align-items: center; gap: var(--s2); padding: 2px 0;
 }
 .panel summary::-webkit-details-marker { display: none; }
 .panel summary::before {
-  content: "\203A"; color: var(--muted); font-size: 16px; line-height: 1;
+  content: "\203A"; color: var(--accent); font-size: 16px; line-height: 1;
   display: inline-block; transition: transform .15s ease;
 }
 .panel[open] summary::before { transform: rotate(90deg); }
@@ -297,10 +432,16 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
    Shown only while a hotel has no prices. Once it is collecting, the
    scaffolding disappears rather than becoming permanent clutter. */
 .setup {
-  background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
+  position: relative; overflow: hidden;
+  background: linear-gradient(180deg, #fbfaff, var(--panel));
+  border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
-  padding: var(--s5); margin-bottom: var(--s5);
+  padding: var(--s5); padding-left: calc(var(--s5) + 3px);
+  margin-bottom: var(--s5);
+}
+.setup::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+  background: var(--grad-brand);
 }
 .setup-title { margin: 0 0 var(--s4); font-size: 15px; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s4); }
@@ -313,7 +454,11 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700;
 }
-.steps li.now  .step-n { background: var(--accent); color: #fff; }
+/* The step you are on gets the ramp and a halo; done steps go green. */
+.steps li.now .step-n {
+  background: linear-gradient(135deg, var(--brand-1), var(--accent-2)); color: #fff;
+  box-shadow: 0 0 0 4px rgba(79,70,229,.14);
+}
 .steps li.done .step-n { background: #d1fae5; color: #065f46; }
 .step-body { flex: 1; display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
 .step-body > strong { font-size: 14px; }
@@ -327,12 +472,25 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
 .step-body label.tight input { width: 74px; }
 
 /* -- login ----------------------------------------------------------- */
-.login-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--s5); }
+/* The only full-bleed colour in the product. Nothing is being compared on
+   this screen, so the page is allowed to just be the brand. */
+.login-body {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: var(--s5);
+  background:
+    radial-gradient(700px 420px at 12% 8%, rgba(255,255,255,.20), transparent 60%),
+    var(--grad-brand);
+}
 .login-card {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: 14px; box-shadow: var(--shadow-lg);
+  position: relative; overflow: hidden;
+  background: var(--panel); border: 1px solid rgba(255,255,255,.5);
+  border-radius: 16px; box-shadow: 0 18px 50px -12px rgba(23,16,72,.45);
   padding: var(--s6); width: 100%; max-width: 380px;
   display: flex; flex-direction: column; gap: var(--s2);
+}
+.login-card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 4px;
+  background: var(--grad-brand);
 }
 .login-card h1 { font-size: 20px; margin: 0; }
 .login-card p { margin: 0 0 var(--s3); }
@@ -341,13 +499,16 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
 
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; background: var(--line-soft); padding: 1px 5px; border-radius: 4px;
+  font-size: 12px; background: #f1f0fd; color: #4c3fb0;
+  padding: 1px 5px; border-radius: 4px;
 }
 
 /* -- empty states ----------------------------------------------------
-   An empty screen should explain why it is empty, not just show nothing. */
+   An empty screen should explain why it is empty, not just show nothing.
+   The dashed edge says "nothing here yet" before the sentence is read. */
 .empty-state {
-  background: var(--panel); border: 1px solid var(--line);
+  background: linear-gradient(180deg, #fbfaff, var(--panel));
+  border: 1px dashed #d5d6ee;
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s7) var(--s5); text-align: center;
 }
@@ -391,19 +552,21 @@ code {
   background: var(--panel);
   border: 1px solid var(--line);
   border-left: 4px solid var(--muted);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: 0 6px 20px rgba(17, 24, 39, .13);
+  box-shadow: 0 8px 24px rgba(23,16,72,.18);
   display: flex;
   flex-direction: column;
   gap: 3px;
   animation: toast-in .18s ease-out;
 }
-.toast-up    { border-left-color: var(--up); }
-.toast-down  { border-left-color: var(--down); }
-.toast-gone  { border-left-color: var(--muted); }
-.toast-back  { border-left-color: var(--accent); }
-.toast-more  { border-left-color: var(--warn); }
+/* The wash fades out well before the text starts, so the words keep full
+   contrast and only the edge is coloured. */
+.toast-up    { border-left-color: var(--up-2);   background: linear-gradient(90deg, #fff6f7, var(--panel) 55%); }
+.toast-down  { border-left-color: var(--down-2); background: linear-gradient(90deg, #f2fdf8, var(--panel) 55%); }
+.toast-gone  { border-left-color: var(--muted);  background: linear-gradient(90deg, #f7f7fa, var(--panel) 55%); }
+.toast-back  { border-left-color: var(--accent); background: linear-gradient(90deg, #f5f4ff, var(--panel) 55%); }
+.toast-more  { border-left-color: var(--warn-2); background: linear-gradient(90deg, #fffaef, var(--panel) 55%); }
 
 .toast-head { display: flex; align-items: center; gap: 8px; }
 .toast-label {
@@ -416,21 +579,24 @@ code {
 .toast-down .toast-label { color: var(--down); }
 .toast-gone .toast-label { color: var(--muted); }
 .toast-back .toast-label { color: var(--accent); }
+.toast-more .toast-label { color: var(--warn); }
 
 .toast-close {
   margin-left: auto;
   border: 0;
   background: none;
+  box-shadow: none;
   color: var(--muted);
   font-size: 17px;
   line-height: 1;
   padding: 0 2px;
   cursor: pointer;
 }
-.toast-close:hover { color: var(--ink); }
+.toast-close:hover { color: var(--ink); background: none; filter: none; box-shadow: none; }
 
 .toast-hotel { font-weight: 600; }
 .toast-room  { color: var(--muted); font-size: 12px; }
+.toast-basis { color: var(--muted); font-size: 11px; font-style: italic; }
 .toast-prices { font-size: 15px; margin-top: 2px; }
 .toast-was   { color: var(--muted); }
 .toast-delta { margin-left: 6px; font-size: 12px; font-weight: 600; }
@@ -444,20 +610,23 @@ code {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
-/* Someone who has asked for less motion still gets the toast, just without
-   it sliding in. */
+/* Someone who has asked for less motion still gets the toast and the colour,
+   just without anything sliding or lifting. */
 @media (prefers-reduced-motion: reduce) {
   .toast { animation: none; }
   .toast-leaving { transition: none; }
+  .tile, .btn-link, button { transition: none; }
+  a.tile:hover, .btn-link:hover, button:active { transform: none; }
 }
 
 /* -- error detail rows ---------------------------------------------- */
 /*
  * The message cell is a button so the whole line is a target, not a small
  * "details" link at the end of it. It still looks like text: a table of
- * buttons reads as a toolbar.
+ * buttons reads as a toolbar. It therefore has to undo the gradient the
+ * base button rule gives it.
  */
-.error-expand {
+.grid .error-expand, .error-expand {
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -465,27 +634,31 @@ code {
   padding: 0;
   border: 0;
   background: none;
+  box-shadow: none;
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
-.error-expand:hover { color: var(--accent); }
+.grid .error-expand:hover, .error-expand:hover {
+  color: var(--accent); background: none; border-color: transparent;
+  filter: none; box-shadow: none;
+}
 .error-expand .error-caret {
-  color: var(--muted);
+  color: var(--accent);
   font-size: 10px;
   transition: transform .15s ease;
 }
 .error-expand.is-open .error-caret { transform: rotate(90deg); }
 .error-expand.is-open .truncate { white-space: normal; overflow: visible; }
 
-.error-detail > td { background: var(--line-soft); padding: 0; }
+.error-detail > td { background: #fdf6f7; padding: 0; }
 .error-panel {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
   padding: var(--s4);
-  border-left: 3px solid var(--up);
+  border-left: 3px solid var(--up-2);
 }
 
 .error-meta {
@@ -540,7 +713,8 @@ code {
 /*
  * Set apart from the form above it rather than sitting in the same flow. The
  * two actions in here are the only ones on the page that lose something, and
- * one of them cannot be undone at all.
+ * one of them cannot be undone at all. This is the one place where a hot
+ * colour is the point rather than decoration.
  */
 .danger-zone {
   margin-top: var(--s5);
@@ -561,11 +735,12 @@ code {
 .danger-zone code { font-size: 12px; }
 
 button.danger {
-  background: var(--up);
-  border-color: var(--up);
+  background: linear-gradient(135deg, #b91c1c, var(--up-2));
+  border-color: transparent;
   color: #fff;
+  box-shadow: 0 2px 6px rgba(190,18,60,.30);
 }
-button.danger:hover { filter: brightness(1.08); }
+button.danger:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(190,18,60,.36); }
 
 /* Kept small and low-contrast: a table with a full-size button on every line
    reads as a form rather than as a list. */
