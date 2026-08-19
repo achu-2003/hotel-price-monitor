@@ -20,7 +20,7 @@ the two entry points.
 """
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -29,7 +29,8 @@ import jwt
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import ARRAY, BigInteger, func, select
+from sqlalchemy import cast as sa_cast
 
 from app.adapters.engines import known_engines
 from app.api.deps import SESSION_COOKIE, DbSession
@@ -600,19 +601,51 @@ async def changes_page(
     session: DbSession,
     hotel_id: int | None = None,
     hours: int = Query(default=48, ge=1, le=720),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
 ):
+    """Confirmed changes, filtered by hotel and by time.
+
+    Two ways to say "when", because they answer different questions. The
+    rolling window is for "what has moved lately" and is what the page opens
+    with; explicit dates are for "what happened on the day that guest
+    complained", which a 48-hour preset cannot express at all once the day is
+    three weeks back.
+
+    Explicit dates WIN when given: a page showing both controls and quietly
+    obeying the other one is worse than either.
+    """
     if user is None:
         return _redirect_to_login(request)
 
-    since = datetime.now(UTC) - timedelta(hours=hours)
+    tz = ZoneInfo(get_settings().timezone)
+    from_date = _parse_date(date_from)
+    to_date = _parse_date(date_to)
+
     statement = (
         select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
                PriceSeries.check_out)
         .join(Hotel, PriceChange.hotel_id == Hotel.id)
         .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
         .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
-        .where(PriceChange.changed_at >= since)
     )
+
+    if from_date or to_date:
+        # Dates are read in the hotel's timezone, not the server's. A person
+        # asking for "19 Aug" means their 19 Aug, and the stored timestamps are
+        # UTC -- so a naive comparison quietly loses the last five and a half
+        # hours of the day here.
+        if from_date:
+            start = datetime.combine(from_date, time.min, tzinfo=tz)
+            statement = statement.where(PriceChange.changed_at >= start)
+        if to_date:
+            end = datetime.combine(to_date, time.min, tzinfo=tz) + timedelta(days=1)
+            statement = statement.where(PriceChange.changed_at < end)
+    else:
+        statement = statement.where(
+            PriceChange.changed_at >= datetime.now(UTC) - timedelta(hours=hours)
+        )
+
     if hotel_id is not None:
         statement = statement.where(PriceChange.hotel_id == hotel_id)
 
@@ -628,7 +661,77 @@ async def changes_page(
     return await _render(
         request, user, session, "changes.html",
         changes=rows, hotels=hotels, hotel_id=hotel_id, hours=hours,
+        date_from=from_date.isoformat() if from_date else "",
+        date_to=to_date.isoformat() if to_date else "",
+        delivery=await _delivery_state(session, [row[0] for row in rows]),
     )
+
+
+def _parse_date(raw: str | None) -> date | None:
+    """An unparseable date is ignored rather than raising a 422 at someone."""
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw.strip())
+    except ValueError:
+        return None
+
+
+async def _delivery_state(session, changes) -> dict[int, tuple[str, str]]:
+    """Did anyone actually hear about each change? (label, css class).
+
+    ``price_changes.notified`` cannot answer this. The dispatcher sets it even
+    when NO recipient is assigned to the hotel -- deliberately, so the change
+    does not reappear in every sweep forever -- which meant a column headed
+    "Told" showed "yes" for every row on an installation with no recipients at
+    all. It reported that the work was finished, and read as though somebody
+    had been informed.
+
+    So the notifications actually written are consulted instead, and the honest
+    answer is one of four: sent, still queued, failed, or nobody to tell.
+    """
+    if not changes:
+        return {}
+
+    ids = [c.id for c in changes]
+    # `&&` is PostgreSQL's array-overlap operator, reached through op() because
+    # the column is declared with the generic ARRAY type, whose comparator has
+    # no overlap(). One statement rather than one per change.
+    rows = (
+        await session.execute(
+            select(Notification.status, Notification.price_change_ids).where(
+                Notification.price_change_ids.op("&&")(
+                    sa_cast(ids, ARRAY(BigInteger))
+                )
+            )
+        )
+    ).all()
+
+    best: dict[int, str] = {}
+    rank = {"sent": 3, "delivered": 4, "queued": 2, "held": 2, "failed": 1}
+    for status, change_ids in rows:
+        name = getattr(status, "value", str(status))
+        for change_id in change_ids or []:
+            if change_id not in ids:
+                continue
+            if rank.get(name, 0) >= rank.get(best.get(change_id, ""), 0):
+                best[change_id] = name
+
+    state: dict[int, tuple[str, str]] = {}
+    for change in changes:
+        name = best.get(change.id)
+        if name in ("sent", "delivered"):
+            state[change.id] = ("sent", "pill-ok")
+        elif name == "failed":
+            state[change.id] = ("failed", "pill-stop")
+        elif name is not None:
+            state[change.id] = ("queued", "pill-warn")
+        elif change.notified:
+            # Processed, with nobody assigned to hear it.
+            state[change.id] = ("no one to tell", "pill-off")
+        else:
+            state[change.id] = ("pending", "pill-pending")
+    return state
 
 
 # -- in-app change popups --------------------------------------------

@@ -18,6 +18,9 @@
       {% endfor %}
     </select>
   </label>
+  {# Two ways of saying "when", because they answer different questions: the
+     window for "what moved lately", explicit dates for "what happened on the
+     day that guest complained". Dates win when both are set. #}
   <label>Window
     <select name="hours">
       {% for option in [24, 48, 168, 720] %}
@@ -27,12 +30,22 @@
       {% endfor %}
     </select>
   </label>
+  <label>From
+    <input type="date" name="date_from" value="{{ date_from }}">
+  </label>
+  <label>To
+    <input type="date" name="date_to" value="{{ date_to }}">
+  </label>
   <button type="submit">Filter</button>
+  {% if date_from or date_to %}
+  <a class="btn-link" href="/changes{{ '?hotel_id=%d'|format(hotel_id) if hotel_id else '' }}">Clear dates</a>
+  <span class="muted">Showing exact dates, so the window above is ignored.</span>
+  {% endif %}
 </form>
 
 <table class="grid">
   <thead>
-    <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Compared</th><th class="num">Was</th><th class="num">Now</th><th class="num">Change</th><th>Told</th></tr>
+    <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Compared</th><th class="num">Was</th><th class="num">Now</th><th class="num">Change</th><th>Alert</th></tr>
   </thead>
   <tbody>
     {% for change, hotel_name, room_name, check_in, check_out in changes %}
@@ -92,9 +105,16 @@
         {% else %}—{% endif %}
       </td>
       <td>
-        {% if change.notified %}<span class="pill pill-ok">yes</span>
-        {% else %}<span class="pill pill-off">pending</span>{% endif %}
-      </td>
+        {# NOT change.notified. That flag is set even when no recipient is
+           assigned to the hotel -- on purpose, so the change stops reappearing
+           in every dispatch -- so a column reading "yes" for every row was
+           reporting that the dispatcher had finished, under a heading that
+           said somebody had been told. The notifications actually written are
+           what answer that. #}
+        {% set state = delivery.get(change.id) %}
+        {% if state %}<span class="pill {{ state[1] }}">{{ state[0] }}</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+</td>
     </tr>
     {% else %}
     <tr><td colspan="9" class="muted">No confirmed changes in this window.</td></tr>
