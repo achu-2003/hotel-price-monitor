@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 
 from app.adapters.base import FetchResult, NormalizedOffer
 from app.db.models import (
+    ChangeDirection,
     PriceBasis,
     PriceChange,
     PriceObservation,
@@ -448,3 +449,87 @@ class TestBasisChange:
 
         assert summary.change_ids == []
         assert session.execute(select(func.count(PriceChange.id))).scalar_one() == 0
+
+
+class TestWhenThePriceActuallyChanged:
+    """`changed_at` is when the debounce finished, which is a different fact.
+
+    A change is written on its second consecutive sighting, so on a 30-minute
+    target the recorded time can be an hour after the hotel moved its rate.
+    Showing only that answers "when did we finish checking". `first_seen_at`
+    carries the moment the new price appeared.
+    """
+
+    def test_first_seen_precedes_the_confirmation(self, session, hotel_fixture):
+        base = datetime.now(UTC)
+        ingest_fetch_result(
+            session, _result(_offer(price="3000")), _context(hotel_fixture, checked_at=base)
+        )
+        session.flush()
+
+        seen_at = base + timedelta(minutes=30)
+        ingest_fetch_result(
+            session, _result(_offer(price="3500")), _context(hotel_fixture, checked_at=seen_at)
+        )
+        session.flush()
+        assert session.scalar(select(func.count(PriceChange.id))) == 0, "not yet confirmed"
+
+        confirmed_at = base + timedelta(minutes=60)
+        ingest_fetch_result(
+            session,
+            _result(_offer(price="3500")),
+            _context(hotel_fixture, checked_at=confirmed_at),
+        )
+        session.flush()
+
+        change = session.scalars(select(PriceChange)).one()
+        assert change.changed_at == confirmed_at
+        assert change.first_seen_at == seen_at
+        # The gap is the whole point: half an hour of it here.
+        assert change.changed_at - change.first_seen_at == timedelta(minutes=30)
+
+    def test_it_holds_when_confirmation_takes_three_checks(self, session, hotel_fixture):
+        """The first sighting must not slide forward with each check.
+
+        Stamping the pending time on every check reads correctly at
+        confirm_checks=2, where there is only one pending check to get wrong.
+        At three it moves one check at a time, and the recorded first sighting
+        is wrong by exactly the amount that still looks plausible.
+        """
+        base = datetime.now(UTC)
+        ctx = lambda t: _context(hotel_fixture, checked_at=t, confirm_checks=3)  # noqa: E731
+
+        ingest_fetch_result(session, _result(_offer(price="3000")), ctx(base))
+        session.flush()
+
+        seen_at = base + timedelta(minutes=10)
+        for offset in (10, 20, 30):
+            ingest_fetch_result(
+                session, _result(_offer(price="3500")), ctx(base + timedelta(minutes=offset))
+            )
+            session.flush()
+
+        change = session.scalars(select(PriceChange)).one()
+        assert change.first_seen_at == seen_at, "the first sighting slid forward"
+        assert change.changed_at == base + timedelta(minutes=30)
+
+    def test_a_room_disappearing_has_no_earlier_sighting(self, session, hotel_fixture):
+        """Reported on the check that finds it gone, with no debounce.
+
+        The page has to SAY it is sold out. An empty result with no such marker
+        is a broken read, and the sweep deliberately ignores it rather than
+        reporting a redesign as every room selling out at once.
+        """
+        base = datetime.now(UTC)
+        ingest_fetch_result(session, _result(_offer()), _context(hotel_fixture, checked_at=base))
+        session.flush()
+
+        gone_at = base + timedelta(minutes=30)
+        ingest_fetch_result(
+            session, _result(sold_out=True), _context(hotel_fixture, checked_at=gone_at)
+        )
+        session.flush()
+
+        change = session.scalars(select(PriceChange)).one()
+        assert change.direction is ChangeDirection.BECAME_UNAVAILABLE
+        assert change.first_seen_at == change.changed_at == gone_at

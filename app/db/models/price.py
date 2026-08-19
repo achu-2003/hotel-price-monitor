@@ -173,6 +173,18 @@ class PriceChange(Base):
     )
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
+    # When the new price was FIRST seen, as opposed to when it was confirmed.
+    #
+    # A change is only written on its second consecutive sighting, so
+    # ``changed_at`` is the moment the debounce completed -- on a 30-minute
+    # target that is up to an hour after the hotel actually moved its rate.
+    # Reporting only that time answers "when did we finish checking", which is
+    # not the question anybody asks of this table.
+    #
+    # Nullable: rows written before this existed cannot have it, and inventing
+    # a value for them would be worse than the honest gap.
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     old_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     new_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     delta: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))

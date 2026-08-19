@@ -248,6 +248,15 @@ section > h2:first-child { margin-top: 0; }
 .own-property td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .scroll-x { overflow-x: auto; border-radius: var(--radius); }
 
+/* The confirmation time, under the time the price actually moved. Smaller and
+   on its own line: it is context for the number above it, not a second
+   number to read. */
+.when-sub {
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* -- tiles ----------------------------------------------------------- */
 .tiles {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

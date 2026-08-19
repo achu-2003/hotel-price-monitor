@@ -119,6 +119,39 @@ def test_a_normal_price_line_is_not_sold_out():
     assert not looks_sold_out("Deluxe Room ₹2,500 per night")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The one that actually happened: a booking page prompting the visitor
+        # to pick a room was read as the hotel declaring itself full, and a
+        # room on sale at 2,017 was recorded as sold out.
+        "No rooms selected yet. Choose a room to continue your booking.",
+        "0 rooms selected",
+        "No rooms selected",
+        # Amenity and policy copy sitting in the same card as the price.
+        "Airport shuttle not available at this property",
+        "Breakfast unavailable on Sundays",
+        "Free cancellation unavailable for this rate",
+    ],
+)
+def test_interface_copy_is_not_mistaken_for_sold_out(text):
+    """Inventing a sold-out is far worse than missing one.
+
+    A missed sold-out means no price is found, which raises schema drift and
+    puts a visible error in front of a person. An invented one writes a
+    confident business fact, notifies whoever watches that hotel, and is
+    indistinguishable from a correct answer.
+    """
+    assert not looks_sold_out(text)
+
+
+def test_a_real_sold_out_still_reads_as_sold_out_beside_other_copy():
+    """Narrowing the markers must not go so far that a genuine one is missed."""
+    assert looks_sold_out(
+        "Deluxe Room · Free wifi · No rooms available for these dates"
+    )
+
+
 # ── urgency counters ─────────────────────────────────────────────────
 def test_rooms_left_is_extracted_when_phrased_as_urgency():
     assert parse_rooms_left("Only 2 rooms left!") == 2

@@ -43,6 +43,29 @@ def engine():
     # The declarative metadata, not `alembic upgrade head`: this asserts the
     # MODELS are coherent. Whether the migration matches them is a separate
     # question, checked by running the migration itself on first deploy.
+    # DROPPED FIRST, then recreated.
+    #
+    # ``create_all`` creates missing tables and never alters an existing one,
+    # so a column added to a model simply did not appear in a database created
+    # by an earlier run. The tests then failed with 'column "first_seen_at" of
+    # relation "price_changes" does not exist' -- which reads like a broken
+    # migration and is in fact a stale test database, several minutes of
+    # confusion away from the truth.
+    #
+    # The name check is the safety rail that makes dropping acceptable: this
+    # fixture destroys every table it knows about, and the one thing that must
+    # never happen is someone pointing TEST_DATABASE_URL at real data and
+    # running the suite.
+    database = (engine.url.database or "").lower()
+    if "test" not in database:
+        pytest.exit(
+            f"TEST_DATABASE_URL points at {database!r}. These tests DROP every "
+            f"table before recreating them, so the database name must contain "
+            f"'test'. Refusing to run.",
+            returncode=1,
+        )
+
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     _create_observation_partitions(engine)
 

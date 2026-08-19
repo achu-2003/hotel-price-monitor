@@ -51,6 +51,9 @@ _PARAM_ALIASES: dict[str, tuple[str, ...]] = {
 _COMBINED_OCCUPANCY_PARAMS: tuple[str, ...] = (
     "roomconfig", "roomconfigs", "occupancy", "paxconfig",
 )
+#: An ISO date sitting in the URL PATH rather than in a query parameter.
+_ISO_DATE_IN_PATH_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
 _COMBINED_OCCUPANCY_RE = re.compile(r"^(\d+)-(\d+)$")
 
 
@@ -224,9 +227,31 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
     can show its work rather than silently rewriting what was typed.
     """
     parts = urlparse(url)
+    substituted: dict[str, str] = {}
+    path = parts.path
+
+    # Dates are not always query parameters. bookmystay.io puts them in the
+    # path -- /rooms/43046/2026-08-19/2026-08-20/2/0 -- and a URL whose dates
+    # were invisible to this function was stored with them baked in AND marked
+    # as a source that cannot price a specific night, because is_complete asks
+    # whether a {check_in} placeholder came out of here. Both of those are
+    # wrong for a site that prices per night perfectly well.
+    #
+    # Only ISO dates are recognised, and only the first two: they are
+    # unambiguous, and a path segment that looks like 2026-08-19 is a date on
+    # every booking site anyone has pasted so far.
+    iso_dates = _ISO_DATE_IN_PATH_RE.findall(path)
+    if len(iso_dates) >= 2:
+        path = path.replace(iso_dates[0], "{check_in}", 1).replace(iso_dates[1], "{check_out}", 1)
+        substituted["path date 1"] = f"{iso_dates[0]} -> {{check_in}}"
+        substituted["path date 2"] = f"{iso_dates[1]} -> {{check_out}}"
+    elif len(iso_dates) == 1:
+        path = path.replace(iso_dates[0], "{check_in}", 1)
+        substituted["path date"] = f"{iso_dates[0]} -> {{check_in}}"
+
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     if not pairs:
-        return url, {}
+        return urlunparse(parts._replace(path=path)), substituted
 
     lookup = {
         alias: placeholder
@@ -234,7 +259,6 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
         for alias in aliases
     }
 
-    substituted: dict[str, str] = {}
     rebuilt: list[tuple[str, str]] = []
     for key, value in pairs:
         normalised = key.lower().replace("-", "").replace("_", "")
@@ -256,7 +280,7 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
     # safe="{}" keeps the placeholders readable instead of percent-encoding the
     # braces into %7B, which the adapter would not recognise.
     query = urlencode(rebuilt, safe="{}")
-    return urlunparse(parts._replace(query=query)), substituted
+    return urlunparse(parts._replace(path=path, query=query)), substituted
 
 
 def detect(url: str) -> Detection | None:

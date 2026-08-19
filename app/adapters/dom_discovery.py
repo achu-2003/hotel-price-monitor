@@ -50,12 +50,28 @@ _FIND_CARDS_JS = r"""
   const PRICE = /(?:₹|Rs\.?|INR)\s*([\d,]{3,}(?:\.\d{1,2})?)|\b(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{3,6}(?:\.\d{1,2})?)\b/g;
   const ROOMY = /\b(room|suite|deluxe|standard|superior|premium|executive|cottage|villa|studio|tent|dorm|family|double|twin|triple|single|apartment|bed|queen|king|balcony|view|ac)\b/i;
 
+  // Invisible formatting characters are stripped before ANY matching.
+  //
+  // One site wraps its currency symbol in Unicode directional isolates, so
+  // "₹2,017" arrives as "<isolate>Rs<isolate> 2,017". The symbol is then no longer
+  // adjacent to the digits, the marked-price branch of PRICE cannot match, and
+  // 2,017 is left looking like a bare number -- inside the year range, where
+  // bare numbers are deliberately refused. A real ₹2,017 room silently became
+  // "the year 2017" and vanished from the room list, while its ₹4,381
+  // neighbour survived purely because that is not a plausible year.
+  //
+  // Zero-width spaces, bidi marks and BOMs do the same damage anywhere they
+  // land, so all of them go before the text is read, not after.
+  const INVISIBLE = new RegExp("[\u00ad\u200b-\u200f\u2060-\u206f\ufeff]", "g");
+  const NBSP = new RegExp("\u00a0", "g");
+  const clean = (t) => (t || "").replace(INVISIBLE, "").replace(NBSP, " ");
+
   const ownText = (el) => {
     let out = "";
     for (const node of el.childNodes) {
       if (node.nodeType === 3) out += node.nodeValue;
     }
-    return out.trim();
+    return clean(out).trim();
   };
 
   // A bare four-digit number in the year range is a year far more often than
@@ -94,7 +110,7 @@ _FIND_CARDS_JS = r"""
   // Does this page write its prices with a currency marker at all? If so, only
   // marked numbers are considered: on such a page an unmarked number is
   // something else, and there is no reason to guess.
-  const pageHasMarkedPrices = /(?:₹|Rs\.?|INR)\s*[\d,]{3,}/.test(document.body.innerText || "");
+  const pageHasMarkedPrices = /(?:₹|Rs\.?|INR)\s*[\d,]{3,}/.test(clean(document.body.innerText));
 
   const MARKER = /(?:₹|Rs\.?|INR)/;
 
@@ -105,12 +121,12 @@ _FIND_CARDS_JS = r"""
   // number is trusted when the marker sits anywhere in its immediate
   // neighbourhood: its own text, its parent's, or the text just before it.
   const nearbyMarked = (el) => {
-    if (MARKER.test(el.textContent || "")) return true;
+    if (MARKER.test(clean(el.textContent))) return true;
     const parent = el.parentElement;
-    if (parent && MARKER.test(parent.textContent || "")) return true;
+    if (parent && MARKER.test(clean(parent.textContent))) return true;
     const grandparent = parent && parent.parentElement;
     if (grandparent && (grandparent.textContent || "").length < 200
-        && MARKER.test(grandparent.textContent || "")) return true;
+        && MARKER.test(clean(grandparent.textContent))) return true;
     return false;
   };
 
@@ -158,7 +174,22 @@ _FIND_CARDS_JS = r"""
     // says nothing about why. "[ ]" for whitespace, "[0-9]" for digits and
     // "[.]" for a literal dot need no escaping anywhere, and no escape can be
     // lost that was never written.
-    if (/(?:₹|Rs\.?|INR)/.test(t)) return "text=/^[ ]*(?:₹|Rs[.]?|INR)[ ]?[0-9.,]+[ ]*$/";
+    // NOT anchored, deliberately. The scan sees text with its invisible
+    // characters removed; Playwright, later, does not. A site that renders
+    // "<isolate>Rs<isolate> 2,017" starts its price element with a character
+    // that ^[ ]* cannot cross, so an anchored pattern found every room card
+    // and then no price inside any of them. The currency marker already makes
+    // this specific, and Playwright's text engine returns the SMALLEST
+    // matching element, so the anchors were never what made it precise.
+    //
+    // "[^0-9]{0,3}" rather than "[ ]?" for the gap after the symbol: the
+    // isolate character sits BETWEEN the symbol and the space, so a pattern
+    // expecting only an optional space still could not cross it. Anything
+    // short and non-numeric is allowed through instead, which covers a space,
+    // a non-breaking space, an isolate, or any two of them together.
+    if (/(?:₹|Rs\.?|INR)/.test(t)) return "text=/(?:₹|Rs[.]?|INR)[^0-9]{0,3}[0-9][0-9.,]*/";
+    // The bare-number form keeps its anchors: with no currency marker to
+    // narrow it, an unanchored digit pattern would match "9 Rooms Left".
     if (/^[\d.,]+$/.test(t)) return "text=/^[ ]*[0-9][0-9.,]*[ ]*$/";
     const word = (t.match(ROOMY) || [])[0];
     if (word) return "text=/" + word + "/i";
@@ -180,7 +211,23 @@ _FIND_CARDS_JS = r"""
     if (id && !/\d{4,}/.test(id) && !isPerInstanceId(id)) {
       return `${el.tagName.toLowerCase()}#${id}`;
     }
-    return signature(el);
+    const own = signature(el);
+    if (own.includes(".")) return own;
+
+    // The element itself is bare, but its wrapper is not: room names are
+    // frequently an unclassed <h2> inside <div class="roomName">. Falling
+    // straight through to a text selector here produced "text=/Standard/i" --
+    // built from the FIRST card's room name, and therefore matching nothing in
+    // the second. Every room after the first vanished from a page that listed
+    // them all. The wrapper's class describes the shape instead of one room.
+    const parent = el.parentElement;
+    if (parent) {
+      const parentSig = signature(parent);
+      if (parentSig.includes(".")) {
+        return `${parentSig} > ${el.tagName.toLowerCase()}`;
+      }
+    }
+    return own;
   };
 
 
@@ -233,6 +280,15 @@ _FIND_CARDS_JS = r"""
       if (asPrice !== null || !ROOMY.test(t)) continue;
       if (!/[A-Za-z]{3}/.test(t)) continue;
       if (/^\d/.test(t)) continue;                            // "1 Room"
+      // Buttons. "View Room" and "Select Room" sit inside every room card and
+      // look exactly like names, so a scan can come back with two rooms both
+      // called "View Room" -- confident, repeated, and useless.
+      //
+      // Matched only at the START of the text, because the same words appear
+      // legitimately at the end of real names: "Family Room with Mountain
+      // View" and "Suite with Mountain View" are two rooms at a monitored
+      // property, and a blanket ban on "view" would erase both.
+      if (/^(view|select|book|choose|reserve|show|see|check|explore|details?|more)\b/i.test(t)) continue;
       // Headings and small print that happen to contain a room word.
       if (/\b(per|left|available|select|choose|remaining|total|from|starting|guests?|adults?|nights?)\b/i.test(t)) continue;
       if (/\b(rates?|tax|taxes|inclusive|exclusive|prices?|policy|policies|cancellation|refundable|check-?in|check-?out|capacity)\b/i.test(t)) continue;
@@ -294,7 +350,7 @@ _FIND_CARDS_JS = r"""
   const cards = [];
   for (const [sig, g] of groups) {
     const nodes = [...g.nodes];
-    const withPrice = nodes.filter(n => parsePriceStrict(n.textContent || "", n) !== null);
+    const withPrice = nodes.filter(n => parsePriceStrict(clean(n.textContent), n) !== null);
     if (!withPrice.length) continue;
 
     const sample = withPrice[0];
@@ -337,14 +393,20 @@ _FIND_CARDS_JS = r"""
       // Sorting hints, not findings.
       anchored: sig.includes("[") || sig.includes("#") ? 1 : 0,
       cardLen: (sample.textContent || "").trim().length,
+      // Rooms in a list have DIFFERENT names. Two cards reporting the same
+      // name is the signature of a selector that found a shared label rather
+      // than the room, and it outranks nothing once counted.
+      distinct: new Set(names).size,
     });
   }
 
-  // Most cards matched first, then a stable anchor over a class list, then the
-  // tightest card -- a container holding one room beats one holding the page.
+  // Most rooms first; then the candidate whose names actually differ, which
+  // separates a room list from a column of identical buttons; then the
+  // tightest card, because a container holding one room beats one holding the
+  // whole page; and only then a stable anchor over a class list.
   cards.sort((a, b) =>
-    (b.matched - a.matched) || (b.anchored - a.anchored) ||
-    (a.cardLen - b.cardLen) || (b.count - a.count));
+    (b.matched - a.matched) || (b.distinct - a.distinct) ||
+    (a.cardLen - b.cardLen) || (b.anchored - a.anchored) || (b.count - a.count));
   return { cards: cards.slice(0, 5), priceCount: priceEls.length };
 }
 """

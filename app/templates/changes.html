@@ -37,7 +37,31 @@
   <tbody>
     {% for change, hotel_name, room_name, check_in, check_out in changes %}
     <tr>
-      <td class="nowrap muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</td>
+      {# WHEN THE PRICE MOVED, not when the debounce finished.
+
+         A change is only written on its second consecutive sighting, so
+         `changed_at` can be an hour later than the move on a 30-minute
+         target. Leading with that number answered "when did we finish
+         checking", which is not the question anyone asks here. The
+         confirmation time still appears underneath, because it is what the
+         alert timestamps refer to.
+
+         Older rows have no first sighting recorded and say so, rather than
+         showing a derived guess as though it were observed. #}
+      <td class="nowrap">
+        {% if change.first_seen_at %}
+          <span>{{ change.first_seen_at|localtime('%d %b %H:%M') }}</span>
+          {% if change.first_seen_at != change.changed_at %}
+          <span class="muted when-sub"
+                title="Seen at {{ change.first_seen_at|localtime('%H:%M') }}, and only recorded once the next check found the same price">
+            confirmed {{ change.changed_at|localtime('%H:%M') }}
+          </span>
+          {% endif %}
+        {% else %}
+          <span class="muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</span>
+          <span class="muted when-sub" title="Recorded before the first sighting was tracked">confirmed</span>
+        {% endif %}
+      </td>
       <td><a href="/hotels/{{ change.hotel_id }}">{{ hotel_name }}</a></td>
       <td>{{ room_name or '—' }}</td>
       <td class="nowrap muted">{{ check_in }} → {{ check_out }}</td>

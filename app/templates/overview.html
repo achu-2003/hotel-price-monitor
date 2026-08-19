@@ -81,7 +81,11 @@
     <tbody>
       {% for change, hotel_name, room_name in changes %}
       <tr>
-        <td class="nowrap muted">{{ change.changed_at|localtime('%d %b %H:%M') }}</td>
+        {# The time the price moved; see changes.html for why that is not
+           `changed_at`. Kept to one line here, where the table is a summary. #}
+        <td class="nowrap muted">
+          {{ (change.first_seen_at or change.changed_at)|localtime('%d %b %H:%M') }}
+        </td>
         <td>{{ hotel_name }}</td>
         <td>{{ room_name or '—' }}</td>
         {# Which two prices this compared. "Was 1,040" means one thing for two

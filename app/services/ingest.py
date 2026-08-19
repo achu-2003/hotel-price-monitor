@@ -450,11 +450,30 @@ def _apply_comparison(
 
     is_first_sight = decision.outcome is Outcome.FIRST_SIGHT
 
+    # When this new price was FIRST seen, captured before the pending state is
+    # overwritten. A change is written on its second sighting, so `checked_at`
+    # is when the debounce finished; this is when the hotel's new price
+    # actually appeared, which is the time a person means by "when did it
+    # change".
+    first_seen_at = series.pending_since or ctx.checked_at
+
     series.last_price = new_state.last_price
     series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available
+
+    # `pending_since` only moves when the pending price itself changes.
+    #
+    # Stamping it on every check quietly made it "pending as of the last
+    # check". With confirm_checks=2 that is still the first sighting and the
+    # bug is invisible; at 3 or more it slides forward one check at a time and
+    # the recorded first-seen time is wrong by exactly the amount that makes
+    # it look plausible.
+    if new_state.pending_price is None:
+        series.pending_since = None
+    elif series.pending_price != new_state.pending_price or series.pending_since is None:
+        series.pending_since = ctx.checked_at
+
     series.pending_price = new_state.pending_price
-    series.pending_since = ctx.checked_at if new_state.pending_price is not None else None
     series.pending_count = new_state.pending_count
     series.last_checked_at = ctx.checked_at
 
@@ -483,6 +502,7 @@ def _apply_comparison(
             offer_key=offer_key,
             hotel_id=ctx.hotel_id,
             changed_at=ctx.checked_at,
+            first_seen_at=first_seen_at,
             old_price=decision.old_price,
             new_price=decision.new_price,
             delta=decision.delta,
@@ -639,6 +659,9 @@ def _carry_over_change(
         offer_key=offer_key,
         hotel_id=ctx.hotel_id,
         changed_at=ctx.checked_at,
+        # This comparison runs at first sighting, so the price was seen and
+        # reported in the same breath.
+        first_seen_at=ctx.checked_at,
         old_price=change.old_price,
         new_price=change.new_price,
         delta=change.delta,
@@ -734,6 +757,10 @@ def _handle_disappearances(
             offer_key=series.offer_key,
             hotel_id=ctx.hotel_id,
             changed_at=ctx.checked_at,
+            # A room that has gone is reported on the check that finds it
+            # missing, with no debounce, so there is no earlier sighting to
+            # point at.
+            first_seen_at=ctx.checked_at,
             old_price=series.last_price,
             new_price=None,
             delta=None,

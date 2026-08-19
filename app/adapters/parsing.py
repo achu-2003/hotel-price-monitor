@@ -34,9 +34,26 @@ _CURRENCY_SYMBOLS = {
 # Strips currency symbols, thin/non-breaking spaces and stray words, keeping
 # only digits and separators.
 _NUMBER_RE = re.compile(r"[-+]?\d[\d,.   ]*\d|\d")
+# Each marker must be a phrase that ANNOUNCES unavailability, never a
+# fragment that can turn up in ordinary interface copy.
+#
+# "no rooms" used to be on this list and cost a hotel a whole day of prices:
+# a booking page prompting "No rooms selected yet. Choose a room to continue
+# your booking." was read as the hotel declaring itself full, and the room it
+# was offering at 2,017 rupees went on the dashboard as "sold out".
+#
+# The two ways of being wrong here are not symmetrical. Missing a real
+# sold-out means the price selector finds nothing, which raises SchemaDrift
+# and puts a visible error in front of a person. Inventing one writes a
+# confident business fact, tells whoever watches that hotel, and looks
+# exactly like a correct answer. So these stay narrow on purpose: matching
+# fewer real sold-outs is the cheaper mistake.
 _SOLD_OUT_MARKERS = (
-    "sold out", "soldout", "no rooms", "not available", "unavailable",
-    "fully booked", "no availability", "houseful",
+    "sold out", "soldout",
+    "no rooms available", "no rooms left", "no rooms found",
+    "no room available", "rooms are not available", "not available for",
+    "no availability", "not currently available", "no longer available",
+    "fully booked", "houseful", "no vacancies",
 )
 
 # Plenty of booking pages say in words which side of the tax their headline

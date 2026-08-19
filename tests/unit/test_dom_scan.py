@@ -140,3 +140,109 @@ class TestSelectorsAreUsable:
                 assert not any(
                     ord(ch) < 32 for ch in candidate[key]
                 ), f"{key}={candidate[key]!r}"
+
+
+BOOKMYSTAY = (
+    """<!doctype html>
+<html><body><div id="main-content"><div class="mainpage">
+  <h1>Zeenath Taj Gardens</h1>
+  <p>Choose a room to continue your booking.</p>
+  <div class="roomNewContainer">
+    <div class="roomName"><h2>Standard</h2></div>
+    <p class="recommended">Recommended</p>
+    <div class="room__midContainer"><b>⁨₹⁩ 2,017</b><span>/</span><span>Night</span>
+      <span>Plus Taxes</span></div>
+    <div><span>2 Guests 1 Room</span><button>View Room</button><button>Select Room</button></div>
+  </div>
+  <div class="roomNewContainer">
+    <div class="roomName"><h2>Super Deluxe Room</h2></div>
+    <p class="showMoreAmenities">+13 More</p>
+    <div class="room__midContainer"><b>⁨₹⁩ 4,381</b><span>/</span><span>Night</span>
+      <span>Plus Taxes</span></div>
+    <div><span>2 Guests 1 Room</span><button>View Room</button><button>Select Room</button></div>
+  </div>
+</div></div></body></html>"""
+)
+
+
+class TestPageThatHidesItsCurrencySymbol:
+    """A real property whose ₹ is wrapped in Unicode directional isolates.
+
+    The site renders "<isolate>₹<isolate> 2,017". The symbol is then not
+    adjacent to the digits, so the marked-price branch cannot match and 2,017
+    is left looking like a bare number -- inside the year range, where bare
+    numbers are refused. One room vanished from a two-room hotel, and the
+    survivor was the one whose price happens not to look like a year.
+
+    Everything here is one page: the scan must find both rooms, name them from
+    the page rather than from its buttons, and -- the part that actually broke
+    in production -- emit selectors that still work when Playwright applies
+    them to the untouched DOM.
+    """
+
+    @pytest.fixture(scope="class")
+    def page_and_scan(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:  # pragma: no cover
+            pytest.skip("playwright is not installed")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(args=["--no-sandbox", "--disable-gpu"])
+                try:
+                    page = browser.new_page()
+                    page.set_content(BOOKMYSTAY)
+                    cards = find_room_cards(page)
+                    # Resolve the emitted selectors while the page is still open.
+                    resolved = []
+                    if cards:
+                        best = cards[0]
+                        for card in page.query_selector_all(best["card"]):
+                            name_el = card.query_selector(best["name_selector"])
+                            price_el = card.query_selector(best["price_selector"])
+                            resolved.append((
+                                (name_el.inner_text().strip() if name_el else None),
+                                (price_el.inner_text().strip() if price_el else None),
+                            ))
+                    return cards, resolved
+                finally:
+                    browser.close()
+        except Exception as exc:  # pragma: no cover
+            pytest.skip(f"chromium unavailable: {str(exc)[:80]}")
+
+    def test_both_rooms_are_found(self, page_and_scan):
+        cards, _ = page_and_scan
+        assert cards, "no candidate at all"
+        assert cards[0]["matched"] == 2, cards[0]["names"]
+
+    def test_the_cheaper_room_is_not_mistaken_for_a_year(self, page_and_scan):
+        cards, _ = page_and_scan
+        assert 2017 in cards[0]["prices"], cards[0]["prices"]
+        assert 4381 in cards[0]["prices"], cards[0]["prices"]
+
+    def test_rooms_are_named_from_the_page_not_from_its_buttons(self, page_and_scan):
+        """Every card contains "View Room" and "Select Room"."""
+        cards, _ = page_and_scan
+        assert sorted(cards[0]["names"]) == ["Standard", "Super Deluxe Room"]
+
+    def test_the_card_is_the_room_not_the_whole_page(self, page_and_scan):
+        """#main-content holds both rooms, so it yields exactly one "room"."""
+        cards, _ = page_and_scan
+        assert cards[0]["card"] == "div.roomNewContainer"
+
+    def test_the_emitted_selectors_work_on_the_untouched_dom(self, page_and_scan):
+        """The scan reads text with invisible characters stripped; Playwright,
+        applying the stored selectors later, does not. An anchored price
+        pattern matched every card and then no price inside any of them."""
+        _, resolved = page_and_scan
+        assert len(resolved) == 2
+        for name, price in resolved:
+            assert name, f"name selector resolved to nothing (got {resolved!r})"
+            assert price, f"price selector resolved to nothing (got {resolved!r})"
+        assert [n for n, _ in resolved] == ["Standard", "Super Deluxe Room"]
+
+    def test_the_name_selector_is_not_built_from_one_rooms_name(self, page_and_scan):
+        """"text=/Standard/i" matches the first card and nothing after it."""
+        cards, _ = page_and_scan
+        assert "Standard" not in cards[0]["name_selector"]
+        assert "Deluxe" not in cards[0]["name_selector"]

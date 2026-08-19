@@ -197,3 +197,43 @@ class TestCombinedOccupancyParameter:
             "https://x.example/book?roomconfig=2-0&utm_source=googlehotelads"
         )
         assert "utm_source=googlehotelads" in url
+
+
+class TestDatesInThePath:
+    """Not every site puts its dates in a query string.
+
+    bookmystay.io writes /rooms/43046/2026-08-19/2026-08-20/2/0. Invisible to a
+    query-parameter scan, that URL was stored with the dates baked in -- so the
+    target would have re-checked one fixed night forever -- and, because
+    is_complete asks whether a {check_in} placeholder came out of here, the
+    source was also labelled as one that cannot price a specific night. It
+    prices per night perfectly well.
+    """
+
+    URL = ("https://bookmystay.io/rooms/43046/2026-08-19/2026-08-20/2/0"
+           "?currency=INR&language=en")
+
+    def test_both_dates_become_placeholders(self):
+        url, changed = parameterise_url(self.URL)
+        assert "/{check_in}/{check_out}/" in url
+        assert "2026-08-19" not in url and "2026-08-20" not in url
+        assert changed
+
+    def test_the_rest_of_the_path_is_left_alone(self):
+        url, _ = parameterise_url(self.URL)
+        assert "/rooms/43046/" in url
+        assert url.endswith("/2/0?currency=INR&language=en")
+
+    def test_a_single_date_is_taken_as_the_check_in(self):
+        url, _ = parameterise_url("https://x.example/book/2026-08-19/room")
+        assert "/book/{check_in}/room" in url
+
+    def test_a_path_without_dates_is_untouched(self):
+        url, changed = parameterise_url("https://x.example/rooms/43046/2/0")
+        assert url == "https://x.example/rooms/43046/2/0"
+        assert changed == {}
+
+    def test_a_number_that_is_not_a_date_is_not_rewritten(self):
+        """Only the ISO shape counts -- an id is not a night."""
+        url, _ = parameterise_url("https://x.example/hotel/20260819/rooms")
+        assert "20260819" in url
