@@ -24,21 +24,36 @@
 
 /* -- tokens ---------------------------------------------------------- */
 :root {
-  /* Text sits on tinted paper now, so the greys lean very slightly indigo:
-     a dead-neutral grey over a lavender wash reads as dirty rather than calm. */
-  --ink:        #14161f;
-  --ink-2:      #3c4257;
-  --muted:      #6b7280;
-  --line:       #e3e5ef;
-  --line-soft:  #f0f1f8;
-  --bg:         #f4f5fb;
+  /* Text sits on warm paper, so the greys carry a faint green-grey cast: a
+     dead-neutral grey over a cream wash reads as dirty, and an indigo-leaning
+     one (what this was) reads as cold against it. */
+  --ink:        #16211e;
+  --ink-2:      #3b4b47;
+  /* 4.6:1 on the cream, 5.3:1 on a panel. The old grey was 4.4:1 on the
+     old page colour -- under the line, and this palette is lighter still,
+     so it goes a step darker rather than inheriting a near-miss. */
+  --muted:      #626f69;
+  --line:       #e0dbcd;
+  --line-soft:  #efebe0;
+  --bg:         #f2efe7;   /* the requested cream */
   --panel:      #ffffff;
 
-  /* The brand ramp. Three stops, always used in this order, so every gradient
-     on the page looks like it came from the same light source. */
-  --brand-1:   #4338ca;   /* indigo */
-  --brand-2:   #7c3aed;   /* violet */
-  --brand-3:   #0ea5e9;   /* sky    */
+  /* THE BAR COLOUR, and why nothing else uses it.
+     #7cd5c7 is a light mint: its relative luminance is .56, so white text on
+     it lands at 1.7:1 -- about a quarter of the 4.5:1 that counts as legible.
+     It is a surface colour, not a fill to put white on. So it dresses the one
+     big chrome surface and carries dark ink, and everything that needs white
+     text (buttons, tile caps, the active pill) uses the deeper ramp below. */
+  --bar:        #7cd5c7;
+  --bar-ink:    #10312c;   /* 10.5:1 on the bar */
+  --bar-line:   #63c5b5;
+
+  /* The brand ramp: the same hue as the bar, taken down far enough to hold
+     white text. Three stops, always used in this order, so every gradient on
+     the page looks like it came from one light source. */
+  --brand-1:   #0b7267;   /* deep teal -- white text sits at 5.8:1 */
+  --brand-2:   #14907f;
+  --brand-3:   #2fae9b;
   --grad-brand: linear-gradient(100deg, var(--brand-1), var(--brand-2) 52%, var(--brand-3));
 
   /* Semantics: up is bad for us (a competitor raised), down is good. These
@@ -54,9 +69,9 @@
   --warn:      #b45309;
   --warn-2:    #f59e0b;
   --warn-bg:   #fffbeb;
-  --accent:    #4f46e5;
-  --accent-2:  #7c3aed;
-  --accent-bg: #eef0ff;
+  --accent:    #0b7267;
+  --accent-2:  #14907f;
+  --accent-bg: #e4f4f0;
 
   /* One spacing scale keeps vertical rhythm consistent across pages. */
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
@@ -65,11 +80,11 @@
   --radius:    12px;
   --radius-sm: 7px;
 
-  /* Tinted rather than grey: a neutral black shadow over a lavender page
-     looks like a smudge, an indigo one looks like depth. */
-  --shadow:       0 1px 2px rgba(58,45,140,.05), 0 2px 6px rgba(58,45,140,.06);
-  --shadow-lg:    0 4px 10px -2px rgba(58,45,140,.10), 0 14px 32px -8px rgba(58,45,140,.18);
-  --shadow-brand: 0 2px 6px rgba(79,70,229,.28);
+  /* Tinted rather than grey: a neutral black shadow over cream looks like a
+     smudge. Warmed towards the paper so it reads as depth, not dirt. */
+  --shadow:       0 1px 2px rgba(74,64,40,.06), 0 2px 6px rgba(74,64,40,.07);
+  --shadow-lg:    0 4px 10px -2px rgba(74,64,40,.10), 0 14px 32px -8px rgba(74,64,40,.16);
+  --shadow-brand: 0 2px 6px rgba(11,114,103,.26);
 
   /* Default cap colour for a tile; overridden per tile further down. */
   --tile-accent: var(--grad-brand);
@@ -96,8 +111,8 @@ body {
      Fixed, so they do not scroll away and leave the bottom of a long table
      sitting on bare grey. */
   background:
-    radial-gradient(900px 420px at 8% -8%,  rgba(124,58,237,.10), transparent 65%),
-    radial-gradient(760px 380px at 96% -4%, rgba(14,165,233,.12), transparent 62%),
+    radial-gradient(900px 420px at 8% -8%,  rgba(124,213,199,.30), transparent 65%),
+    radial-gradient(760px 380px at 96% -4%, rgba(20,144,127,.12), transparent 62%),
     var(--bg);
   background-attachment: fixed;
 }
@@ -117,43 +132,44 @@ a:hover { text-decoration: underline; }
 .topbar {
   display: flex; align-items: center; gap: var(--s5);
   height: 56px; padding: 0 var(--s5);
-  background: var(--grad-brand);
-  border-bottom: 1px solid rgba(255,255,255,.14);
-  box-shadow: 0 1px 12px rgba(49,36,140,.28);
+  background: var(--bar);
+  border-bottom: 1px solid var(--bar-line);
+  box-shadow: 0 1px 12px rgba(16,49,44,.16);
   position: sticky; top: 0; z-index: 20;
-  color: #fff;
+  color: var(--bar-ink);
 }
 .brand {
-  font-weight: 650; font-size: 15px; color: #fff;
+  font-weight: 650; font-size: 15px; color: var(--bar-ink);
   letter-spacing: -.01em; white-space: nowrap;
   display: inline-flex; align-items: center; gap: var(--s2);
 }
 .brand:hover { text-decoration: none; }
-/* A small mint dot, so the bar carries a mark and not only words. */
+/* A small deep-teal dot, so the bar carries a mark and not only words. It was
+   mint on violet; on a mint bar the same mint is invisible. */
 .brand::before {
   content: ""; width: 9px; height: 9px; border-radius: 50%;
-  background: #a7f3d0; box-shadow: 0 0 0 3px rgba(167,243,208,.25);
+  background: var(--brand-1); box-shadow: 0 0 0 3px rgba(11,114,103,.18);
   flex: 0 0 auto;
 }
 
 .topbar nav { display: flex; gap: var(--s1); align-items: center; }
 .topbar nav a {
-  color: rgba(255,255,255,.82); padding: 6px 11px; border-radius: 999px;
+  color: rgba(16,49,44,.74); padding: 6px 11px; border-radius: 999px;
   font-weight: 500; white-space: nowrap;
   transition: background-color .14s ease, color .14s ease;
 }
-.topbar nav a:hover { background: rgba(255,255,255,.15); color: #fff; text-decoration: none; }
+.topbar nav a:hover { background: rgba(255,255,255,.45); color: var(--bar-ink); text-decoration: none; }
 /* The current page, marked by weight and a solid chip rather than a heavy bar. */
 .topbar nav a.active {
   background: #fff; color: var(--brand-1); font-weight: 650;
-  box-shadow: 0 1px 3px rgba(23,16,72,.25);
+  box-shadow: 0 1px 3px rgba(16,49,44,.20);
 }
 
 .topbar .user {
   margin-left: auto; display: flex; align-items: center; gap: var(--s3);
-  color: rgba(255,255,255,.78); font-size: 13px;
+  color: rgba(16,49,44,.72); font-size: 13px;
 }
-.topbar .user a { color: #fff; }
+.topbar .user a { color: var(--bar-ink); font-weight: 550; }
 
 main { padding: var(--s5); max-width: 1360px; margin: 0 auto; }
 footer { padding: var(--s5) var(--s5) var(--s6); color: var(--muted); font-size: 12px; text-align: center; }
@@ -217,8 +233,8 @@ section > h2:first-child { margin-top: 0; }
   text-align: left; font-size: 11px; font-weight: 650;
   letter-spacing: .06em; text-transform: uppercase; color: #fff;
   padding: 11px var(--s4);
-  background: linear-gradient(180deg, var(--brand-1), #3f32b8);
-  border-bottom: 1px solid #3a2fa8; white-space: nowrap;
+  background: linear-gradient(180deg, var(--brand-1), #095e55);
+  border-bottom: 1px solid #07514a; white-space: nowrap;
 }
 /* Rounded corners live on .grid, which clips its children -- except a sticky
    or shadowed header, which needs its own radius to sit inside them cleanly. */
@@ -277,8 +293,8 @@ section > h2:first-child { margin-top: 0; }
   background: var(--tile-accent);
 }
 /* Neighbouring tiles differ without a template having to name a colour. */
-.tiles .tile:nth-child(3n+2) { --tile-accent: linear-gradient(90deg, var(--brand-3), #22d3ee); }
-.tiles .tile:nth-child(3n+3) { --tile-accent: linear-gradient(90deg, var(--brand-2), #d946ef); }
+.tiles .tile:nth-child(3n+2) { --tile-accent: linear-gradient(90deg, var(--brand-3), #63c5b5); }
+.tiles .tile:nth-child(3n+3) { --tile-accent: linear-gradient(90deg, var(--brand-2), #2fae9b); }
 
 .tile-value { font-size: 28px; font-weight: 650; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .tile-label { font-size: 12px; color: var(--muted); font-weight: 500; }
@@ -314,23 +330,23 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 .pill-ok      { background: #d1fae5; color: #065f46; border-color: #a7e5cb; }
 .pill-warn    { background: #fef3c7; color: #92400e; border-color: #f5d98a; }
 .pill-stop    { background: #ffe4e6; color: #9f1239; border-color: #fbc4cb; }
-.pill-off     { background: #eceef5; color: #4b5563; border-color: #dfe2ec; }
-.pill-own     { background: #dbeafe; color: #1e40af; border-color: #bcd4fb; }
-.pill-soldout { background: #eceef5; color: #6b7280; border-color: #dfe2ec; }
-.pill-pending { background: #ede9fe; color: #5b21b6; border-color: #d6cdfb; }
+.pill-off     { background: #eeeae0; color: #4a544f; border-color: #ded9cb; }
+.pill-own     { background: #dcedf7; color: #1a5a7a; border-color: #bcd9e8; }
+.pill-soldout { background: #eeeae0; color: #626f69; border-color: #ded9cb; }
+.pill-pending { background: #e0f2ee; color: #0b5f55; border-color: #bfe4dc; }
 
 .badge {
   font-size: 10px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
 }
 .badge-admin  { background: var(--accent-bg); color: var(--accent); }
-.badge-viewer { background: #eceef5; color: #4b5563; }
+.badge-viewer { background: #eeeae0; color: #4a544f; }
 /* A pale tint vanishes on the gradient bar, so it inverts up there. */
-.topbar .badge-admin { background: rgba(255,255,255,.22); color: #fff; }
+.topbar .badge-admin { background: rgba(255,255,255,.55); color: var(--brand-1); }
 
 .chips { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s3); }
 .chip {
-  background: var(--panel); border: 1px solid #dcdcf1; border-radius: 999px;
+  background: var(--panel); border: 1px solid #ded9cb; border-radius: 999px;
   padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow); color: var(--ink-2);
 }
 
@@ -363,7 +379,7 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 .filters {
   position: relative; overflow: hidden;
   display: flex; gap: var(--s4); align-items: flex-end; flex-wrap: wrap;
-  background: linear-gradient(180deg, #fbfaff, var(--panel));
+  background: linear-gradient(180deg, #faf8f2, var(--panel));
   border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s4); margin-bottom: var(--s4);
@@ -381,16 +397,16 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 
 input, select, textarea {
   font: inherit; padding: 7px 10px;
-  border: 1px solid #d9dbe9; border-radius: var(--radius-sm);
+  border: 1px solid #dcd7c9; border-radius: var(--radius-sm);
   background: #fff; color: var(--ink);
   transition: border-color .12s ease, box-shadow .12s ease;
 }
-input:hover, select:hover, textarea:hover { border-color: #b9bcd8; }
+input:hover, select:hover, textarea:hover { border-color: #c2bcaa; }
 input:focus, select:focus, textarea:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(79,70,229,.16);
+  box-shadow: 0 0 0 3px rgba(11,114,103,.20);
 }
-input::placeholder, textarea::placeholder { color: #9aa1ad; }
+input::placeholder, textarea::placeholder { color: #9aa29d; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 button {
@@ -401,7 +417,7 @@ button {
   box-shadow: var(--shadow-brand);
   transition: filter .12s ease, opacity .12s ease, box-shadow .12s ease, transform .08s ease;
 }
-button:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(79,70,229,.34); }
+button:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(11,114,103,.30); }
 button:active { filter: brightness(.95); transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: default; filter: none; box-shadow: none; }
 
@@ -410,7 +426,7 @@ button:disabled { opacity: .45; cursor: default; filter: none; box-shadow: none;
 .grid button {
   padding: 4px 10px; font-size: 12px;
   background: var(--panel); color: var(--ink-2);
-  border-color: #dcdcf1; box-shadow: none;
+  border-color: #ded9cb; box-shadow: none;
 }
 .grid button:hover {
   background: var(--accent-bg); border-color: var(--accent); color: var(--accent);
@@ -419,7 +435,7 @@ button:disabled { opacity: .45; cursor: default; filter: none; box-shadow: none;
 
 .btn-link {
   display: inline-block; padding: 7px 14px;
-  border: 1px solid #dcdcf1; border-radius: var(--radius-sm);
+  border: 1px solid #ded9cb; border-radius: var(--radius-sm);
   background: var(--panel); font-weight: 600; box-shadow: var(--shadow);
   transition: border-color .12s ease, box-shadow .12s ease, transform .1s ease;
 }
@@ -430,7 +446,7 @@ button:disabled { opacity: .45; cursor: default; filter: none; box-shadow: none;
 
 .panel {
   background: var(--panel); border: 1px solid var(--line);
-  border-left: 3px solid #dcdcf1;
+  border-left: 3px solid #ded9cb;
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s3) var(--s4); margin: var(--s3) 0;
   transition: border-left-color .15s ease;
@@ -461,7 +477,7 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
    scaffolding disappears rather than becoming permanent clutter. */
 .setup {
   position: relative; overflow: hidden;
-  background: linear-gradient(180deg, #fbfaff, var(--panel));
+  background: linear-gradient(180deg, #faf8f2, var(--panel));
   border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s5); padding-left: calc(var(--s5) + 3px);
@@ -485,7 +501,7 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
 /* The step you are on gets the ramp and a halo; done steps go green. */
 .steps li.now .step-n {
   background: linear-gradient(135deg, var(--brand-1), var(--accent-2)); color: #fff;
-  box-shadow: 0 0 0 4px rgba(79,70,229,.14);
+  box-shadow: 0 0 0 4px rgba(11,114,103,.16);
 }
 .steps li.done .step-n { background: #d1fae5; color: #065f46; }
 .step-body { flex: 1; display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
@@ -501,18 +517,20 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
 
 /* -- login ----------------------------------------------------------- */
 /* The only full-bleed colour in the product. Nothing is being compared on
-   this screen, so the page is allowed to just be the brand. */
+   this screen, so the page is allowed to just be the brand -- and the brand
+   is the bar colour, which is the first thing anyone sees after signing in. */
 .login-body {
   display: flex; align-items: center; justify-content: center;
   min-height: 100vh; padding: var(--s5);
   background:
-    radial-gradient(700px 420px at 12% 8%, rgba(255,255,255,.20), transparent 60%),
-    var(--grad-brand);
+    radial-gradient(700px 420px at 12% 8%, rgba(255,255,255,.45), transparent 60%),
+    linear-gradient(150deg, var(--bar), #5cc4b3);
+  color: var(--bar-ink);
 }
 .login-card {
   position: relative; overflow: hidden;
-  background: var(--panel); border: 1px solid rgba(255,255,255,.5);
-  border-radius: 16px; box-shadow: 0 18px 50px -12px rgba(23,16,72,.45);
+  background: var(--panel); border: 1px solid rgba(255,255,255,.7);
+  border-radius: 16px; box-shadow: 0 18px 50px -12px rgba(10,58,52,.35);
   padding: var(--s6); width: 100%; max-width: 380px;
   display: flex; flex-direction: column; gap: var(--s2);
 }
@@ -527,7 +545,7 @@ form.inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wra
 
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px; background: #f1f0fd; color: #4c3fb0;
+  font-size: 12px; background: #e4f4f0; color: #0b7267;
   padding: 1px 5px; border-radius: 4px;
 }
 
@@ -535,8 +553,8 @@ code {
    An empty screen should explain why it is empty, not just show nothing.
    The dashed edge says "nothing here yet" before the sentence is read. */
 .empty-state {
-  background: linear-gradient(180deg, #fbfaff, var(--panel));
-  border: 1px dashed #d5d6ee;
+  background: linear-gradient(180deg, #faf8f2, var(--panel));
+  border: 1px dashed #d9d3c4;
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: var(--s7) var(--s5); text-align: center;
 }
@@ -582,7 +600,7 @@ code {
   border-left: 4px solid var(--muted);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: 0 8px 24px rgba(23,16,72,.18);
+  box-shadow: 0 8px 24px rgba(10,58,52,.16);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -593,7 +611,7 @@ code {
 .toast-up    { border-left-color: var(--up-2);   background: linear-gradient(90deg, #fff6f7, var(--panel) 55%); }
 .toast-down  { border-left-color: var(--down-2); background: linear-gradient(90deg, #f2fdf8, var(--panel) 55%); }
 .toast-gone  { border-left-color: var(--muted);  background: linear-gradient(90deg, #f7f7fa, var(--panel) 55%); }
-.toast-back  { border-left-color: var(--accent); background: linear-gradient(90deg, #f5f4ff, var(--panel) 55%); }
+.toast-back  { border-left-color: var(--accent); background: linear-gradient(90deg, #eefaf7, var(--panel) 55%); }
 .toast-more  { border-left-color: var(--warn-2); background: linear-gradient(90deg, #fffaef, var(--panel) 55%); }
 
 .toast-head { display: flex; align-items: center; gap: 8px; }
@@ -885,7 +903,7 @@ a.hcard:hover {
  */
 .note {
   display: flex; gap: var(--s3); align-items: flex-start;
-  background: var(--accent-bg); border: 1px solid #d6cdfb;
+  background: var(--accent-bg); border: 1px solid #bfe4dc;
   border-radius: var(--radius); padding: var(--s3) var(--s4);
   color: var(--ink-2);
 }
