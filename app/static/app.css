@@ -211,7 +211,7 @@ section > h2:first-child { margin-top: 0; }
 }
 /* Clipping the background to the text clips it to descendant glyphs too, so a
    pill sitting in the hotel title would lose its own ink. It gets it back. */
-.page-head h1 .pill, .page-head h1 .badge { -webkit-text-fill-color: initial; }
+.page-head h1 .pill { -webkit-text-fill-color: initial; }
 
 /* -- tables ---------------------------------------------------------- */
 .grid {
@@ -334,15 +334,6 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
 .pill-own     { background: #dcedf7; color: #1a5a7a; border-color: #bcd9e8; }
 .pill-soldout { background: #eeeae0; color: #626f69; border-color: #ded9cb; }
 .pill-pending { background: #e0f2ee; color: #0b5f55; border-color: #bfe4dc; }
-
-.badge {
-  font-size: 10px; font-weight: 700; letter-spacing: .04em;
-  text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
-}
-.badge-admin  { background: var(--accent-bg); color: var(--accent); }
-.badge-viewer { background: #eeeae0; color: #4a544f; }
-/* A pale tint vanishes on the gradient bar, so it inverts up there. */
-.topbar .badge-admin { background: rgba(255,255,255,.55); color: var(--brand-1); }
 
 .chips { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s3); }
 .chip {

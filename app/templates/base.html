@@ -49,9 +49,11 @@
     </a>
     {% endif %}
   </nav>
+  {# Name and role dropped from the bar entirely, tooltip included. On a
+     single-operator deployment they told the reader something they already
+     knew, on every screen. Worth restoring once there is more than one
+     account -- there is no way to create a second one today. #}
   <div class="user">
-    <span title="{{ user.email }}">{{ user.full_name or user.email }}</span>
-    {% if is_admin %}<span class="badge badge-admin">admin</span>{% endif %}
     <a href="/logout">Log out</a>
   </div>
 </header>
