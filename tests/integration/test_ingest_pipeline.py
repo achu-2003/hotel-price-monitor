@@ -24,6 +24,7 @@ from app.db.models import (
     PriceChange,
     PriceObservation,
     PriceSeries,
+    RoomType,
     RoomTypeAlias,
     UnmatchedOffer,
 )
@@ -533,3 +534,117 @@ class TestWhenThePriceActuallyChanged:
         change = session.scalars(select(PriceChange)).one()
         assert change.direction is ChangeDirection.BECAME_UNAVAILABLE
         assert change.first_seen_at == change.changed_at == gone_at
+
+
+class TestOffersThatCollapseIntoOneRoom:
+    """Several rooms arriving under one name is a broken selector, not a fetch.
+
+    A six-room property was monitored as a single room for weeks because its
+    room_name selector had landed on an amenity chip reading "King Size Bed" on
+    every card. Every offer then computed the same offer key, five were dropped
+    to protect the transaction, and the check run recorded six offers found,
+    zero unmatched, and success.
+
+    Dropping them is still correct -- the offer key is the primary key of
+    price_series, so writing both would abort the fetch and lose the rooms that
+    were fine. What was missing is that anyone ever heard about it.
+    """
+
+    def test_the_drop_is_counted_and_the_names_kept(self, session, hotel_fixture):
+        summary = ingest_fetch_result(
+            session,
+            _result(
+                _offer(name="Deluxe Room", price="3000"),
+                _offer(name="Deluxe Room", price="4200"),
+                _offer(name="Deluxe Room", price="5100"),
+            ),
+            _context(hotel_fixture),
+        )
+        session.flush()
+
+        assert summary.offers_seen == 3
+        # All three RESOLVED to a room type -- offers_matched counts the match,
+        # not the write -- which is precisely why it cannot be used to notice
+        # this. It reads three on a fetch that stored one.
+        assert summary.offers_matched == 3
+        # Not unmatched either: they matched a room perfectly well. They
+        # matched the SAME one, which is a different failure needing a
+        # different message.
+        assert summary.offers_unmatched == 0
+        assert summary.offers_collapsed == 2
+        assert summary.collapsed_names == ["Deluxe Room"]
+
+        # Exactly one series, as before. The guard still protects the write.
+        assert session.scalar(select(func.count(PriceSeries.offer_key))) == 1
+
+    def test_a_clean_fetch_reports_no_collapse(self, session, hotel_fixture):
+        """The counter must stay at zero on the ordinary path, or the error it
+        feeds becomes noise on Attention and stops being read."""
+        summary = ingest_fetch_result(
+            session, _result(_offer()), _context(hotel_fixture)
+        )
+        session.flush()
+
+        assert summary.offers_collapsed == 0
+        assert summary.collapsed_names == []
+
+
+class TestTheNeedsMappingQueueClearsItself:
+    """An offer that starts matching must retire its own queue entry.
+
+    Nothing used to close these, so the queue only ever grew. A name is queued
+    when no room type matches it; once a matching room type exists -- an
+    operator adding one, or the pipeline seeding a hotel's rooms after an
+    automatic repair -- the offer resolves cleanly and its prices are recorded
+    correctly, while the row asking a human to map it stays open forever.
+
+    That is how six rooms came to sit on the Attention page under "no
+    candidate" while those exact six rooms were already being monitored
+    correctly on the hotel page.
+    """
+
+    def test_a_queued_name_is_closed_once_it_resolves(self, session, hotel_fixture):
+        # Seen once under a name nothing matches: queued for a human.
+        ingest_fetch_result(
+            session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
+        )
+        session.flush()
+        queued = session.scalars(select(UnmatchedOffer)).one()
+        assert queued.resolved_at is None
+
+        # The room now exists -- however it came to exist.
+        session.add(
+            RoomType(
+                hotel_id=hotel_fixture["hotel"].id,
+                name="Garden Villa",
+                canonical_name="garden villa",
+            )
+        )
+        session.flush()
+
+        ingest_fetch_result(
+            session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
+        )
+        session.flush()
+
+        session.refresh(queued)
+        assert queued.resolved_at is not None, (
+            "the offer resolves now, so the row asking a human to map it is "
+            "work that no longer needs doing"
+        )
+
+    def test_a_name_that_still_does_not_match_stays_queued(self, session, hotel_fixture):
+        """Only the row for the name that actually resolved is closed."""
+        ingest_fetch_result(
+            session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
+        )
+        session.flush()
+
+        # A different offer resolving must not clear someone else's row.
+        ingest_fetch_result(session, _result(_offer()), _context(hotel_fixture))
+        session.flush()
+
+        still_open = session.scalars(
+            select(UnmatchedOffer).where(UnmatchedOffer.resolved_at.is_(None))
+        ).all()
+        assert [row.raw_room_name for row in still_open] == ["Garden Villa"]

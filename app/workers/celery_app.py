@@ -61,6 +61,12 @@ celery_app.conf.update(
     task_routes={
         "fetch.prices": {"queue": "browser"},
         "fetch.prices_http": {"queue": "http"},
+        # Drives a real browser, so it belongs with the fetches. Routed here as
+        # well as at the call site: task_default_queue is "http", and a caller
+        # that forgot the keyword would land Chromium on the light worker --
+        # concurrency 8, no shm_size, no memory headroom -- which fails as an
+        # out-of-memory kill rather than as anything that names the cause.
+        "repair.rediscover_source": {"queue": "browser"},
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},
@@ -109,6 +115,7 @@ celery_app.autodiscover_tasks(
         "app.workers.tasks_fetch",
         "app.workers.tasks_notify",
         "app.workers.tasks_maintenance",
+        "app.workers.tasks_repair",
     ],
     force=True,
 )

@@ -246,3 +246,236 @@ class TestPageThatHidesItsCurrencySymbol:
         cards, _ = page_and_scan
         assert "Standard" not in cards[0]["name_selector"]
         assert "Deluxe" not in cards[0]["name_selector"]
+
+
+ZOTEL = (
+    """<!doctype html>
+<html><body><div class="primary-section search-result mx-auto">
+  <h1>JP GLAMPING RESORT</h1>
+  <div class="hotel-room old col-span-4">
+    <h5 class="text-lg font-semibold mb-2">Suite</h5>
+    <div class="roomtype-features text-gray-500 text-sm flex flex-wrap gap-1 mb-2">
+      <div class="mr-3 mb-0 font-light">King Size Bed</div>
+      <div class="mr-3 mb-0 font-light">20.00 Sq.ft</div>
+      <div class="facility-item font-light category-3354 mr-3 mb-0">Balcony View</div>
+    </div>
+    <div class="roomtype-price text-base mb-2">
+      <div class="text-gray-900 font-bold"><span class="total-price">&#8377; 3,390</span>
+        <span class="text-red-500 font-light line-through text-xs ml-2 total-standard-rate">&#8377; 3,390</span></div>
+      <div class="text-gray-500 font-normal text-xs room_type_tax_3354">+ &#8377; 169.5 in taxes and charges</div>
+    </div>
+    <button>Select Room</button>
+  </div>
+  <div class="hotel-room old col-span-4">
+    <h5 class="text-lg font-semibold mb-2">Deluxe Studio</h5>
+    <div class="roomtype-features text-gray-500 text-sm flex flex-wrap gap-1 mb-2">
+      <div class="mr-3 mb-0 font-light">King Size Bed</div>
+      <div class="mr-3 mb-0 font-light">20.00 Sq.ft</div>
+      <div class="facility-item font-light category-3355 mr-3 mb-0">Balcony View</div>
+    </div>
+    <div class="roomtype-price text-base mb-2">
+      <div class="text-gray-900 font-bold"><span class="total-price">&#8377; 8,550</span>
+        <span class="text-red-500 font-light line-through text-xs ml-2 total-standard-rate">&#8377; 8,550</span></div>
+      <div class="text-gray-500 font-normal text-xs room_type_tax_3355">+ &#8377; 1539 in taxes and charges</div>
+    </div>
+    <button>Select Room</button>
+  </div>
+</div></body></html>"""
+)
+
+
+class TestTailwindPageWhereEveryCardSharesALabel:
+    """A real six-room property that was monitored as one room for weeks.
+
+    Three independent defects lined up, and none of them raised:
+
+    1. The struck-through-price penalty tested class names as SUBSTRINGS, and
+       Tailwind's "font-bold" contains "old". The genuine rate was scored as a
+       stale price and lost to the tax line printed beneath it, so the hotel's
+       cheapest room was recorded as costing 169.50 -- its own tax.
+    2. The amenity chips live in a "roomtype-features" wrapper, which collected
+       the same "this holds the name" bonus as the real title, and "King Size
+       Bed" outscored the <h5> by being longer.
+    3. Reading the same name from all six cards, the pipeline resolved them to
+       one room type and dropped five as duplicate offer keys. The check run
+       recorded six offers found, zero unmatched, and success.
+
+    Everything a person could see said the fetch worked. Only the room count
+    disagreed, and nothing was comparing it to anything.
+    """
+
+    @pytest.fixture(scope="class")
+    def scan(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:  # pragma: no cover
+            pytest.skip("playwright is not installed")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(args=["--no-sandbox", "--disable-gpu"])
+                try:
+                    page = browser.new_page()
+                    page.set_content(ZOTEL)
+                    return find_room_cards(page)
+                finally:
+                    browser.close()
+        except Exception as exc:  # pragma: no cover
+            pytest.skip(f"chromium unavailable: {str(exc)[:80]}")
+
+    def test_the_rate_is_read_and_not_the_tax_line_beneath_it(self, scan):
+        """169.50 is a real number printed on the page, so corroboration
+        confirms it as readily as the rate. Only the scoring separates them."""
+        prices = scan[0]["prices"]
+        assert 3390 in prices and 8550 in prices, prices
+        assert 169.5 not in prices and 1539 not in prices, prices
+
+    def test_font_bold_is_not_read_as_an_old_price(self, scan):
+        """The whole-word rule. If "font-bold" matches /old/ again, the rate
+        is penalised into second place and this returns the tax figure."""
+        assert scan[0]["price_selector"] == "span.total-price", scan[0]["price_selector"]
+
+    def test_rooms_are_named_from_the_heading_not_the_amenity_chips(self, scan):
+        names = scan[0]["names"]
+        assert sorted(names) == ["Deluxe Studio", "Suite"], names
+        assert "King Size Bed" not in names, names
+
+    def test_a_name_that_reads_the_same_on_every_card_is_rejected(self, scan):
+        """The general guard, and the one that does not depend on any class
+        being sensibly named: rooms in a list have DIFFERENT names."""
+        best = scan[0]
+        assert best["distinct"] == best["matched"] == 2, best
+
+    def test_a_short_real_name_beats_a_longer_shared_label(self, scan):
+        """"Suite" is five characters; "King Size Bed" is thirteen and sits in
+        a wrapper whose class says "roomtype". Length must not decide it."""
+        assert "Suite" in scan[0]["names"], scan[0]["names"]
+
+
+# No heading anywhere, so the room's name has nothing but a short bare <div>
+# to sit in, and a repeated amenity chip outscores it on length alone. This is
+# the case the scoring rules CANNOT get right by themselves.
+NO_HEADING = (
+    """<!doctype html><html><body><div class="results">
+  <div class="room-card">
+    <div class="rt">Suite</div>
+    <div class="roomtype-features"><div class="mr-3 font-light">King Size Bed</div></div>
+    <div class="rate"><span class="amount">&#8377; 3,390</span></div>
+  </div>
+  <div class="room-card">
+    <div class="rt">Villa</div>
+    <div class="roomtype-features"><div class="mr-3 font-light">King Size Bed</div></div>
+    <div class="rate"><span class="amount">&#8377; 5,690</span></div>
+  </div>
+</div></body></html>"""
+)
+
+# One room type, three rate plans. Every card genuinely says "Deluxe Room".
+RATE_PLANS = (
+    """<!doctype html><html><body><div class="results">
+  <div class="room-card">
+    <h3 class="room-title">Deluxe Room</h3><div class="board">Room Only</div>
+    <div class="rate"><span class="amount">&#8377; 3,200</span></div>
+  </div>
+  <div class="room-card">
+    <h3 class="room-title">Deluxe Room</h3><div class="board">With Breakfast</div>
+    <div class="rate"><span class="amount">&#8377; 3,800</span></div>
+  </div>
+  <div class="room-card">
+    <h3 class="room-title">Deluxe Room</h3><div class="board">Half Board</div>
+    <div class="rate"><span class="amount">&#8377; 4,500</span></div>
+  </div>
+</div></body></html>"""
+)
+
+
+def _scan_html(html):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:  # pragma: no cover
+        pytest.skip("playwright is not installed")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=["--no-sandbox", "--disable-gpu"])
+            try:
+                page = browser.new_page()
+                page.set_content(html)
+                return find_room_cards(page)
+            finally:
+                browser.close()
+    except Exception as exc:  # pragma: no cover
+        pytest.skip(f"chromium unavailable: {str(exc)[:80]}")
+
+
+class TestRepeatedNamesAreJudgedBySource:
+    """Repetition alone cannot decide whether a name selector is broken.
+
+    Two pages here look identical to any check that only counts distinct names,
+    and the right answer is opposite in each. What separates them is WHERE the
+    name came from: a heading or a self-declared name container is taken at its
+    word, an amenity chip is not.
+    """
+
+    @pytest.fixture(scope="class")
+    def no_heading(self):
+        return _scan_html(NO_HEADING)
+
+    @pytest.fixture(scope="class")
+    def rate_plans(self):
+        return _scan_html(RATE_PLANS)
+
+    def test_a_repeated_chip_is_replaced_by_the_name_it_hid(self, no_heading):
+        """The chip outscores the real name and there is no heading to rescue
+        it, so only the cross-card check can catch this."""
+        best = no_heading[0]
+        assert sorted(best["names"]) == ["Suite", "Villa"], best["names"]
+        assert best["name_selector"] == "div.rt", best["name_selector"]
+
+    def test_a_repeated_heading_is_left_alone(self, rate_plans):
+        """One room type, three rate plans. Rejecting this named the rooms
+        after their board basis -- "Room Only", "With Breakfast"."""
+        best = rate_plans[0]
+        assert set(best["names"]) == {"Deluxe Room"}, best["names"]
+        assert best["name_selector"] == "h3.room-title", best["name_selector"]
+        assert best["name_trusted"] is True
+
+    def test_the_board_basis_never_becomes_the_room_name(self, rate_plans):
+        for name in rate_plans[0]["names"]:
+            assert "breakfast" not in name.lower()
+            assert "board" not in name.lower()
+            assert "room only" not in name.lower()
+
+
+class TestVerificationUsesBothFacts:
+    """`is_verified` is the last gate before a config is stored."""
+
+    def _candidate(self, names, *, trusted):
+        from decimal import Decimal
+
+        from app.adapters.discovery import Candidate
+
+        return Candidate(
+            source_url="https://example.test/rooms",
+            rooms_path="div.room-card",
+            fields={"room_name": "div.x", "price": "span.y"},
+            kind="dom",
+            sample_names=list(names),
+            sample_prices=[Decimal("3200"), Decimal("3800")],
+            corroborated=2,
+            name_trusted=trusted,
+        )
+
+    def test_an_untrusted_repeat_is_refused(self):
+        """"King Size Bed" twice, from an amenity chip. The prices are real and
+        on the page, so corroboration alone would have stored this."""
+        assert not self._candidate(
+            ["King Size Bed", "King Size Bed"], trusted=False
+        ).is_verified
+
+    def test_a_trusted_repeat_is_accepted(self):
+        assert self._candidate(["Deluxe Room", "Deluxe Room"], trusted=True).is_verified
+
+    def test_distinct_names_are_accepted_either_way(self):
+        assert self._candidate(["Suite", "Villa"], trusted=False).is_verified
+
+    def test_one_room_is_never_refused_for_failing_to_differ(self):
+        assert self._candidate(["Deluxe Room"], trusted=False).is_verified

@@ -304,14 +304,13 @@ async def attach_source(
 def _json_fragment(url: str) -> str:
     """A stable slice of an endpoint URL, for matching it again next fetch.
 
-    The path without the query: query strings carry dates and ids that change
-    every run, so matching on the whole URL would match nothing tomorrow.
+    Delegates to the adapter layer so that attaching a source and repairing one
+    derive the identical fragment. Kept as a name here because this module's
+    callers read better for it.
     """
-    from urllib.parse import urlparse
+    from app.adapters.discovery import json_fragment
 
-    path = urlparse(url).path or url
-    parts = [p for p in path.split("/") if p]
-    return "/" + "/".join(parts[-2:]) if len(parts) >= 2 else path
+    return json_fragment(url)
 
 
 def _detection_for_discovery(url: str):

@@ -227,6 +227,21 @@ class BrowserPool:
         return getattr(self._local, "playwright", None)
 
     @property
+    def current_playwright(self):
+        """This thread's live Playwright instance, or ``None``.
+
+        Public because anything else in this thread that wants a browser has to
+        reuse it rather than start a second. The pool never stops what it
+        starts -- one browser per worker for the process lifetime is the whole
+        point -- so from the first fetch onwards this thread permanently has a
+        sync Playwright with a running event loop underneath it. A second
+        ``sync_playwright()`` in that state raises "It looks like you are using
+        Playwright Sync API inside the asyncio loop", which reads as a coding
+        error in the caller and is really just this instance still being alive.
+        """
+        return self._playwright
+
+    @property
     def _browser(self) -> Browser | None:
         return getattr(self._local, "browser", None)
 

@@ -77,6 +77,15 @@ class IngestSummary:
     offers_unmatched: int = 0
     change_ids: list[int] = field(default_factory=list)
     outcomes: Counter = field(default_factory=Counter)
+    #: Offers discarded because an earlier offer in the SAME fetch already
+    #: claimed their identity. Counted rather than merely logged: this is the
+    #: shape a broken room_name selector takes by the time it reaches the
+    #: database, and it is otherwise invisible -- the fetch succeeds, the run
+    #: reports six offers found and none unmatched, and five rooms quietly
+    #: cease to exist. See :func:`ingest_fetch_result`.
+    offers_collapsed: int = 0
+    #: The room names involved, for the message a person eventually reads.
+    collapsed_names: list[str] = field(default_factory=list)
 
     @property
     def changes_detected(self) -> int:
@@ -162,6 +171,16 @@ def ingest_fetch_result(
                 room_type_id=room_type_id,
                 hint="two room names mapped to one room type; check the alias table",
             )
+            # Counted, not just logged. A log line is read by nobody after the
+            # fact, and this is the exact footprint of a room_name selector
+            # that has landed on something every card shares: the fetch
+            # succeeds, the check run records six offers found and zero
+            # unmatched, and five of the hotel's rooms are simply absent from
+            # every screen. The caller turns a sustained count into a row on
+            # Attention, because a person is the only thing that can fix it.
+            summary.offers_collapsed += 1
+            if offer.raw_room_name not in summary.collapsed_names:
+                summary.collapsed_names.append(offer.raw_room_name[:80])
             continue
         seen_keys.add(offer_key)
 
@@ -268,6 +287,7 @@ def _resolve_room(
         if not match.is_exact:
             _record_alias(session, match, offer, ctx)
             aliases[match.normalized] = match.room_type_id
+        _clear_unmatched(session, match, offer, ctx)
         return match.room_type_id
 
     _record_unmatched(session, match, offer, ctx)
@@ -333,6 +353,47 @@ def _record_unmatched(session: Session, match, offer: NormalizedOffer, ctx: Inge
         )
     )
     session.execute(statement)
+
+
+def _clear_unmatched(
+    session: Session, match, offer: NormalizedOffer, ctx: IngestContext
+) -> None:
+    """Close a queued "needs mapping" row once its name maps on its own.
+
+    Nothing used to do this, and the queue only ever grew. An offer is queued
+    when no room type matches it; if a matching room type appears later — an
+    operator creating one, or the pipeline seeding a hotel's rooms after a
+    repair — the offer starts resolving perfectly and its prices are recorded
+    correctly, while the row asking a human to map it stays open forever.
+
+    That is worse than untidy. The queue is meant to be a short list of things
+    only a person can decide, and it stops being read once it fills with work
+    that no longer needs doing. An operator clearing one of these would also be
+    creating an alias for a mapping that already resolves without it.
+
+    The evidence is exact rather than inferred: THIS offer, the one that was
+    queued under this name, has just resolved. Rows for names that are still
+    genuinely unmappable are untouched.
+    """
+    normalized = (match.normalized or offer.raw_room_name.lower())[:300]
+    row = session.execute(
+        select(UnmatchedOffer).where(
+            UnmatchedOffer.hotel_source_id == ctx.hotel_source_id,
+            UnmatchedOffer.normalized_name == normalized,
+            UnmatchedOffer.resolved_at.is_(None),
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return
+
+    row.resolved_at = ctx.checked_at
+    row.suggested_room_type_id = match.room_type_id
+    log.info(
+        "unmatched_offer_self_resolved",
+        hotel_id=ctx.hotel_id,
+        raw_name=offer.raw_room_name[:80],
+        room_type_id=match.room_type_id,
+    )
 
 
 def _filtered_out(offer: NormalizedOffer, ctx: IngestContext) -> bool:

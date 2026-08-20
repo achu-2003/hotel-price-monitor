@@ -29,6 +29,7 @@ from app.config import get_settings
 from app.core.errors import (
     ErrorClass,
     FetchError,
+    SchemaDriftError,
     TimeoutError_,
     classify,
 )
@@ -270,6 +271,41 @@ def _ingest(
         )
         summary = ingest_fetch_result(session, result, ctx)
 
+        # A fetch that read several rooms and could only file one of them is a
+        # SUCCESS by every measure this task has -- the page loaded, the
+        # selectors matched, offers were found and none went unmatched -- and
+        # it is still wrong. It means the room_name selector has landed on
+        # something every card shares, so the hotel's rooms all arrive with one
+        # identity and the pipeline keeps the first.
+        #
+        # That happened to a six-room property whose name selector found an
+        # amenity chip reading "King Size Bed" on all six cards. Nothing
+        # failed, nothing was retried, and the dashboard showed one room for
+        # weeks. Recorded here so the next occurrence is a line on Attention
+        # rather than a discrepancy somebody happens to notice.
+        if summary.offers_collapsed:
+            monitoring.record_error(
+                session,
+                error=SchemaDriftError(
+                    f"{summary.offers_collapsed} of {summary.offers_seen} offers "
+                    f"shared an identity with another offer in the same fetch and "
+                    f"were dropped, so this hotel is being monitored as "
+                    f"{summary.offers_seen - summary.offers_collapsed} room(s) "
+                    f"instead of {summary.offers_seen}. The room_name selector is "
+                    f"almost certainly reading a label every room card shares.",
+                    context={
+                        "names_seen": summary.collapsed_names[:8],
+                        "hotel_source_id": payload["hotel_source_id"],
+                        "selectors": (payload.get("adapter_config") or {}).get("selectors"),
+                    },
+                ),
+                hotel_id=payload["hotel_id"],
+                source_id=payload["source_id"],
+                target_id=target_ids[0],
+                check_run_id=check_run_id,
+                now=now,
+            )
+
         monitoring.record_success(session, target_ids, now)
         _update_check_run(
             session,
@@ -291,6 +327,17 @@ def _ingest(
         changes=len(change_ids),
     )
 
+    # Enqueued after the transaction, for the same reason the notify hand-off
+    # is: the repair reads this source's row, and must never race the write
+    # that told it to run.
+    if summary.offers_collapsed:
+        _request_repair(
+            payload, stay, reason="offers_collapsed", logger=logger,
+            # The labels that collapsed. The repair needs them to tell the rooms
+            # the broken config invented from the hotel's real ones.
+            collapsed_names=summary.collapsed_names,
+        )
+
     if change_ids:
         # Enqueued only after the transaction has committed, so the notify
         # worker can never read a change row that does not exist yet.
@@ -307,6 +354,47 @@ def _ingest(
         "offers": summary.offers_seen,
         "changes": len(change_ids),
     }
+
+
+def _request_repair(
+    payload: dict[str, Any],
+    stay: StayWindow,
+    *,
+    reason: str,
+    logger,
+    collapsed_names: list[str] | None = None,
+) -> None:
+    """Ask discovery to re-derive this source's config.
+
+    Advisory, not obligatory: the task decides for itself whether it is allowed
+    to run (see app/services/rediscovery.py). Everything here is wrapped
+    because a broker that is momentarily unreachable must not turn a successful
+    fetch into a failed one — the price data is already committed, and the
+    alert on Attention stands whether or not this hand-off lands.
+    """
+    if not get_settings().auto_rediscovery_enabled:
+        return
+    try:
+        from app.workers.tasks_repair import rediscover_source
+
+        rediscover_source.apply_async(
+            args=[payload["hotel_source_id"]],
+            kwargs={
+                # The same stay window the fetch used, so discovery inspects
+                # the page the fetch actually read rather than a default one
+                # that might legitimately show different rooms.
+                "check_in": stay.check_in.isoformat(),
+                "check_out": stay.check_out.isoformat(),
+                "adults": payload["adults"],
+                "children": payload["children"],
+                "reason": reason,
+                "collapsed_names": list(collapsed_names or []),
+            },
+            queue="browser",
+        )
+        logger.info("repair_requested", reason=reason)
+    except Exception as exc:  # noqa: BLE001 - never fails the fetch
+        logger.warning("repair_request_failed", error=str(exc)[:200])
 
 
 def _handle_failure(
@@ -366,6 +454,15 @@ def _handle_failure(
 
     if error.is_transient and attempt < error.max_retries:
         raise task.retry(exc=error, countdown=_retry_delay(error, attempt))
+
+    # The other way a redesign shows up. Where a collapsed room list means the
+    # selectors still match something wrong, drift means they match nothing at
+    # all -- the adapter refused to guess and said so. Both are repaired the
+    # same way, and only these two are: a timeout or a block means the page was
+    # never read, so re-running discovery against it would just add load to a
+    # site already refusing us.
+    if error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT:
+        _request_repair(payload, stay, reason="schema_drift", logger=logger)
 
     # Permanent, or out of retries. Return normally: this hotel is done for
     # this cycle, and nothing else should be affected by it.

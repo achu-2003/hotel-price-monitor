@@ -93,6 +93,21 @@ class Settings(BaseSettings):
     artifact_dir: Path = Path("/data/artifacts")
     artifact_retention_days: int = 7
 
+    # ── self-repair ──────────────────────────────────────────────────
+    # A site redesign breaks stored selectors, and until now the only cure was
+    # a person noticing and editing adapter_config by hand. Discovery already
+    # knows how to derive that config; this lets it run again on an EXISTING
+    # source when a fetch shows the stored one has stopped describing the page.
+    #
+    # On by default because the alternative is a hotel quietly monitored wrong
+    # until somebody happens to look. It is still bounded: a repair is written
+    # only when discovery verifies it, at most `auto_rediscovery_max_attempts`
+    # times per source, no more often than the cooldown, and every attempt is
+    # recorded whether it succeeded or not.
+    auto_rediscovery_enabled: bool = True
+    auto_rediscovery_cooldown_minutes: int = 360
+    auto_rediscovery_max_attempts: int = 3
+
     # ── politeness ───────────────────────────────────────────────────
     respect_robots_txt: bool = True
     default_rate_limit_per_min: int = 6

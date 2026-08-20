@@ -237,17 +237,60 @@ _FIND_CARDS_JS = r"""
   // "Room Rates Exclusive of Tax" and a rate of 200 -- a column heading and an
   // extra-person charge. A booking card is full of text that resembles what we
   // want, and exactly one of each is the thing itself, so both are scored.
+  // Class names are matched as WHOLE WORDS. Substring matching is what broke
+  // this on the first Tailwind site it met.
+  //
+  // "font-bold" contains "old", so the struck-through-price test fired on
+  // every bold element on the page -- which, on a booking card, is the price
+  // itself. The genuine rate was scored as a stale "old price" and lost to the
+  // tax line printed beneath it, and a six-room hotel was recorded as having
+  // one room costing its own tax. "off" inside "offer", "was" inside
+  // "washroom" and "save" inside "saver" all fail the same way.
+  //
+  // Splitting on every non-alphanumeric boundary turns "font-bold
+  // roomtype-price" into " font bold roomtype price ", where /\bold\b/ can no
+  // longer match and /\bprice\b/ still does. Every pattern tested against this
+  // string must therefore be \b-anchored, and hyphenated names must be written
+  // with a space ("room type"), because that is what they become here.
+  const tokens = (value) =>
+    (value || "").toString().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const context = (el) => {
-    const own = ((el.className || "") + " " + (el.id || "")).toString();
+    const own = tokens(el.className).concat(tokens(el.id));
     const parent = el.parentElement
-      ? ((el.parentElement.className || "") + " " + (el.parentElement.id || "")).toString()
-      : "";
-    return (own + " " + parent).toLowerCase();
+      ? tokens(el.parentElement.className).concat(tokens(el.parentElement.id))
+      : [];
+    // Leading and trailing spaces so \b behaves at both ends.
+    return " " + own.concat(parent).join(" ") + " ";
   };
+
+  // Text that says the number beside it is an ADD-ON rather than the rate.
+  // Read from the element's own text, which is the one thing a site cannot
+  // rename: "+ ₹169.5 in taxes and charges" is a tax line whatever the div
+  // holding it is called.
+  const SUPPLEMENT =
+    /\b(tax|taxes|gst|vat|fee|fees|charge|charges|extra|surcharge|deposit|additional|per person|per head|per adult|per child)\b/i;
+  // ...unless the number is the all-in figure, which mentions tax for the
+  // opposite reason. "₹3,559 incl. taxes" is the price, not a supplement.
+  const INCLUSIVE_TEXT = /\b(incl|inclusive|including|included|all in|all inclusive)\b/i;
+
+  // Markers on a price that has been crossed out. "line-through" is the
+  // Tailwind spelling and tokenises to "line through", so both forms are
+  // listed -- the whole-word rule means neither can be caught by accident.
+  const STALE_PRICE =
+    /\b(strike|strikethrough|struck|through|crossed|old|was|mrp|orig|original|rack|discount|save|off)\b/;
+  const SUPPLEMENT_CLASS = /\b(extra|addon|add on|child|person|tax|taxes|fee|fees)\b/;
+  const RATE_CLASS = /\b(rate|rates|price|prices|amt|amount|tariff|cost|total)\b/;
+  // Containers holding the amenity chips, badges and feature pills that every
+  // card repeats. They frequently sit inside a "roomtype-*" wrapper and so
+  // would otherwise collect the same bonus as the element holding the name.
+  const CHROME_CLASS =
+    /\b(feature|features|facility|facilities|amenity|amenities|tag|tags|chip|chips|badge|badges|icon|icons|attribute|attributes|label|labels)\b/;
+  const NAME_CLASS = /\b(name|title|heading|roomtype|room type|rmname|caption)\b/;
 
   const pickFrom = (card) => {
     let priceEl = null, nameEl = null, nameText = null, priceValue = null;
     let bestNameScore = -1, bestPriceScore = -1, bestPriceValue = -1;
+    const candidates = [];
 
     for (const el of card.querySelectorAll("*")) {
       if (el.children.length > 2) continue;
@@ -259,12 +302,18 @@ _FIND_CARDS_JS = r"""
         const where = context(el);
         let score = 0;
         if (MARKER.test(t)) score += 3;                       // says so itself
-        if (/rate|price|amt|amount|tariff|cost/.test(where)) score += 3;
+        if (RATE_CLASS.test(where)) score += 3;
         // A struck-through "was" price is visible on the page and so passes
         // verification just as well as the real one; it has to be excluded by
         // what it IS, not by whether it can be found.
-        if (/strike|struck|old|was|mrp|orig|rack|discount|save|off/.test(where)) score -= 6;
-        if (/extra|addon|add-on|child|person|tax|fee/.test(where)) score -= 4;
+        if (STALE_PRICE.test(where)) score -= 6;
+        if (SUPPLEMENT_CLASS.test(where)) score -= 4;
+        // What the element SAYS outranks what its classes are called, because
+        // the text is the part the site cannot rename. On a real page the tax
+        // line "+ ₹169.5 in taxes and charges" sat inside a wrapper called
+        // "roomtype-price" and collected the same +3 as the rate itself; only
+        // its own words separate the two.
+        if (SUPPLEMENT.test(t) && !INCLUSIVE_TEXT.test(t)) score -= 8;
         // Between two equally plausible numbers the larger is the room and the
         // smaller is a supplement -- an extra bed is never dearer than the bed.
         if (score > bestPriceScore || (score === bestPriceScore && asPrice > bestPriceValue)) {
@@ -295,15 +344,135 @@ _FIND_CARDS_JS = r"""
       const where = context(el);
       const words = t.split(/\s+/).length;
       let score = (words >= 2 ? 10 : 0) + Math.min(t.length, 40);
-      if (/name|title|heading|roomtype|room-type|rmname/.test(where)) score += 20;
-      if (/^h[1-6]$/i.test(el.tagName)) score += 10;
+      if (NAME_CLASS.test(where)) score += 20;
+      // A heading inside a room card is the room's name essentially always,
+      // and it is the one signal here that survives a site whose classes say
+      // nothing. Weighted above the length-and-word-count guess it competes
+      // with, because "Suite" is a real room name that a three-word amenity
+      // chip would otherwise outscore purely by being longer.
+      if (/^h[1-6]$/i.test(el.tagName)) score += 25;
+      // Amenity chips and feature pills, which repeat identically across every
+      // card. They are often nested inside a "roomtype-*" wrapper and so
+      // collect the NAME_CLASS bonus they have no claim to.
+      if (CHROME_CLASS.test(where)) score -= 25;
+      // Does this element carry a POSITIVE claim to be the name, as opposed to
+      // merely having scored well? A heading is one by HTML semantics; a
+      // "roomName"/"title" wrapper says so outright, unless it is really a
+      // chip container that happens to sit under a "roomtype-*" parent.
+      //
+      // This is what decides whether a repeated name is trusted or replaced,
+      // and it deliberately does not depend on the score: scores are a ranking
+      // and this is a claim of kind.
+      const isHeading = /^h[1-6]$/i.test(el.tagName);
+      const trusted = isHeading || (NAME_CLASS.test(where) && !CHROME_CLASS.test(where));
+      candidates.push({ el, text: t, score, trusted });
       if (score > bestNameScore) {
         bestNameScore = score;
         nameEl = el;
         nameText = t;
       }
     }
-    return { priceEl, nameEl, nameText, priceValue };
+    // Ranked best-first so a winner that turns out to read the same on every
+    // card can be replaced by the next one down. See resolveNameSelector.
+    candidates.sort((a, b) => b.score - a.score);
+    return { priceEl, nameEl, nameText, priceValue, candidates };
+  };
+
+  // A class-based selector when the classes are real; a text-based one when
+  // they are generated hashes. The second is not a lesser option here -- on a
+  // styled-components site it is the only one that will still work after the
+  // next deploy.
+  const usable = (s) => s && (s.includes(".") || s.includes("[") || s.startsWith("text="));
+
+  // Playwright's "text=" selectors are not CSS and cannot be handed to
+  // querySelector, so a card is read through one only by falling back to the
+  // per-card pick that produced it.
+  const readName = (card, selector, found) => {
+    if (selector && !selector.startsWith("text=")) {
+      let hit = null;
+      try { hit = card.querySelector(selector); } catch (e) { hit = null; }
+      return hit ? ownText(hit) || clean(hit.textContent).trim() : null;
+    }
+    return found.nameText;
+  };
+
+  // A name that reads the same on every card is USUALLY not a name.
+  //
+  // On one real site "King Size Bed" sits in the amenity chips of all six
+  // cards and outscored the <h5> holding the actual room name. The fetch then
+  // returned six offers sharing one name, they all resolved to a single room
+  // type, and five were discarded downstream as duplicate offer keys -- a
+  // six-room hotel displayed as one room, priced at its own tax line.
+  //
+  // No amount of class-name scoring can be trusted to prevent that on every
+  // site, so the check here is behavioural rather than cosmetic: read every
+  // card through the candidate SELECTOR, and if it says the same thing in all
+  // of them, treat the winner as suspect. The selector is what gets tested,
+  // not the element, because the selector is the artefact that is stored and
+  // re-run on every future check.
+  //
+  // "USUALLY", because repetition is not proof. A property with ONE room type
+  // and three rate plans -- room only, breakfast, half board -- lists three
+  // cards that genuinely all say "Deluxe Room", and an earlier version of this
+  // function duly rejected the correct <h3> and named the rooms after their
+  // board basis instead. That is the same silent wrongness in the other
+  // direction.
+  //
+  // So repetition alone does not disqualify a candidate: it disqualifies an
+  // UNTRUSTED one. A heading, or an element in a container that calls itself a
+  // name, is allowed to repeat -- rate plans are a real thing and this is what
+  // they look like. An amenity chip is not, and gets replaced. `trusted` is a
+  // claim of kind rather than a score, which is why the two cases separate
+  // cleanly instead of trading off against each other.
+  const resolveNameSelector = (cards, candidates) => {
+    let fallback = null;
+    for (const cand of candidates || []) {
+      let sel = selectorFor(cand.el);
+      if (!usable(sel)) sel = textSelectorFor(cand.el);
+      if (!usable(sel)) continue;
+
+      // Text selectors are built from ONE card's wording and cannot be
+      // evaluated across the others from here. They are kept as a last resort
+      // -- on a hashed-class site they are the only thing that works -- but
+      // never preferred over a CSS selector proven to vary.
+      if (sel.startsWith("text=")) {
+        if (!fallback) {
+          fallback = { selector: sel, sampleText: cand.text, distinct: 0,
+                       trusted: !!cand.trusted };
+        }
+        continue;
+      }
+
+      const seen = [];
+      for (const card of cards) {
+        const value = readName(card, sel, cand);
+        if (value) seen.push(value);
+      }
+      // Must actually find a name in most cards: a selector that resolves in
+      // the sample and nowhere else is worse than the one it replaced.
+      if (seen.length * 2 < cards.length) continue;
+      const distinct = new Set(seen).size;
+      const result = { selector: sel, sampleText: seen[0] || cand.text,
+                       distinct: distinct, trusted: !!cand.trusted };
+
+      // Varies across the cards, or there is only one card for it to vary
+      // against. Nothing to doubt.
+      if (distinct > 1 || cards.length < 2) return result;
+
+      // Reads identically everywhere. A heading or a self-declared name
+      // container is taken at its word -- one room type sold on three rate
+      // plans really does repeat -- and the repetition is reported so the
+      // pipeline downstream can still act on it.
+      if (cand.trusted) return result;
+
+      // Otherwise it is a shared label wearing a room name's clothes. Keep
+      // looking, and remember this one so a page where every candidate
+      // collapses still returns something rather than vanishing: the honest
+      // `distinct` and `trusted` values travel with it, and Python refuses to
+      // store the combination.
+      if (!fallback) fallback = result;
+    }
+    return fallback;
   };
 
   // 1. every element whose OWN text is a price
@@ -358,24 +527,28 @@ _FIND_CARDS_JS = r"""
     let priceEl = picked.priceEl, nameEl = picked.nameEl, nameText = picked.nameText;
     if (!priceEl || !nameEl) continue;
 
-    // A class-based selector when the classes are real; a text-based one when
-    // they are generated hashes. The second is not a lesser option here --
-    // on a styled-components site it is the only one that will still work
-    // after the next deploy.
-    const usable = (s) => s && (s.includes(".") || s.includes("[") || s.startsWith("text="));
     let priceSel = selectorFor(priceEl);
     if (!usable(priceSel)) priceSel = textSelectorFor(priceEl);
-    let nameSel = selectorFor(nameEl);
-    if (!usable(nameSel)) nameSel = textSelectorFor(nameEl);
-    if (!usable(priceSel) || !usable(nameSel)) continue;
+    if (!usable(priceSel)) continue;
+
+    const sampled = withPrice.slice(0, 10);
+    const resolved = resolveNameSelector(sampled, picked.candidates);
+    if (!resolved) continue;
+    const nameSel = resolved.selector;
+    nameText = resolved.sampleText || nameText;
 
     // Each card is read on its own terms. Resolving the SAMPLE's elements for
     // every card reported one room's price three times -- three rows, three
     // identical numbers, and a verification step with nothing to catch.
+    //
+    // Names come from the agreed selector rather than from each card's own
+    // best guess, so what is reported here is what the adapter will actually
+    // read back later. Prices stay per-card: they are legitimately allowed to
+    // repeat, so there is nothing for a cross-card check to add.
     const names = [], prices = [];
-    for (const card of withPrice.slice(0, 10)) {
+    for (const card of sampled) {
       const found = pickFrom(card);
-      const n = found.nameText;
+      const n = readName(card, nameSel, found);
       const p = found.priceValue;
       if (n && p !== null) { names.push(n); prices.push(p); }
     }
@@ -397,6 +570,12 @@ _FIND_CARDS_JS = r"""
       // name is the signature of a selector that found a shared label rather
       // than the room, and it outranks nothing once counted.
       distinct: new Set(names).size,
+      // ...unless the element making that claim is a heading or a container
+      // that calls itself a name, in which case one room type on several rate
+      // plans is the likelier reading. Python needs both facts to tell a
+      // legitimate repeat from a broken selector, so both are reported rather
+      // than resolved into a verdict here.
+      name_trusted: !!resolved.trusted,
     });
   }
 

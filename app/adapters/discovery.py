@@ -112,16 +112,51 @@ class Candidate:
     #: How many of the prices were also found in the page's visible text.
     corroborated: int = 0
     score: float = 0.0
+    #: DOM only. Whether the element the names came from is a heading or a
+    #: self-declared name container, as opposed to something that merely scored
+    #: well. Decides whether several rooms sharing one name reads as rate plans
+    #: or as a broken selector — see :meth:`is_verified`.
+    name_trusted: bool = True
 
     @property
     def is_verified(self) -> bool:
-        """At least half the prices appear on the page a guest sees.
+        """At least half the prices appear on the page, and the rooms have
+        distinct names.
 
-        Half rather than all: a page often shows only the cheapest rate per
-        room, or hides sold-out rooms, so demanding every price would reject
-        good candidates. Demanding none would accept invented ones.
+        Half rather than all for the prices: a page often shows only the
+        cheapest rate per room, or hides sold-out rooms, so demanding every
+        price would reject good candidates. Demanding none would accept
+        invented ones.
+
+        The names condition exists because corroboration alone cannot see this
+        failure. A selector that lands on a shared amenity chip -- "King Size
+        Bed" on all six cards of one real hotel -- yields prices that ARE on
+        the page and so passes every check here, while naming six different
+        rooms identically. Downstream they collapse into one room type and five
+        of the six are dropped as duplicate offer keys, which is how a
+        six-room property came to be monitored as a single room.
+
+        Repetition on its own is NOT enough to condemn a candidate, though. A
+        property with one room type and three rate plans genuinely lists three
+        cards all reading "Deluxe Room", and refusing that would reject a site
+        that is working perfectly. What separates the two is where the name
+        came from: ``name_trusted`` is set when the scan took it from a heading
+        or a container that calls itself a name, which a rate-plan list does
+        and an amenity chip does not.
+
+        So: several rooms sharing one name is accepted from a trusted element
+        and refused from an untrusted one. One sampled room is exempt either
+        way -- there is nothing for it to differ from.
         """
-        return bool(self.sample_prices) and self.corroborated * 2 >= len(self.sample_prices)
+        if not self.sample_prices or self.corroborated * 2 < len(self.sample_prices):
+            return False
+        if (
+            not self.name_trusted
+            and len(self.sample_names) > 1
+            and len(set(self.sample_names)) == 1
+        ):
+            return False
+        return True
 
     def as_adapter_config(self, json_fragment: str) -> dict[str, Any]:
         if self.kind == "dom":
@@ -153,6 +188,24 @@ class DiscoveryResult:
     @property
     def ok(self) -> bool:
         return self.best is not None and self.best.is_verified
+
+
+def json_fragment(url: str) -> str:
+    """A stable slice of an endpoint URL, for matching it again next fetch.
+
+    The path without the query: query strings carry dates and ids that change
+    every run, so matching on the whole URL would match nothing tomorrow.
+
+    Lives here, beside :meth:`Candidate.as_adapter_config` which consumes it,
+    because both callers that build an adapter config from a discovery result
+    — attaching a source and repairing one — have to derive this identically.
+    Two copies that drifted apart would produce two configs for one site.
+    """
+    from urllib.parse import urlparse
+
+    path = urlparse(url).path or url
+    parts = [p for p in path.split("/") if p]
+    return "/" + "/".join(parts[-2:]) if len(parts) >= 2 else path
 
 
 # ── walking the payload ──────────────────────────────────────────────
@@ -395,6 +448,9 @@ def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
         sample_names=names[:8],
         sample_prices=prices[:8],
         room_count=int(card.get("count") or len(names)),
+        # Absent on an older scan result: default to trusting, so a missing
+        # flag cannot silently reject every DOM candidate.
+        name_trusted=bool(card.get("name_trusted", True)),
         # Scored below a JSON find of equal quality: selectors break on a
         # restyle, an API contract usually does not.
         score=20.0 + min(int(card.get("matched") or 0), 10),
@@ -476,6 +532,43 @@ def _subprocess_capable_loop_policy() -> Iterator[None]:
 
 
 
+@contextmanager
+def _playwright_for_this_thread() -> Iterator[Any]:
+    """A Playwright instance usable from wherever discovery was called.
+
+    There are two callers and they need opposite things.
+
+    **From the API process** there is no pool instance, so one is started here
+    and stopped on the way out. It has to be private: the sync API is
+    greenlet-based and bound to its creating thread, and the pool is a
+    module-level singleton, so borrowing it from a web request handed to a
+    threadpool fails with "Cannot switch to a different thread" — which is
+    exactly what happened the first time this ran from the dashboard.
+
+    **From a Celery browser worker** the pool has already started one in this
+    thread and, by design, never stops it. Starting a second in that state
+    raises "It looks like you are using Playwright Sync API inside the asyncio
+    loop" — every automatic repair on a worker that had already fetched
+    anything, which is all of them after the first. So the live instance is
+    borrowed instead, and deliberately NOT stopped: the pool owns it and other
+    fetches on this thread are still using it.
+
+    Either way this call launches and closes its OWN browser, so the pool's
+    browser is untouched.
+    """
+    from app.adapters.playwright_base import browser_pool
+
+    existing = browser_pool.current_playwright
+    if existing is not None:
+        yield existing
+        return
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        yield playwright
+
+
 def _note_robots_disallowed_payloads(
     result: DiscoveryResult, payloads: list[tuple[str, Any]], target: str
 ) -> None:
@@ -549,19 +642,6 @@ def inspect_url(
     network to settle and then a little longer — returning at DOMContentLoaded
     would inspect an empty page and report that the site exposes nothing.
     """
-    # A private Playwright instance, NOT the shared browser_pool.
-    #
-    # The sync API is greenlet-based and bound to the thread that created it.
-    # The pool is a module-level singleton, so reusing it from the API's worker
-    # thread fails with "Cannot switch to a different thread" — which is
-    # exactly what happened the first time this ran from the dashboard. Celery
-    # gets away with the pool because its solo worker is one thread; a web
-    # request handed to a threadpool is not.
-    #
-    # Discovery runs once per hotel, so a browser per call is the right trade:
-    # a second of startup against a whole class of threading bug.
-    from playwright.sync_api import sync_playwright
-
     from app.adapters.playwright_base import (
         build_user_agent,
         detect_bot_wall,
@@ -583,7 +663,7 @@ def inspect_url(
     payloads: list[tuple[str, Any]] = []
     dom_cards: list[dict] = []
 
-    with _subprocess_capable_loop_policy(), sync_playwright() as playwright:
+    with _subprocess_capable_loop_policy(), _playwright_for_this_thread() as playwright:
         browser = playwright.chromium.launch(
             headless=settings.browser_headless,
             args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"],
