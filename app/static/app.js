@@ -280,6 +280,72 @@
     });
   }
 
+  // -- phone numbers -------------------------------------------------
+  /*
+   * Meta's Cloud API accepts E.164 and nothing else, so the stored value has
+   * to be +919876543210. Demanding that people TYPE it that way is a different
+   * decision, and a bad one: nobody has the country code in their head for a
+   * number they read off a business card, and a form that rejects the number
+   * as written is a form people give up on.
+   *
+   * So the field takes whatever is natural — 9876543210, 098765 43210,
+   * +91 98765-43210, 0091 98765 43210 — and rewrites it on the way out.
+   * The API stays strict; this is the one place that does the translating.
+   */
+  const DEFAULT_CC = "+91";
+
+  function normalizePhone(raw, defaultCc) {
+    const trimmed = (raw || "").trim();
+    if (!trimmed) return "";
+
+    const explicit = trimmed.charAt(0) === "+";
+    let digits = trimmed.replace(/\D/g, "");
+    if (!digits) return trimmed;
+    if (explicit) return "+" + digits;
+
+    // 00 is the other way of writing +, dialled from most of the world.
+    if (digits.slice(0, 2) === "00") return "+" + digits.slice(2);
+
+    // A leading 0 is the domestic trunk prefix and has no place once the
+    // country code goes on: 09876543210 is +919876543210, not +9109876543210.
+    digits = digits.replace(/^0+/, "");
+
+    const cc = (defaultCc || DEFAULT_CC).replace(/\D/g, "");
+    // Already carries the country code, just without the +. Length is what
+    // separates that from a local number that happens to start with 91.
+    if (digits.slice(0, cc.length) === cc && digits.length > 10) {
+      return "+" + digits;
+    }
+    return "+" + cc + digits;
+  }
+
+  function looksLikeE164(value) {
+    return /^\+[1-9]\d{7,14}$/.test(value);
+  }
+
+  /* Rewrite in place, but only when the result is plausible. Turning a
+     half-typed "98765" into "+9198765" while someone is still typing would
+     fight the person rather than help them. */
+  function tidyPhoneField(field) {
+    const tidied = normalizePhone(field.value, field.dataset.defaultCc);
+    if (tidied && tidied !== field.value && looksLikeE164(tidied)) {
+      field.value = tidied;
+    }
+  }
+
+  document.querySelectorAll("input[data-phone]").forEach(function (field) {
+    field.addEventListener("blur", function () { tidyPhoneField(field); });
+  });
+
+  /* Capture phase, so the value is already E.164 by the time the generic
+     api-form handler reads it — submitting with Enter does not always blur
+     the field first. */
+  document.addEventListener("submit", function (event) {
+    const form = event.target;
+    if (!form || !form.querySelectorAll) return;
+    form.querySelectorAll("input[data-phone]").forEach(tidyPhoneField);
+  }, true);
+
   // -- registering a recipient ---------------------------------------
   /*
    * Contact details only. Which hotels the person watches is a second call to
@@ -332,14 +398,27 @@
       const submit = form.querySelector('button[type="submit"]');
 
       const email = fieldValue(form, "email");
-      const phone = fieldValue(form, "phone_e164");
-      // The same rule the API enforces, checked before the request so it reads
-      // as a sentence rather than as a 422 about a model.
+      const phoneField = form.querySelector('[name="phone_e164"]');
+      const phone = phoneField
+        ? normalizePhone(phoneField.value, phoneField.dataset.defaultCc)
+        : "";
+
+      // The same rules the API enforces, checked before the request so they
+      // read as sentences rather than as a 422 about a regular expression.
       if (!email && !phone) {
         say(
           status,
           "A recipient needs an email address or a phone number — otherwise " +
           "there is no way to tell them anything.",
+          "error"
+        );
+        return;
+      }
+      if (phone && !looksLikeE164(phone)) {
+        say(
+          status,
+          "That does not look like a phone number — ten digits for an Indian " +
+          "mobile, or the whole number including its country code.",
           "error"
         );
         return;
@@ -401,6 +480,63 @@
       // how its channels and thresholds get edited.
       say(status, "Assigned.", "ok");
       setTimeout(function () { window.location.reload(); }, 600);
+    });
+  });
+
+  // -- assigning one person to every hotel ----------------------------
+  /*
+   * The endpoint takes one hotel at a time, so this is a loop rather than a
+   * bulk call. Kept in the browser instead of adding a bulk endpoint: each
+   * POST is separately validated and separately audited, and a partial result
+   * is honest -- three of thirty refused because the channel is unconfigured
+   * is worth seeing, not worth rolling back.
+   */
+  document.querySelectorAll("button.assign-all-hotels").forEach(function (button) {
+    button.addEventListener("click", async function () {
+      const form = button.closest("form.assign-hotel");
+      if (!form) return;
+      const status = form.querySelector(".form-status");
+      const channels = checkedChannels(form);
+      const hotelIds = Array.prototype.map.call(
+        form.querySelectorAll('select[name="hotel_id"] option[value]:not([value=""])'),
+        function (option) { return Number(option.value); }
+      );
+
+      if (!channels.length) { say(status, "Pick at least one channel.", "error"); return; }
+      if (!hotelIds.length) { say(status, "There are no active hotels.", "error"); return; }
+      if (!window.confirm(
+        "Alert " + button.dataset.name + " about all " + hotelIds.length +
+        " hotels, on " + channels.join(" and ") + "?"
+      )) return;
+
+      const original = button.textContent;
+      button.disabled = true;
+      const failures = [];
+      for (let i = 0; i < hotelIds.length; i += 1) {
+        button.textContent = (i + 1) + " of " + hotelIds.length + "…";
+        const body = Object.assign(
+          { recipient_id: Number(form.dataset.recipientId), channels: channels },
+          thresholds(form)
+        );
+        const error = await assignHotel(hotelIds[i], body);
+        if (error) failures.push(error);
+      }
+      button.textContent = original;
+
+      if (failures.length) {
+        // Named once rather than per hotel: the same refusal thirty times over
+        // is one problem, and thirty lines of it hides that.
+        say(
+          status,
+          failures.length + " of " + hotelIds.length + " could not be assigned — " +
+          failures[0],
+          "error"
+        );
+        setTimeout(function () { window.location.reload(); }, 4000);
+        return;
+      }
+      say(status, "Assigned to all " + hotelIds.length + " hotels.", "ok");
+      setTimeout(function () { window.location.reload(); }, 700);
     });
   });
 

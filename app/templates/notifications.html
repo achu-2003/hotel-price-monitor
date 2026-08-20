@@ -176,7 +176,18 @@
                     Leave both blank to be told about every confirmed change —
                     the target's own threshold has already filtered the noise.
                   </span>
-                  <button type="submit">Assign</button>
+                  <div class="row-actions">
+                    <button type="submit">Assign</button>
+                    {# The common case is "this person watches everything we
+                       monitor". Doing it a hotel at a time is thirty clicks,
+                       and the step people skip is the step that decides
+                       whether they are told anything at all. #}
+                    <button type="button" class="assign-all-hotels"
+                            data-recipient-id="{{ recipient.id }}"
+                            data-name="{{ recipient.name }}">
+                      Assign all {{ hotels|length }}
+                    </button>
+                  </div>
                   <p class="form-status" hidden></p>
                 </form>
                 {% endif %}
@@ -197,11 +208,12 @@
                   </label>
                   <label>Phone
                     <input name="phone_e164" value="{{ recipient.phone_e164 or '' }}"
-                           pattern="\+[1-9][0-9]{7,14}" maxlength="20"
-                           placeholder="+919876543210">
+                           data-phone data-default-cc="+91" maxlength="24"
+                           placeholder="9876543210">
                     <span class="muted">
-                      E.164, with the country code. WhatsApp only — there is no
-                      SMS channel.
+                      Typed any way you like; stored as E.164, which is the
+                      only form the Cloud API accepts. WhatsApp only — there is
+                      no SMS channel.
                     </span>
                   </label>
                   <div class="filters">
@@ -259,12 +271,13 @@
         <input name="email" type="email" maxlength="255" placeholder="priya@example.com">
       </label>
       <label>Phone
-        <input name="phone_e164" pattern="\+[1-9][0-9]{7,14}" maxlength="20"
-               placeholder="+919876543210">
+        <input name="phone_e164" data-phone data-default-cc="+91" maxlength="24"
+               placeholder="9876543210">
         <span class="muted">
-          E.164, with the country code — the Cloud API rejects anything else.
-          Used for WhatsApp; there is no SMS channel. Worth recording even
-          before WhatsApp is switched on.
+          9876543210, 098765 43210 or +91 98765 43210 — all fine. It is
+          rewritten to +919876543210 when you leave the field, because that is
+          the only form the Cloud API accepts. Used for WhatsApp; there is no
+          SMS channel. Worth recording even before WhatsApp is switched on.
         </span>
       </label>
       <span class="muted">

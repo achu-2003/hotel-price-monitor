@@ -164,6 +164,17 @@ class TestRegistrationForm:
     def test_it_asks_for_nothing_else(self, field):
         assert 'name="' + field + '"' not in create_form(render())
 
+    def test_the_phone_field_does_not_refuse_a_number_as_people_write_it(self):
+        """Storage is E.164; typing is not.
+
+        A ``pattern`` here made the browser reject 9876543210 before anything
+        could look at it, which is how most people write a number they are
+        reading off a card. app.js rewrites it on blur instead.
+        """
+        form = create_form(render())
+        assert "pattern=" not in form
+        assert "data-phone" in form
+
     def test_it_says_where_the_hotels_are_chosen(self):
         """Registering someone is half the job, and the half that sends
         nothing. The form has to point at the other half."""
@@ -176,7 +187,8 @@ class TestPermissions:
     @pytest.mark.parametrize(
         "marker",
         ["Add a recipient", "create-recipient", "assign-hotel",
-         "toggle-recipient", "unassign-hotel", "test-notify"],
+         "toggle-recipient", "unassign-hotel", "test-notify",
+         "assign-all-hotels"],
     )
     def test_every_mutating_control_is_admin_only(self, marker):
         assert marker in render()
