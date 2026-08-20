@@ -29,6 +29,8 @@ import jwt
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from annotated_types import Ge, Le
+from pydantic import BeforeValidator
 from sqlalchemy import ARRAY, BigInteger, func, select
 from sqlalchemy import cast as sa_cast
 
@@ -61,6 +63,45 @@ from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
 
 router = APIRouter(include_in_schema=False)
+
+
+def _blank_as_none(value: object) -> object:
+    """Read an empty query parameter as "not given".
+
+    A browser GET form submits every control it has, including the ones left
+    empty: "All hotels" is ``<option value="">``, and a cleared ``<input
+    type=date>`` sends the empty string. So pressing Filter produces
+    ``/changes?hotel_id=&date_from=&date_to=`` — and an ``int | None``
+    annotation rejects ``""`` with a 422, which reaches the person as a wall of
+    JSON where their unfiltered page should be. They are shown an error for
+    using the control the page gave them.
+
+    Fixed here rather than by stripping blanks in JavaScript before submit: the
+    query string is also something people type, edit, bookmark and share, and a
+    URL that only works when a script rewrote it first is a trap. A plain form
+    cannot omit a field, so the server has to accept what forms actually send.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+#: Optional query parameters that a browser form may legitimately submit as "".
+#:
+#: Where there is a bound, it goes INSIDE the optional and the blank-coercion
+#: outside it. That reads backwards and is the only arrangement that works:
+#: ``ge`` applied to an ``int | None`` is eventually handed the None and raises
+#: ``'>=' not supported between instances of 'NoneType' and 'int'`` — which
+#: surfaces as a 500, or as a 422 blaming the caller for a comparison the
+#: framework could not make. Nesting keeps the bound on the int alone.
+BlankableInt = Annotated[int | None, BeforeValidator(_blank_as_none)]
+BlankableDate = Annotated[date | None, BeforeValidator(_blank_as_none)]
+BlankableAdults = Annotated[
+    Annotated[int, Ge(1), Le(20)] | None, BeforeValidator(_blank_as_none)
+]
+BlankableRowId = Annotated[
+    Annotated[int, Ge(0)] | None, BeforeValidator(_blank_as_none)
+]
 log = get_logger("dashboard")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -389,9 +430,9 @@ async def matrix(
     request: Request,
     user: DashUser,
     session: DbSession,
-    check_in: date | None = None,
-    check_out: date | None = None,
-    adults: int = Query(default=2, ge=1, le=20),
+    check_in: BlankableDate = None,
+    check_out: BlankableDate = None,
+    adults: BlankableAdults = None,
 ):
     """All hotels x rooms for one night. The comparison screen.
 
@@ -400,6 +441,12 @@ async def matrix(
     """
     if user is None:
         return _redirect_to_login(request)
+
+    # Clearing the number input submits ``adults=``, which is a request for the
+    # default rather than a request for nothing -- the query below compares it
+    # to a NOT NULL column and would match no rows at all.
+    if adults is None:
+        adults = 2
 
     if check_in is None or check_out is None:
         weekend = next_weekend(local_today())
@@ -602,7 +649,7 @@ async def changes_page(
     request: Request,
     user: DashUser,
     session: DbSession,
-    hotel_id: int | None = None,
+    hotel_id: BlankableInt = None,
     hours: int = Query(default=48, ge=1, le=720),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -750,7 +797,7 @@ async def _delivery_state(session, changes) -> dict[int, tuple[str, str]]:
 async def changes_recent(
     user: DashUser,
     session: DbSession,
-    since_id: int | None = Query(default=None, ge=0),
+    since_id: BlankableRowId = None,
     limit: int = Query(default=8, ge=1, le=25),
 ) -> JSONResponse:
     """Confirmed changes newer than ``since_id``, for the on-screen popup.
