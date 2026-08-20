@@ -737,6 +737,64 @@ code {
 .error-shot img { display: block; width: 100%; }
 .error-shot figcaption { margin-top: var(--s2); font-size: 12px; }
 
+/* -- expandable recipient rows --------------------------------------- */
+/* The same disclosure as the error rows, in the page's own colours rather
+   than the red an error earns. Nothing here is a failure. */
+.grid .row-expand, .row-expand {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 0; border: 0; background: none; box-shadow: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.grid .row-expand:hover, .row-expand:hover {
+  color: var(--accent); background: none; border-color: transparent;
+  filter: none; box-shadow: none;
+}
+.row-expand .row-caret {
+  color: var(--accent); font-size: 10px; transition: transform .15s ease;
+}
+.row-expand.is-open .row-caret { transform: rotate(90deg); }
+
+.row-detail > td { background: var(--line-soft); padding: 0; }
+.row-panel { padding: var(--s4); border-left: 3px solid var(--accent); }
+/* Two columns where there is room -- who they cover on the left, who they
+   are on the right -- and stacked on a laptop rather than squeezed. */
+.row-panel-cols {
+  display: grid; gap: var(--s5);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+}
+.row-panel h3 {
+  margin: 0 0 var(--s3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted);
+}
+.row-panel .stack { max-width: none; margin-top: var(--s4); }
+.row-panel .filters { margin-bottom: 0; padding: var(--s3); }
+
+/* A table inside a table needs to read as the smaller thing. */
+.subgrid { font-size: 12px; margin-bottom: 0; }
+.subgrid th { font-size: 10px; }
+
+.channel-set {
+  display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap;
+  margin: 0; padding: var(--s3) var(--s4);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.channel-set legend {
+  padding: 0 var(--s2);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted);
+}
+/* Left unstyled outside .step-body, so a "quiet from / until" pair stacked
+   into two columns of one input each. */
+.filters label.tight, .stack label.tight {
+  flex-direction: row; align-items: center; gap: 6px; white-space: nowrap;
+}
+.filters label.tight input, .stack label.tight input { width: 96px; }
+
+select[multiple] { padding: 4px; min-height: 120px; }
+
 /* -- destructive actions -------------------------------------------- */
 /*
  * Set apart from the form above it rather than sitting in the same flow. The

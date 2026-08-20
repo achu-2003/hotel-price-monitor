@@ -42,6 +42,7 @@ from app.db.models import (
     CheckRun,
     CircuitState,
     Hotel,
+    HotelRecipient,
     HotelSource,
     MonitoringError,
     MonitorTarget,
@@ -54,6 +55,7 @@ from app.db.models import (
     UnmatchedOffer,
     User,
 )
+from app.notifications import registry
 from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
 
@@ -939,9 +941,35 @@ async def notifications_page(
     ).all()
     recipients = (await session.scalars(select(Recipient).order_by(Recipient.name))).all()
 
+    # Who each person actually covers. A recipient with no assignment receives
+    # nothing at all -- the dispatcher looks up hotel_recipients, not
+    # recipients -- so the page has to show the assignment, not just the row.
+    assignments: dict[int, list] = {}
+    for link, hotel_name in (
+        await session.execute(
+            select(HotelRecipient, Hotel.name)
+            .join(Hotel, HotelRecipient.hotel_id == Hotel.id)
+            .order_by(Hotel.name)
+        )
+    ).all():
+        assignments.setdefault(link.recipient_id, []).append((link, hotel_name))
+
+    hotels = (
+        await session.scalars(
+            select(Hotel).where(Hotel.is_active.is_(True)).order_by(Hotel.name)
+        )
+    ).all()
+
+    # Only channels this deployment can actually send on. Offering WhatsApp
+    # before the access token exists produces an assignment that looks saved
+    # and fails at the first price move, which is the worst moment to find out.
+    settings = get_settings()
     return await _render(
         request, user, session, "notifications.html",
         notifications=rows, recipients=recipients, hours=hours,
+        assignments=assignments, hotels=hotels,
+        channels=registry.available_channels(),
+        default_quiet=(settings.quiet_hours_start, settings.quiet_hours_end),
     )
 
 

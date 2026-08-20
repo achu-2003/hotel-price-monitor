@@ -1,44 +1,245 @@
 {% extends "base.html" %}
-{% block title %}Notifications · Hotel Price Monitor{% endblock %}
+{% block title %}Alerts · Hotel Price Monitor{% endblock %}
 
 {% block content %}
-<h1>Notifications</h1>
+<h1>Alerts</h1>
 <p class="muted">
-  One row is one message to one person. All of a hotel's changes inside a
-  60-second window are batched into a single message — a weekend-wide reprice
-  can produce a hundred changes, and a hundred separate alerts is how the
-  system gets muted.
+  Who gets told, and what was actually delivered. One row in the history is one
+  message to one person — all of a hotel's changes inside a 60-second window
+  are batched into a single message, because a weekend-wide reprice can produce
+  a hundred changes and a hundred separate alerts is how the system gets muted.
 </p>
+
+{% if not channels %}
+{# Nothing below can send. Said once, at the top, rather than as a surprise
+   after someone has filled the form in. #}
+<p class="note">
+  <strong>No channel is configured on this deployment.</strong> Recipients can
+  be registered, but nothing will reach them until SMTP or Resend is set up for
+  email, or the Meta access token and approved template for WhatsApp.
+</p>
+{% endif %}
 
 <section>
   <h2>Recipients</h2>
+  <p class="muted">
+    A recipient is a person; an <em>assignment</em> is the hotel they watch.
+    Registering someone sends them nothing on its own — the dispatcher looks up
+    assignments, so a recipient covering no hotels is silently inert. Expand a
+    row to assign one.
+  </p>
   <table class="grid">
-    <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Quiet hours</th><th>Status</th><th></th></tr></thead>
+    <thead>
+      <tr>
+        <th>Name</th><th>Reachable at</th><th>Quiet hours</th>
+        <th>Hotels covered</th><th>Status</th><th></th>
+      </tr>
+    </thead>
     <tbody>
       {% for recipient in recipients %}
+      {% set links = assignments.get(recipient.id, []) %}
       <tr>
-        <td>{{ recipient.name }}</td>
-        <td class="muted">{{ recipient.email or '—' }}</td>
-        <td class="muted">{{ recipient.phone_e164 or '—' }}</td>
+        <td>
+          <button type="button" class="row-expand" aria-expanded="false"
+                  aria-controls="recipient-{{ recipient.id }}">
+            <span class="row-caret" aria-hidden="true">▸</span>
+            <strong>{{ recipient.name }}</strong>
+          </button>
+        </td>
         <td class="muted">
+          {# Both addresses on one line: which channels can reach this person
+             is the question this column exists to answer. #}
+          {{ recipient.email or '—' }}<br>
+          {{ recipient.phone_e164 or '—' }}
+        </td>
+        <td class="muted nowrap">
           {% if recipient.quiet_hours_start %}
             {{ recipient.quiet_hours_start|localtime('%H:%M') }}–{{ recipient.quiet_hours_end|localtime('%H:%M') }}
           {% else %}
-            <span title="Falls back to the deployment default">default</span>
+            <span title="Falls back to the deployment default">
+              default {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+            </span>
+          {% endif %}
+        </td>
+        <td>
+          {% if links %}
+            {{ links|length }}
+            <span class="muted truncate">
+              · {{ links|map(attribute='1')|join(', ') }}
+            </span>
+          {% else %}
+            {# The failure this page exists to make visible. #}
+            <span class="pill pill-warn" title="This person receives nothing">none</span>
           {% endif %}
         </td>
         <td>
           {% if recipient.is_active %}<span class="pill pill-ok">active</span>
           {% else %}<span class="pill pill-off">inactive</span>{% endif %}
         </td>
-        <td>
+        <td class="nowrap">
           {% if is_admin %}
           {# Exercising the provider before a real price move depends on it:
-             credentials and templates fail silently until first use. #}
-          <button class="test-notify" data-recipient-id="{{ recipient.id }}" data-channel="email">
-            Send test
-          </button>
+             credentials and templates fail silently until first use. One button
+             per configured channel — WhatsApp is the one that fails quietly, so
+             testing only email would prove the wrong half. #}
+          {% for channel in channels %}
+            {% set reachable = recipient.email if channel == 'email' else recipient.phone_e164 %}
+            <button class="test-notify" data-recipient-id="{{ recipient.id }}"
+                    data-channel="{{ channel }}"
+                    {% if not reachable %}disabled
+                    title="No {{ 'email address' if channel == 'email' else 'phone number' }} on file"{% endif %}>
+              Test {{ channel }}
+            </button>
+          {% endfor %}
           {% endif %}
+        </td>
+      </tr>
+
+      <tr class="row-detail" id="recipient-{{ recipient.id }}" hidden>
+        <td colspan="6">
+          <div class="row-panel">
+            <div class="row-panel-cols">
+
+              <div>
+                <h3>Assignments</h3>
+                {% if links %}
+                <table class="grid subgrid">
+                  <thead>
+                    <tr><th>Hotel</th><th>Channels</th><th class="num">Only if ≥</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {% for link, hotel_name in links %}
+                    <tr>
+                      <td>{{ hotel_name }}</td>
+                      <td>
+                        {% for channel in link.channels %}
+                        <span class="pill pill-own">{{ channel }}</span>
+                        {% endfor %}
+                        {% if not link.is_active %}
+                        <span class="pill pill-off">paused</span>
+                        {% endif %}
+                      </td>
+                      <td class="num muted nowrap">
+                        {% if link.min_delta_abs %}{{ money(link.min_delta_abs, 'INR') }}{% endif %}
+                        {% if link.min_delta_abs and link.min_delta_pct %}·{% endif %}
+                        {% if link.min_delta_pct %}{{ link.min_delta_pct|round(0)|int }}%{% endif %}
+                        {% if not link.min_delta_abs and not link.min_delta_pct %}anything{% endif %}
+                      </td>
+                      <td>
+                        {% if is_admin %}
+                        <button class="unassign-hotel"
+                                data-hotel-id="{{ link.hotel_id }}"
+                                data-recipient-id="{{ recipient.id }}"
+                                data-hotel-name="{{ hotel_name }}">Remove</button>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% else %}
+                <p class="muted">
+                  Not assigned to anything. Nothing will ever be sent to this
+                  person until a hotel is added here.
+                </p>
+                {% endif %}
+
+                {% if is_admin and hotels and channels %}
+                <form class="stack assign-hotel" data-recipient-id="{{ recipient.id }}">
+                  <label>Add a hotel
+                    <select name="hotel_id" required>
+                      <option value="">Choose a hotel…</option>
+                      {% for hotel in hotels %}
+                      <option value="{{ hotel.id }}">{{ hotel.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <fieldset class="channel-set">
+                    <legend>Channels</legend>
+                    {% for channel in channels %}
+                    <label class="inline">
+                      <input type="checkbox" name="channels" value="{{ channel }}"
+                             {{ 'checked' if channel == 'email' else '' }}>
+                      {{ channel }}
+                    </label>
+                    {% endfor %}
+                  </fieldset>
+                  <div class="filters">
+                    <label class="tight">Only if ≥ ₹
+                      <input name="min_delta_abs" type="number" min="0" step="10" size="6">
+                    </label>
+                    <label class="tight">and ≥ %
+                      <input name="min_delta_pct" type="number" min="0" max="100" step="1" size="4">
+                    </label>
+                  </div>
+                  <span class="muted">
+                    Leave both blank to be told about every confirmed change —
+                    the target's own threshold has already filtered the noise.
+                  </span>
+                  <button type="submit">Assign</button>
+                  <p class="form-status" hidden></p>
+                </form>
+                {% endif %}
+              </div>
+
+              {% if is_admin %}
+              <div>
+                <h3>Details</h3>
+                <form class="stack api-form"
+                      data-endpoint="/api/v1/recipients/{{ recipient.id }}"
+                      data-method="PATCH">
+                  <label>Name
+                    <input name="name" value="{{ recipient.name }}" maxlength="120">
+                  </label>
+                  <label>Email
+                    <input name="email" type="email" value="{{ recipient.email or '' }}"
+                           maxlength="255" placeholder="none on file">
+                  </label>
+                  <label>Phone
+                    <input name="phone_e164" value="{{ recipient.phone_e164 or '' }}"
+                           pattern="\+[1-9][0-9]{7,14}" maxlength="20"
+                           placeholder="+919876543210">
+                    <span class="muted">
+                      E.164, with the country code. WhatsApp only — there is no
+                      SMS channel.
+                    </span>
+                  </label>
+                  <div class="filters">
+                    <label class="tight">Quiet from
+                      <input name="quiet_hours_start" type="time"
+                             value="{{ recipient.quiet_hours_start.strftime('%H:%M') if recipient.quiet_hours_start else '' }}">
+                    </label>
+                    <label class="tight">until
+                      <input name="quiet_hours_end" type="time"
+                             value="{{ recipient.quiet_hours_end.strftime('%H:%M') if recipient.quiet_hours_end else '' }}">
+                    </label>
+                  </div>
+                  <button type="submit">Save</button>
+                  <p class="form-status" hidden></p>
+                  <span class="muted">
+                    A blank field is left as it was — clearing an address is a
+                    deactivation, below.
+                  </span>
+                </form>
+
+                {# Deactivating stops delivery without deleting the history of
+                   what was already sent to them. #}
+                {% if recipient.is_active %}
+                <button class="toggle-recipient" data-recipient-id="{{ recipient.id }}"
+                        data-active="false" data-name="{{ recipient.name }}">
+                  Deactivate
+                </button>
+                {% else %}
+                <button class="toggle-recipient" data-recipient-id="{{ recipient.id }}"
+                        data-active="true" data-name="{{ recipient.name }}">
+                  Reactivate
+                </button>
+                {% endif %}
+              </div>
+              {% endif %}
+
+            </div>
+          </div>
         </td>
       </tr>
       {% else %}
@@ -46,6 +247,46 @@
       {% endfor %}
     </tbody>
   </table>
+
+  {% if is_admin %}
+  <details class="panel" id="add-recipient" {% if not recipients %}open{% endif %}>
+    <summary>Add a recipient</summary>
+    <form class="stack create-recipient">
+      <label>Name
+        <input name="name" required maxlength="120" placeholder="Priya, front office">
+      </label>
+      <label>Email
+        <input name="email" type="email" maxlength="255" placeholder="priya@example.com">
+      </label>
+      <label>Phone
+        <input name="phone_e164" pattern="\+[1-9][0-9]{7,14}" maxlength="20"
+               placeholder="+919876543210">
+        <span class="muted">
+          E.164, with the country code — the Cloud API rejects anything else.
+          Used for WhatsApp; there is no SMS channel. Worth recording even
+          before WhatsApp is switched on.
+        </span>
+      </label>
+      <span class="muted">
+        One of the two is enough to register someone, but each channel needs
+        its own: email needs the address, WhatsApp needs the number.
+      </span>
+
+      <button type="submit">Create recipient</button>
+      <p class="form-status" hidden></p>
+      {# Contact details only. Which hotels they watch, on which channel, and
+         the quiet window all live on the row above — settings someone tunes
+         later and rarely at the moment of typing in a phone number. #}
+      <span class="muted">
+        Registers the person. Expand their row to choose the hotels they watch
+        — nothing is sent to them until at least one is assigned. Quiet hours
+        default to
+        {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+        and can be changed there too.
+      </span>
+    </form>
+  </details>
+  {% endif %}
 </section>
 
 <section>

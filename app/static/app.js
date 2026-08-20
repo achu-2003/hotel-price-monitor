@@ -214,6 +214,35 @@
     };
   });
 
+  bindAction("button.unassign-hotel", function (button) {
+    // Removing the assignment, not the person: their delivery history stays,
+    // and they may still cover other hotels.
+    return {
+      path:
+        "/api/v1/hotels/" + button.dataset.hotelId +
+        "/recipients/" + button.dataset.recipientId,
+      method: "DELETE",
+      confirm:
+        "Stop telling this person about " + button.dataset.hotelName + "?",
+    };
+  });
+
+  bindAction("button.toggle-recipient", function (button) {
+    const activating = button.dataset.active === "true";
+    return {
+      path: "/api/v1/recipients/" + button.dataset.recipientId,
+      method: "PATCH",
+      body: { is_active: activating },
+      // Deactivating is silent by design — nothing errors, the messages just
+      // stop — so it is the one worth asking about.
+      confirm: activating
+        ? null
+        : "Deactivate " + button.dataset.name + "?\n\n" +
+          "Their assignments are kept, but nothing will be sent to them until " +
+          "they are reactivated.",
+    };
+  });
+
   bindAction("button.resume-target", function (button) {
     // Closing the circuit also clears the failure counter and makes the target
     // due immediately — see the API handler.
@@ -250,6 +279,130 @@
       });
     });
   }
+
+  // -- registering a recipient ---------------------------------------
+  /*
+   * Contact details only. Which hotels the person watches is a second call to
+   * POST /hotels/{id}/recipients, made from their row once they exist — and
+   * until one is made the dispatcher, which reads hotel_recipients, sends them
+   * nothing. The row says so; this form does not pretend otherwise.
+   *
+   * Not a form.api-form: that handler reloads the page 600ms after "Saved.",
+   * which would take the "not assigned to anything yet" warning with it.
+   */
+  function fieldValue(form, name) {
+    const field = form.querySelector('[name="' + name + '"]');
+    return field ? field.value.trim() : "";
+  }
+
+  function checkedChannels(form) {
+    return Array.prototype.map.call(
+      form.querySelectorAll('input[name="channels"]:checked'),
+      function (box) { return box.value; }
+    );
+  }
+
+  /** The thresholds, omitted rather than sent as null when left blank. */
+  function thresholds(form) {
+    const payload = {};
+    const abs = fieldValue(form, "min_delta_abs");
+    const pct = fieldValue(form, "min_delta_pct");
+    if (abs !== "") payload.min_delta_abs = Number(abs);
+    if (pct !== "") payload.min_delta_pct = Number(pct);
+    return payload;
+  }
+
+  function say(status, text, kind) {
+    if (!status) return;
+    status.hidden = false;
+    status.textContent = text;
+    status.className = "form-status " + (kind || "");
+  }
+
+  /** Assign one person to one hotel. Resolves to an error string, or null. */
+  async function assignHotel(hotelId, body) {
+    const result = await api("/api/v1/hotels/" + hotelId + "/recipients", "POST", body);
+    return result.ok ? null : problemText(result);
+  }
+
+  document.querySelectorAll("form.create-recipient").forEach(function (form) {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const status = form.querySelector(".form-status");
+      const submit = form.querySelector('button[type="submit"]');
+
+      const email = fieldValue(form, "email");
+      const phone = fieldValue(form, "phone_e164");
+      // The same rule the API enforces, checked before the request so it reads
+      // as a sentence rather than as a 422 about a model.
+      if (!email && !phone) {
+        say(
+          status,
+          "A recipient needs an email address or a phone number — otherwise " +
+          "there is no way to tell them anything.",
+          "error"
+        );
+        return;
+      }
+
+      const payload = { name: fieldValue(form, "name") };
+      if (email) payload.email = email;
+      if (phone) payload.phone_e164 = phone;
+
+      const original = submit.textContent;
+      submit.disabled = true;
+      submit.textContent = "Creating…";
+
+      const created = await api("/api/v1/recipients", "POST", payload);
+      submit.textContent = original;
+      if (!created.ok) {
+        submit.disabled = false;
+        say(status, problemText(created), "error");
+        return;
+      }
+
+      say(
+        status,
+        created.body.name + " created. Expand their row to choose the hotels " +
+        "they watch — nothing is sent until one is assigned.",
+        "ok"
+      );
+      // Long enough to read that sentence, because the next thing to do is in
+      // it and the reload scrolls away from this panel.
+      setTimeout(function () { window.location.reload(); }, 2500);
+    });
+  });
+
+  // -- assigning an existing recipient to one more hotel --------------
+  document.querySelectorAll("form.assign-hotel").forEach(function (form) {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const status = form.querySelector(".form-status");
+      const submit = form.querySelector('button[type="submit"]');
+      const hotelId = fieldValue(form, "hotel_id");
+      const channels = checkedChannels(form);
+
+      if (!hotelId) { say(status, "Choose a hotel.", "error"); return; }
+      if (!channels.length) { say(status, "Pick at least one channel.", "error"); return; }
+
+      submit.disabled = true;
+      const body = Object.assign(
+        { recipient_id: Number(form.dataset.recipientId), channels: channels },
+        thresholds(form)
+      );
+      const error = await assignHotel(Number(hotelId), body);
+
+      if (error) {
+        submit.disabled = false;
+        say(status, error, "error");
+        return;
+      }
+      // The endpoint upserts, so re-assigning a hotel already on the list is
+      // how its channels and thresholds get edited.
+      say(status, "Assigned.", "ok");
+      setTimeout(function () { window.location.reload(); }, 600);
+    });
+  });
 
   // -- mapping an unmatched room -------------------------------------
   document.querySelectorAll("form.resolve-unmatched").forEach(function (form) {
@@ -416,7 +569,7 @@
    * forty unresolved errors would otherwise mean forty PNGs fetched to show a
    * table nobody has clicked into yet.
    */
-  document.querySelectorAll("button.error-expand").forEach(function (button) {
+  document.querySelectorAll("button.error-expand, button.row-expand").forEach(function (button) {
     button.addEventListener("click", function () {
       const detail = document.getElementById(button.getAttribute("aria-controls"));
       if (!detail) return;

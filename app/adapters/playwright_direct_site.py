@@ -61,6 +61,12 @@ log = get_logger("adapter.direct_site")
 #: rooms selector is what actually decides whether we saw the prices.
 _ROOMS_WAIT_MS = 25_000
 
+#: How long to keep waiting AFTER the room container appears, for a price to
+#: render inside it. Separate from the container budget on purpose: the two
+#: waits answer different questions, and a sold-out page pays this one in full
+#: only when it publishes no sold-out marker to short-circuit it.
+_PRICE_WAIT_MS = 15_000
+
 
 class PlaywrightDirectSiteAdapter:
     """Reads prices from a hotel's own booking engine."""
@@ -152,6 +158,67 @@ class PlaywrightDirectSiteAdapter:
             fetch.page.wait_for_selector(selector, timeout=timeout_ms)
         except PlaywrightTimeout:
             log.info("rooms_selector_never_appeared", selector=selector)
+            return
+
+        self._wait_for_a_price(fetch, config)
+
+    def _wait_for_a_price(self, fetch: BrowserFetch, config: dict) -> None:
+        """Wait for the rooms to be PRICED, not merely present.
+
+        The room container and the prices inside it do not arrive together. One
+        real source waits on ``#t-roomTypes`` — a section that exists as soon as
+        the page renders, while its rates come from an XHR a second or two
+        later. Reading the moment the container appeared found the card, found
+        no price in it, and raised SchemaDriftError: "1 room cards matched but
+        none yielded a price. The price selector is stale."
+
+        The selector was not stale. It read the price perfectly on the next
+        check, and on eight of the eleven around it. What the alert actually
+        reported was that we looked too early — and it reported it as a site
+        redesign, which is the one thing that makes a person go and rewrite a
+        working config.
+
+        Waiting for EITHER a price or a sold-out marker, rather than just a
+        price, is what keeps this cheap. A genuinely sold-out night never
+        renders a price, and blocking the full budget on every one of those
+        would trade a false alarm for a slow check.
+
+        Never raises. A page that shows neither is left to the extraction step,
+        which is better placed to tell "sold out" from "redesigned" and already
+        does.
+        """
+        selectors = config.get("selectors") or {}
+        price_selector = selectors.get("price")
+        if not price_selector:
+            return
+
+        budget_ms = int(config.get("price_wait_ms", _PRICE_WAIT_MS))
+        markers = [m.lower() for m in (config.get("sold_out_markers") or [])]
+        deadline = time.monotonic() + budget_ms / 1000
+        checked_body_at = 0.0
+
+        while time.monotonic() < deadline:
+            try:
+                if fetch.page.query_selector(price_selector) is not None:
+                    return
+            except PlaywrightError:
+                # A selector the page cannot evaluate is drift, not a timing
+                # problem, and saying so is the extraction step's job.
+                return
+
+            # Reading the whole body is far dearer than a selector lookup, so
+            # the sold-out check runs about once a second rather than on every
+            # poll.
+            now = time.monotonic()
+            if markers and now - checked_body_at >= 1.0:
+                checked_body_at = now
+                body = _safe_text(fetch.page, "body").lower()
+                if any(marker in body for marker in markers):
+                    return
+
+            fetch.page.wait_for_timeout(250)
+
+        log.info("price_never_rendered", selector=price_selector, waited_ms=budget_ms)
 
     # -- strategy 1: the page's own JSON -----------------------------
     def _extract_json(
