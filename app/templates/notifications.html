@@ -28,6 +28,48 @@
     assignments, so a recipient covering no hotels is silently inert. Expand a
     row to assign one.
   </p>
+  {% if is_admin %}
+  <details class="panel" id="add-recipient" {% if not recipients %}open{% endif %}>
+    <summary>Add a recipient</summary>
+    <form class="stack create-recipient">
+      <label>Name
+        <input name="name" required maxlength="120" placeholder="Priya, front office">
+      </label>
+      <label>Email
+        <input name="email" type="email" maxlength="255" placeholder="priya@example.com">
+      </label>
+      <label>Phone
+        <input name="phone_e164" data-phone data-default-cc="+91" maxlength="24"
+               placeholder="9876543210">
+        <span class="muted">
+          9876543210, 098765 43210 or +91 98765 43210 — all fine. It is
+          rewritten to +919876543210 when you leave the field, because that is
+          the only form the Cloud API accepts. Used for WhatsApp; there is no
+          SMS channel. Worth recording even before WhatsApp is switched on.
+        </span>
+      </label>
+      <span class="muted">
+        One of the two is enough to register someone, but each channel needs
+        its own: email needs the address, WhatsApp needs the number.
+      </span>
+
+      <button type="submit">Create recipient</button>
+      <p class="form-status" hidden></p>
+      {# Contact details only. Which hotels they watch, on which channel, and
+         the quiet window all live on the person's own row below — settings
+         someone tunes later and rarely at the moment of typing in a phone
+         number. #}
+      <span class="muted">
+        Registers the person. Expand their row to choose the hotels they watch
+        — nothing is sent to them until at least one is assigned. Quiet hours
+        default to
+        {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+        and can be changed there too.
+      </span>
+    </form>
+  </details>
+  {% endif %}
+
   <table class="grid">
     <thead>
       <tr>
@@ -273,46 +315,6 @@
     </tbody>
   </table>
 
-  {% if is_admin %}
-  <details class="panel" id="add-recipient" {% if not recipients %}open{% endif %}>
-    <summary>Add a recipient</summary>
-    <form class="stack create-recipient">
-      <label>Name
-        <input name="name" required maxlength="120" placeholder="Priya, front office">
-      </label>
-      <label>Email
-        <input name="email" type="email" maxlength="255" placeholder="priya@example.com">
-      </label>
-      <label>Phone
-        <input name="phone_e164" data-phone data-default-cc="+91" maxlength="24"
-               placeholder="9876543210">
-        <span class="muted">
-          9876543210, 098765 43210 or +91 98765 43210 — all fine. It is
-          rewritten to +919876543210 when you leave the field, because that is
-          the only form the Cloud API accepts. Used for WhatsApp; there is no
-          SMS channel. Worth recording even before WhatsApp is switched on.
-        </span>
-      </label>
-      <span class="muted">
-        One of the two is enough to register someone, but each channel needs
-        its own: email needs the address, WhatsApp needs the number.
-      </span>
-
-      <button type="submit">Create recipient</button>
-      <p class="form-status" hidden></p>
-      {# Contact details only. Which hotels they watch, on which channel, and
-         the quiet window all live on the row above — settings someone tunes
-         later and rarely at the moment of typing in a phone number. #}
-      <span class="muted">
-        Registers the person. Expand their row to choose the hotels they watch
-        — nothing is sent to them until at least one is assigned. Quiet hours
-        default to
-        {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
-        and can be changed there too.
-      </span>
-    </form>
-  </details>
-  {% endif %}
 </section>
 
 <section>
