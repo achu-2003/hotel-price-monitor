@@ -55,6 +55,7 @@ from app.db.models import (
     UnmatchedOffer,
     User,
 )
+from app.db.models.price import SUPPRESSION_LABELS
 from app.notifications import registry
 from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
@@ -729,8 +730,16 @@ async def _delivery_state(session, changes) -> dict[int, tuple[str, str]]:
         elif name is not None:
             state[change.id] = ("queued", "pill-warn")
         elif change.notified:
-            # Processed, with nobody assigned to hear it.
-            state[change.id] = ("no one to tell", "pill-off")
+            # Processed, with nobody assigned to hear it. The dispatcher now
+            # records WHICH of the three reasons applied, because they need
+            # three different fixes -- assign somebody, reactivate them, or
+            # lower a threshold. Older rows predate the column and fall back to
+            # the vague answer rather than to a guessed specific one.
+            reason = getattr(change, "suppressed_reason", None)
+            state[change.id] = (
+                SUPPRESSION_LABELS.get(reason, "no one to tell"),
+                "pill-off",
+            )
         else:
             state[change.id] = ("pending", "pill-pending")
     return state

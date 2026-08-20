@@ -924,3 +924,18 @@ a.hcard:hover {
 .legend-soldout { background: var(--line-soft); border: 1px solid var(--line); }
 .legend-own { width: 3px; height: 13px; border-radius: 2px; background: var(--accent); }
 .legend-note { margin-left: auto; }
+
+/* A checkbox whose label is a sentence rather than a noun — "Tell them when
+   monitoring breaks". Inputs are full-width block elements everywhere else on
+   this page, which would put the box on its own line above its own meaning. */
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: var(--s2, 8px);
+  font-weight: 500;
+}
+.checkline input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+}

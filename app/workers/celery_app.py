@@ -90,9 +90,24 @@ celery_app.conf.update(
             "task": "maintenance.alert_on_silence",
             "schedule": 900.0,
         },
+        # The one alarm that works when THIS process is the thing that failed.
+        # Five minutes so a watchdog with a ten-minute grace period reports a
+        # genuine outage rather than a slow tick.
+        "heartbeat": {
+            "task": "maintenance.heartbeat",
+            "schedule": 300.0,
+            "options": {"expires": 280},
+        },
         "prune-artifacts": {
             "task": "maintenance.prune_artifacts",
             "schedule": 86_400.0,
+        },
+        # Weekly, not daily. Dropping a partition is instant and irreversible,
+        # so the sweep runs seldom enough that a wrong RETENTION_MONTHS is
+        # noticed in the logs before it has eaten a second month of history.
+        "retention-sweep": {
+            "task": "maintenance.retention_sweep",
+            "schedule": 604_800.0,
         },
         "ensure-partitions": {
             "task": "maintenance.ensure_partitions",

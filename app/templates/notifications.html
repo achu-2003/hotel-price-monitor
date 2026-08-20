@@ -226,6 +226,19 @@
                              value="{{ recipient.quiet_hours_end.strftime('%H:%M') if recipient.quiet_hours_end else '' }}">
                     </label>
                   </div>
+                  {# A different question from "which hotels do they follow".
+                     This one is about the monitor itself going quiet, which
+                     nobody hears about unless somebody is ticked here. #}
+                  <label class="checkline">
+                    <input type="checkbox" name="receives_ops_alerts" value="true"
+                           {% if recipient.receives_ops_alerts %}checked{% endif %}>
+                    Tell them when monitoring breaks
+                  </label>
+                  <span class="muted">
+                    Sent when a source stops returning prices — not when a
+                    price changes. Somebody should have this on, or a scraper
+                    can fail for a week without anyone finding out.
+                  </span>
                   <button type="submit">Save</button>
                   <p class="form-status" hidden></p>
                   <span class="muted">

@@ -34,6 +34,11 @@ from app.db.models import (
     Recipient,
     RoomType,
 )
+from app.db.models.price import (
+    SUPPRESSED_BELOW_THRESHOLD,
+    SUPPRESSED_NO_RECIPIENTS,
+    SUPPRESSED_RECIPIENT_INACTIVE,
+)
 from app.db.session import sync_session
 from app.notifications import registry
 from app.notifications.base import ChangeLine, Destination
@@ -42,6 +47,7 @@ from app.notifications.digest import (
     dedupe_key,
     group_for_digest,
     in_quiet_hours,
+    ops_dedupe_key,
     passes_recipient_threshold,
     release_time,
 )
@@ -69,12 +75,26 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         hotel_ids = {c.hotel_id for c in changes}
         assignments = _assignments_for(session, hotel_ids)
         if not assignments:
-            # Nobody is assigned to these hotels. Still mark the changes
-            # notified: leaving them pending would make them reappear in every
-            # subsequent dispatch forever.
+            # Nobody live to tell. Still mark the changes notified: leaving
+            # them pending would make them reappear in every subsequent
+            # dispatch forever. Record WHY, though -- otherwise this is
+            # indistinguishable from a delivered alert after the fact, and a
+            # deployment where nobody was ever assigned looks like a healthy one.
+            #
+            # "None at all" and "all switched off" are separated here because
+            # they send an operator to different places: one to create an
+            # assignment, the other to reactivate the one already sitting on
+            # the recipient's row. Reporting the second as the first invites a
+            # duplicate assignment that will not work either.
+            reason = (
+                SUPPRESSED_RECIPIENT_INACTIVE
+                if _any_assignment_exists(session, hotel_ids)
+                else SUPPRESSED_NO_RECIPIENTS
+            )
             for change in changes:
                 change.notified = True
-            log.info("no_recipients_assigned", hotels=sorted(hotel_ids))
+                change.suppressed_reason = reason
+            log.info("no_recipients_assigned", hotels=sorted(hotel_ids), reason=reason)
             return {"notifications": 0}
 
         facts = [
@@ -107,11 +127,19 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
 
         batches = group_for_digest(facts, assignments)
 
+        # Which changes reached a live assignment at all, and which of those
+        # cleared somebody's threshold. The difference between the two is the
+        # difference between "reactivate that person" and "lower that
+        # threshold", so they are tracked apart.
+        evaluated: set[int] = set()
+        reached: set[int] = set()
+
         for (recipient_id, hotel_id), batch_ids in batches.items():
             recipient = recipients.get(recipient_id)
             link = links.get((hotel_id, recipient_id))
             if recipient is None or link is None or not link.is_active:
                 continue
+            evaluated.update(batch_ids)
 
             kept = [
                 cid
@@ -122,6 +150,10 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
             ]
             if not kept:
                 continue
+            # Counted before the provider is involved: a notification ROW now
+            # exists for these, whether it goes out immediately, is held for
+            # quiet hours, or was already written by an earlier attempt.
+            reached.update(kept)
 
             message = render_digest(
                 hotels[hotel_id].name,
@@ -145,6 +177,12 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
 
         for change in changes:
             change.notified = True
+            if change.id in reached:
+                change.suppressed_reason = None
+            elif change.id not in evaluated:
+                change.suppressed_reason = SUPPRESSED_RECIPIENT_INACTIVE
+            else:
+                change.suppressed_reason = SUPPRESSED_BELOW_THRESHOLD
 
     for notification_id in created:
         send_notification.apply_async(args=[notification_id], queue="notify")
@@ -157,18 +195,23 @@ def _create_notification(
     session: Session,
     *,
     recipient: Recipient,
-    hotel_id: int,
+    hotel_id: int | None,
     channel: str,
     change_ids: list[int],
     subject: str,
     body: str,
     now: datetime,
+    dedupe: str | None = None,
 ) -> int | None:
     """Insert the notification row, honouring quiet hours and the dedupe key.
 
     Returns ``None`` when the row already existed (a retry) or when the
     message is being held for later — in both cases there is nothing to send
     right now.
+
+    ``dedupe`` overrides the key for messages that are not about a set of price
+    changes. An ops alert has no change ids, so every one of them would hash to
+    the same key and only the first would ever be written.
     """
     settings = get_settings()
     try:
@@ -190,7 +233,7 @@ def _create_notification(
         hotel_id=hotel_id,
         channel=channel,
         provider=provider.provider_name,
-        dedupe_key=dedupe_key(recipient.id, channel, change_ids),
+        dedupe_key=dedupe or dedupe_key(recipient.id, channel, change_ids),
         price_change_ids=change_ids,
         subject=subject[:300],
         body_rendered=body,
@@ -217,6 +260,80 @@ def _create_notification(
         return None
 
     return notification.id
+
+
+def notify_ops(
+    session: Session,
+    *,
+    subject: str,
+    body: str,
+    token: str,
+    now: datetime | None = None,
+) -> list[int]:
+    """Tell the ops contacts something about the system itself.
+
+    Price alerts answer "what did a hotel do?"; these answer "is this thing
+    still working?". They share the notifications table so an ops alert has the
+    same delivery history, retry behaviour and audit trail as everything else —
+    a separate side-channel would be the one path nobody could see had failed.
+
+    ``token`` decides how often the same problem may interrupt someone; see
+    :func:`app.notifications.digest.ops_dedupe_key`.
+
+    Returns the notification ids to enqueue. The caller enqueues them *after*
+    its transaction commits, or the worker can pick up a row that does not
+    exist yet.
+    """
+    now = now or datetime.now(UTC)
+
+    contacts = session.execute(
+        select(Recipient).where(
+            Recipient.is_active.is_(True),
+            Recipient.receives_ops_alerts.is_(True),
+        )
+    ).scalars().all()
+
+    if not contacts:
+        # Deliberately a warning. A deployment with no ops contact cannot be
+        # told that it has stopped working, which is worth saying out loud
+        # every time rather than once in a setup guide.
+        log.warning("no_ops_contacts_configured", subject=subject)
+        return []
+
+    available = set(registry.available_channels())
+    created: list[int] = []
+
+    for recipient in contacts:
+        # Email carries a list of hostnames and timestamps far better than a
+        # WhatsApp bubble, so it wins when both are possible.
+        if recipient.email and "email" in available:
+            channel = "email"
+        elif recipient.phone_e164 and "whatsapp" in available:
+            channel = "whatsapp"
+        else:
+            log.warning(
+                "ops_contact_unreachable",
+                recipient_id=recipient.id,
+                has_email=bool(recipient.email),
+                has_phone=bool(recipient.phone_e164),
+            )
+            continue
+
+        notification_id = _create_notification(
+            session,
+            recipient=recipient,
+            hotel_id=None,
+            channel=channel,
+            change_ids=[],
+            subject=subject,
+            body=body,
+            now=now,
+            dedupe=ops_dedupe_key(recipient.id, channel, token),
+        )
+        if notification_id is not None:
+            created.append(notification_id)
+
+    return created
 
 
 @shared_task(bind=True, name="notify.send", max_retries=_MAX_SEND_ATTEMPTS, ignore_result=True)
@@ -334,6 +451,17 @@ def _assignments_for(session: Session, hotel_ids: set[int]) -> dict[int, list[in
     for hotel_id, recipient_id in rows:
         assignments.setdefault(hotel_id, []).append(recipient_id)
     return assignments
+
+
+def _any_assignment_exists(session: Session, hotel_ids: set[int]) -> bool:
+    """Is there an assignment here at all, active or not?
+
+    Only asked once the active ones have already come back empty, so this runs
+    on the failure path and never on the ordinary one.
+    """
+    return session.execute(
+        select(HotelRecipient.id).where(HotelRecipient.hotel_id.in_(hotel_ids)).limit(1)
+    ).first() is not None
 
 
 def _links_by_pair(session: Session, hotel_ids: set[int]) -> dict[tuple[int, int], HotelRecipient]:

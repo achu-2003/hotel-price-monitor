@@ -148,6 +148,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Nightly verified pg_dump to ./backups on the host.
+  #
+  # Bind-mounted to a host directory on purpose, not a named volume: the whole
+  # point is to survive `docker compose down -v`, which takes named volumes
+  # with it. Uses the postgres image so pg_dump's version always matches the
+  # server's -- a newer server and an older pg_dump is a refused connection.
+  backup:
+    image: postgres:16-alpine
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    volumes:
+      - ./docker/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Development only. Catches every outgoing email so notification templates
   # can be tested without sending anything to a real address.
   mailhog:

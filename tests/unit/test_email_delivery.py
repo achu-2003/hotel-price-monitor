@@ -18,7 +18,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +55,9 @@ class _Result:
 
     def all(self):
         return list(self._rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
 
     def scalars(self):
         return _Scalars(self._rows)

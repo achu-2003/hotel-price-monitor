@@ -100,7 +100,11 @@ def alert_on_silence() -> dict[str, int]:
     as though they were current. An erroring target is visible; a silent one is
     not, which is why silence gets its own alarm.
     """
+    from app.workers.tasks_notify import notify_ops, send_notification
+
     now = datetime.now(UTC)
+    queued: list[int] = []
+
     with sync_session() as session:
         stale = monitoring.stale_targets(session, now)
         for target in stale:
@@ -114,7 +118,64 @@ def alert_on_silence() -> dict[str, int]:
                 ),
                 circuit_state=str(target.circuit_state),
             )
-    return {"stale": len(stale)}
+
+        if stale:
+            # One message per person per day per distinct set of stale targets.
+            # This task runs every fifteen minutes and an outage lasts hours;
+            # without the date-and-membership token it would send ninety-six
+            # identical emails and teach the recipient to ignore all of them.
+            # A *new* target going quiet changes the set, and does interrupt.
+            token = f"stale|{now:%Y-%m-%d}|{','.join(str(t.id) for t in sorted(stale, key=lambda t: t.id))}"
+            subject, body = _silence_message(session, stale, now)
+            queued = notify_ops(session, subject=subject, body=body, token=token, now=now)
+
+    # After the commit: a worker must never be handed an id that is still
+    # sitting in an uncommitted transaction.
+    for notification_id in queued:
+        send_notification.apply_async(args=[notification_id], queue="notify")
+
+    return {"stale": len(stale), "alerted": len(queued)}
+
+
+def _silence_message(session, stale, now: datetime) -> tuple[str, str]:
+    """Name the hotels, not the target ids.
+
+    An alert that says "targets 11, 14 and 19 are stale" requires the reader to
+    open the dashboard before they know whether to care. Naming the property
+    and how long it has been quiet lets them decide from the notification.
+    """
+    from app.db.models import Hotel, HotelSource
+
+    lines = []
+    for target in sorted(stale, key=lambda t: t.id):
+        name = f"target {target.id}"
+        link = session.get(HotelSource, target.hotel_source_id)
+        if link is not None:
+            hotel = session.get(Hotel, link.hotel_id)
+            if hotel is not None:
+                name = hotel.name
+
+        if target.last_success_at is None:
+            age = "never succeeded"
+        else:
+            hours = (now - target.last_success_at).total_seconds() / 3600
+            age = f"last succeeded {hours:.0f}h ago" if hours >= 1 else "last succeeded <1h ago"
+
+        lines.append(f"  - {name} — {age} (checks every {target.interval_minutes}m)")
+
+    count = len(stale)
+    subject = (
+        f"Price monitoring has gone quiet on "
+        f"{count} {'source' if count == 1 else 'sources'}"
+    )
+    body = (
+        "These monitor targets are enabled but have not succeeded in three "
+        "consecutive intervals.\n\n"
+        + "\n".join(lines)
+        + "\n\nThe dashboard is still showing their last known prices, which "
+        "are now stale. Check the Attention page for the underlying error.\n"
+    )
+    return subject, body
 
 
 @shared_task(name="maintenance.prune_artifacts", ignore_result=True)
@@ -143,6 +204,40 @@ def prune_artifacts() -> dict[str, int]:
     if removed:
         log.info("artifacts_pruned", removed=removed)
     return {"removed": removed}
+
+
+@shared_task(name="maintenance.heartbeat", ignore_result=True)
+def heartbeat() -> dict[str, str]:
+    """Ping an external watchdog, so somebody notices if this all stops.
+
+    Deliberately does more than ``GET``: it touches the database first. A beat
+    process that is alive but whose database is gone would otherwise keep the
+    watchdog happy while nothing works, which is a worse failure than no
+    monitoring at all -- it is monitoring that lies.
+
+    Never raises. A watchdog that cannot be reached is not a reason to fill the
+    error log; the watchdog's own alarm covers that case by definition.
+    """
+    settings = get_settings()
+    if not settings.heartbeat_url:
+        return {"status": "disabled"}
+
+    try:
+        with sync_session() as session:
+            session.execute(text("SELECT 1")).scalar_one()
+    except Exception as exc:  # noqa: BLE001 - a sick database must not ping
+        log.error("heartbeat_db_unreachable", error=str(exc))
+        return {"status": "db_unreachable"}
+
+    try:
+        import httpx
+
+        httpx.get(settings.heartbeat_url, timeout=settings.heartbeat_timeout_seconds)
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log.warning("heartbeat_ping_failed", error=str(exc))
+        return {"status": "ping_failed"}
+
+    return {"status": "ok"}
 
 
 # -- date helpers ----------------------------------------------------

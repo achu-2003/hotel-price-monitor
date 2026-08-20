@@ -152,6 +152,21 @@ class PriceObservation(Base):
         return f"<PriceObservation {self.offer_key[:12]}... @{self.checked_at:%Y-%m-%d %H:%M}>"
 
 
+#: Why a confirmed change told nobody. Each value maps to a different fix,
+#: which is the whole point of recording them separately: "assign somebody",
+#: "reactivate them", and "your threshold is too high" are three different
+#: conversations that a single ``notified`` flag made indistinguishable.
+SUPPRESSED_NO_RECIPIENTS = "no_recipients"       # nobody is assigned to the hotel
+SUPPRESSED_RECIPIENT_INACTIVE = "recipient_inactive"  # assigned, but switched off
+SUPPRESSED_BELOW_THRESHOLD = "below_threshold"   # too small for everyone assigned
+
+SUPPRESSION_LABELS = {
+    SUPPRESSED_NO_RECIPIENTS: "nobody is assigned to this hotel",
+    SUPPRESSED_RECIPIENT_INACTIVE: "everyone assigned is deactivated",
+    SUPPRESSED_BELOW_THRESHOLD: "below everyone's alert threshold",
+}
+
+
 class PriceChange(Base):
     """A confirmed change. One row here is one thing worth telling someone.
 
@@ -207,6 +222,15 @@ class PriceChange(Base):
     previous_offer_key: Mapped[str | None] = mapped_column(String(OFFER_KEY_LEN))
 
     notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Why this change told nobody, when it told nobody.
+    #
+    # ``notified`` has to be set even when there was no one to send to, or the
+    # change reappears in every dispatch sweep forever. That made "delivered"
+    # and "reached nobody" the same state from the outside. This says which.
+    #
+    # NULL means sent, or not dispatched yet -- ``notified`` separates those.
+    suppressed_reason: Mapped[str | None] = mapped_column(String(32))
 
     def __repr__(self) -> str:
         return f"<PriceChange {self.direction} {self.old_price}->{self.new_price}>"

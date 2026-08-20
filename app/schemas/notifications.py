@@ -22,6 +22,11 @@ class RecipientBase(ORMModel):
     timezone: str = "Asia/Kolkata"
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
+    receives_ops_alerts: bool = Field(
+        default=False,
+        description="Told when the monitoring itself goes quiet, which is a "
+                    "different question from which hotels they follow.",
+    )
 
     @model_validator(mode="after")
     def _reachable_somehow(self):
@@ -45,6 +50,7 @@ class RecipientUpdate(ORMModel):
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
     is_active: bool | None = None
+    receives_ops_alerts: bool | None = None
 
 
 class RecipientOut(RecipientBase):

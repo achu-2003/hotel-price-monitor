@@ -41,3 +41,7 @@ celerybeat.pid
 # probe screenshots. The HTML fixtures are kept as test material; the PNGs are
 # for a human looking at a failure once, and are large.
 tests/fixtures/probe/*.png
+
+# database dumps. Real data and, in a plain-format dump, real credentials
+# hashes — never in git. Copy these off the box instead.
+backups/

@@ -143,6 +143,19 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     metrics_enabled: bool = True
 
+    # Dead-man's switch. Beat pings this URL every few minutes; the service at
+    # the other end alerts when the pings STOP.
+    #
+    # Every other alarm in this system is raised by the system itself, which
+    # means none of them can fire when the system is the thing that is down --
+    # a stopped beat cannot notice that it stopped. This is the only check that
+    # works from outside, and it costs one HTTP GET.
+    #
+    # Point it at a healthchecks.io / Better Uptime / Cronitor ping URL. Empty
+    # disables it.
+    heartbeat_url: str = ""
+    heartbeat_timeout_seconds: float = 10.0
+
     # ── validators ───────────────────────────────────────────────────
     @field_validator("secret_key", "credential_kek")
     @classmethod

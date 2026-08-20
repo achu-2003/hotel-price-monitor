@@ -302,7 +302,50 @@ docker compose down                          # stop (data survives in volumes)
 docker compose down -v                       # stop AND delete all data
 ```
 
-`docker compose down -v` destroys the price history. There is no undo.
+`docker compose down -v` destroys the price history. There is no undo — but
+see **Backups** below, which is what makes that sentence survivable.
+
+### Backups
+
+The `backup` service dumps the database to `./backups` every night at 02:30
+UTC, and once at start-up so a fresh deployment is covered immediately. Seven
+daily dumps are kept, plus four Sunday dumps on a weekly ladder.
+
+Each dump is read back with `pg_restore --list` before it replaces yesterday's,
+so a dump truncated by a restart or a full disk is discarded rather than kept
+under a valid-looking name.
+
+```powershell
+docker compose logs backup            # did last night's run succeed?
+ls backups/daily                      # what is on hand
+```
+
+**These live on this machine.** They survive `docker compose down -v`, a bad
+migration, and a wrong `DELETE`. They do not survive the machine dying. Copy
+`./backups` somewhere else on a schedule if the history matters more than the
+hardware — and keep `CREDENTIAL_KEK` somewhere different again, or a stolen
+backup arrives with its own keys.
+
+### Proving a backup would actually restore
+
+An untested backup is a guess. Run this monthly:
+
+```bash
+./scripts/restore_db.sh --verify
+```
+
+It restores the newest dump into a throwaway database, prints the row counts
+and the newest observation timestamp, and drops it again. The timestamp is the
+number that matters: it is how much history a real restore would give back.
+
+To recover for real:
+
+```bash
+./scripts/restore_db.sh --into hotelmonitor_recovered backups/daily/<file>.dump
+```
+
+Restoring over the live database needs `--force-into`, spelled differently on
+purpose.
 
 ### What to watch
 
@@ -311,6 +354,21 @@ target that stopped checking *without failing* produces no errors at all — the
 dashboard keeps showing yesterday's prices as though they were current. That
 silent case is the one that actually costs money; an erroring target is
 already visible.
+
+You should not have to remember to look. Two things push instead:
+
+**Ops alerts.** Tick *"Tell them when monitoring breaks"* on somebody's row on
+the **Alerts** page. `maintenance.alert_on_silence` then emails them when a
+target has missed three consecutive intervals, naming the hotel and how long it
+has been quiet. At most one message per person per day for the same set of
+stale targets — a new target going quiet does interrupt again. With nobody
+ticked, this system cannot tell you it has stopped working.
+
+**The dead-man's switch.** Set `HEARTBEAT_URL` to a ping URL from
+healthchecks.io or similar. Beat pings it every five minutes, but only after
+touching the database — a process that is alive with a dead database must not
+report itself healthy. The watchdog alerts when the pings stop, which is the
+only alarm that still works when this box is the thing that failed.
 
 ---
 

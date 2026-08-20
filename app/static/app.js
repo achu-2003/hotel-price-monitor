@@ -74,6 +74,14 @@
       const status = form.querySelector(".form-status");
       const payload = {};
 
+      // An unchecked box is simply absent from FormData, so a PATCH assembled
+      // from FormData alone can switch a flag ON and never OFF again — the
+      // server sees no key and leaves the old value. Collected explicitly and
+      // first, so the loop below overwrites the checked ones with true.
+      form.querySelectorAll('input[type="checkbox"][name]').forEach(function (box) {
+        payload[box.name] = box.checked;
+      });
+
       let jsonError = null;
       new FormData(form).forEach(function (value, key) {
         if (value === "") return;

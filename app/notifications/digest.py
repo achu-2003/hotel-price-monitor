@@ -43,6 +43,23 @@ def dedupe_key(recipient_id: int, channel: str, change_ids: list[int]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def ops_dedupe_key(recipient_id: int, channel: str, token: str) -> str:
+    """Identity for an operational alert, which has no change ids to hash.
+
+    ``token`` is supplied by the caller and is what decides how often the same
+    problem may interrupt someone. ``alert_on_silence`` builds it from the set
+    of stale targets plus the date, which gives "at most one message per person
+    per day, unless a *different* target goes quiet" — the alternative being a
+    message every fifteen minutes for as long as the outage lasts, which is how
+    an alert channel gets filtered to a folder nobody opens.
+
+    Namespaced away from :func:`dedupe_key` so an ops alert can never collide
+    with a price digest: both live under one unique index.
+    """
+    payload = f"{DEDUPE_VERSION}|ops|{recipient_id}|{channel}|{token}"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def in_quiet_hours(now_local: time, start: time | None, end: time | None) -> bool:
     """Whether ``now_local`` falls inside the quiet window.
 

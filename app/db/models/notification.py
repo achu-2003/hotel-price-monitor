@@ -31,6 +31,16 @@ class Recipient(Base, TimestampMixin):
     timezone: Mapped[str] = mapped_column(String(60), default="Asia/Kolkata", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Told when the MONITORING breaks, as opposed to when a price moves.
+    #
+    # A separate flag rather than an implication of having assignments: the
+    # person who wants to know the scraper stopped is usually not the person
+    # who wants every rate move on one property, and conflating them is how
+    # useful alerts get muted.
+    receives_ops_alerts: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     # Alerts inside this window are queued and released at quiet_hours_end,
     # so a 3 AM price move does not wake anyone.
     quiet_hours_start: Mapped[time | None] = mapped_column(Time)
