@@ -98,6 +98,58 @@ def test_large_absolute_but_tiny_percent_is_ignored():
     assert d.outcome is Outcome.INSIGNIFICANT
 
 
+def test_zero_thresholds_report_every_move_but_still_debounce():
+    """The deployed configuration: DEFAULT_MIN_DELTA_ABS/PCT are both 0.
+
+    Wanted because the 50-rupee AND 2% rule stayed silent on a real 32.50 drop
+    (2.8%) -- it cleared the percentage but not the money -- and the baseline
+    only resets on a move that clears the rule, so the next comparison began
+    from a price the hotel had already stopped charging.
+
+    Blip protection moves entirely to confirm_checks: with the floors at zero
+    a one-rupee flicker is "significant", so the ONLY thing keeping it out of
+    someone's inbox is having to survive a second consecutive check. That is
+    what this pins down -- if the debounce ever regressed, zero floors would
+    turn every dynamic-pricing twitch into a notification.
+    """
+    every = Thresholds(min_delta_abs=D("0"), min_delta_pct=D("0"), confirm_checks=2)
+    baseline = SeriesState(D("1153.75"), True)
+
+    # The move that used to be invisible.
+    first = run(baseline, D("1121.25"), thresholds=every)
+    assert first.outcome is Outcome.PENDING_CONFIRMATION
+    assert not first.should_notify
+
+    # Same price again on the next check: now it counts.
+    confirmed = run(first.new_state, D("1121.25"), thresholds=every)
+    assert confirmed.outcome is Outcome.CHANGED
+    assert confirmed.should_notify
+    assert confirmed.direction is ChangeDirection.DECREASE
+    assert confirmed.delta == D("-32.50")
+
+    # A single rupee is reported too -- but only after it repeats.
+    assert run(baseline, D("1152.75"), thresholds=every).outcome is (
+        Outcome.PENDING_CONFIRMATION
+    )
+
+    # An identical reading is still "no change", not a zero-delta alert.
+    assert run(baseline, D("1153.75"), thresholds=every).outcome is Outcome.UNCHANGED
+
+
+def test_a_blip_that_reverts_stays_quiet_even_with_zero_thresholds():
+    """Flicker to a new price and straight back must not notify."""
+    every = Thresholds(min_delta_abs=D("0"), min_delta_pct=D("0"), confirm_checks=2)
+    baseline = SeriesState(D("2000"), True)
+
+    blip = run(baseline, D("1995"), thresholds=every)
+    assert blip.outcome is Outcome.PENDING_CONFIRMATION
+
+    back = run(blip.new_state, D("2000"), thresholds=every)
+    assert back.outcome is Outcome.UNCHANGED
+    assert not back.should_notify
+    assert back.new_state.pending_price is None
+
+
 def test_insignificant_moves_are_measured_against_the_confirmed_baseline():
     """Slow drift must eventually alert rather than creep past forever.
 

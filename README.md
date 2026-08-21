@@ -100,11 +100,23 @@ Source priority, highest quality first:
 
 1. **First sighting** → record it, tell nobody. Adding a hotel must not spam.
 2. **Sold out** → its own event type. *Never* "price dropped to ₹0".
-3. **Below threshold** → recorded, not alerted. A ₹20 wobble is not news.
-   (Default: must clear both ₹50 *and* 2%.)
-4. **Above threshold** → must persist across N consecutive checks before it
-   counts. Dynamic pricing and A/B tests produce one-off blips; without this
-   the alerts become noise and get ignored, which is the real failure mode.
+3. **Below threshold** → recorded, not alerted. Controlled by
+   `DEFAULT_MIN_DELTA_ABS` and `DEFAULT_MIN_DELTA_PCT`, which a move must clear
+   *both* of. **Shipped at `0`/`0`: every confirmed move is reported.**
+   The code defaults (₹50 and 2%) are the conservative choice and are still
+   what `app/config.py` falls back to with no env set.
+
+   Raising them costs more than it looks: because the baseline only resets on a
+   move that clears the rule, a drop that misses it leaves the *next* check
+   comparing against a price the hotel already stopped charging. That is how a
+   real ₹32.50 (2.8%) drop went unreported — it cleared the percentage and
+   missed the money.
+4. **Above threshold** → must persist across N consecutive checks
+   (`DEFAULT_CONFIRM_CHECKS`, shipped at 2) before it counts. Dynamic pricing
+   and A/B tests produce one-off blips; without this the alerts become noise
+   and get ignored, which is the real failure mode. With the thresholds at
+   zero this is the *only* thing standing between a ₹1 flicker and somebody's
+   inbox, so it is load-bearing — see `tests/unit/test_comparison.py`.
 
 ---
 
