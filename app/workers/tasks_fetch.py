@@ -455,14 +455,35 @@ def _handle_failure(
     if error.is_transient and attempt < error.max_retries:
         raise task.retry(exc=error, countdown=_retry_delay(error, attempt))
 
-    # The other way a redesign shows up. Where a collapsed room list means the
-    # selectors still match something wrong, drift means they match nothing at
-    # all -- the adapter refused to guess and said so. Both are repaired the
-    # same way, and only these two are: a timeout or a block means the page was
-    # never read, so re-running discovery against it would just add load to a
-    # site already refusing us.
-    if error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT:
-        _request_repair(payload, stay, reason="schema_drift", logger=logger)
+    # The other ways a redesign shows up. Where a collapsed room list means the
+    # selectors still match something wrong, these mean they match nothing at
+    # all -- the adapter refused to guess and said so.
+    #
+    #   schema drift    the configured selectors found no rooms on a page that
+    #                   loaded fine
+    #   adapter config  the config cannot describe this page at all: a strategy
+    #                   with no selectors to run, or an endpoint that has
+    #                   stopped answering and no DOM fallback behind it
+    #
+    # Both are cases where discovery has a live page in front of it and can
+    # derive a working config, which is exactly the job it does. Only these
+    # two: a timeout or a block means the page was never read, so re-running
+    # discovery against it would just add load to a site already refusing us.
+    #
+    # ``tasks_repair.REPAIRABLE`` has always listed both, and resolves both on a
+    # successful repair -- but nothing ever dispatched the second one, so that
+    # half was unreachable. A hotel whose endpoint went away sat on Attention
+    # telling an operator to run probe_site.py by hand, while the machinery to
+    # fix it without anyone's help was already installed and idle.
+    if error.error_class in (ErrorClass.PARSE_SCHEMA_DRIFT, ErrorClass.ADAPTER_CONFIG):
+        _request_repair(
+            payload,
+            stay,
+            reason=("schema_drift"
+                    if error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT
+                    else "adapter_config"),
+            logger=logger,
+        )
 
     # Permanent, or out of retries. Return normally: this hotel is done for
     # this cycle, and nothing else should be affected by it.

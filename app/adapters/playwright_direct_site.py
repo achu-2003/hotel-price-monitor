@@ -40,6 +40,7 @@ from playwright.sync_api import Error as PlaywrightError, TimeoutError as Playwr
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import dig, offer_from_mapping, render_template
 from app.adapters.parsing import (
+    card_looks_sold_out,
     declared_tax_basis,
     detect_currency,
     looks_sold_out,
@@ -316,18 +317,45 @@ class PlaywrightDirectSiteAdapter:
 
         sold_out_selector = selectors.get("sold_out")
         card_text = _element_text(card)
-        is_available = not (
+        sold_out = bool(
             (sold_out_selector and card.query_selector(sold_out_selector) is not None)
             or looks_sold_out(card_text)
         )
 
         price_text = _text_in(card, selectors["price"])
         price = None
-        if is_available:
-            # parse_price raises rather than returning None: a listed room with
-            # an unreadable price is drift, and a guessed number is worse than
-            # a gap.
-            price = parse_price(price_text, field_name=f"price of {name[:40]!r}")
+        if not sold_out:
+            # A room with no readable price is one of two things, and the
+            # difference is the difference between a business fact and a bug.
+            #
+            # Until now it was always read as the bug. A hotel with all three
+            # of its rooms showing "Not Available" -- no price on the page
+            # anywhere, nothing to read and nothing wrong -- reported "none
+            # yielded a price, the price selector is stale", which is a false
+            # accusation against a selector that was working, and it repeated
+            # every half hour for as long as the hotel stayed full.
+            #
+            # The card gets asked before it is condemned. Only a card that
+            # produced no price is asked, so a room that says "Breakfast not
+            # available" beside a rate is unaffected -- see
+            # card_looks_sold_out for why that ordering is the safeguard.
+            #
+            # parse_price, not parse_price_or_none: the non-raising variant
+            # drops the lower bound to zero, which would turn the "1" out of
+            # "1 extra-large double bed" into a one-rupee room instead of the
+            # out-of-range refusal that catches a selector on the wrong
+            # element.
+            try:
+                price = parse_price(price_text, field_name=f"price of {name[:40]!r}")
+            except SchemaDriftError:
+                if not card_looks_sold_out(card_text):
+                    # A listed room with an unreadable price and no
+                    # explanation is drift, and a guessed number is worse
+                    # than a gap.
+                    raise
+                sold_out = True
+
+        is_available = not sold_out
 
         exclusive_text = _text_in(card, selectors.get("price_exclusive"))
         taxes_text = _text_in(card, selectors.get("taxes_fees"))

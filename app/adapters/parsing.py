@@ -80,6 +80,31 @@ def detect_currency(text: str, default: str = "INR") -> str:
     return default
 
 
+# Phrases that mean "this room cannot be booked" ONLY when they are read
+# inside a single room card, and only when that card shows no price.
+#
+# Bare "Not Available" is the one that matters and the one that cannot go in
+# the list above. Applied to a whole page it is caught by the legend every
+# eZee booking engine prints -- "* Available  x Not Available" -- which is on
+# the page whether the hotel is full or empty, so a page that had simply
+# failed to load its rates would be recorded as a hotel with no rooms, and
+# whoever watches that hotel would be told so.
+#
+# The two conditions are what make it safe, and both are load-bearing:
+#
+#   inside one card   the legend, the filter sidebar and the footer are all
+#                     outside every card, so none of them can vote
+#   showing no price  "Breakfast not available" on a bookable room is a real
+#                     sentence on real booking pages. A card with a readable
+#                     price is available, whatever else it says.
+_CARD_SOLD_OUT_MARKERS = _SOLD_OUT_MARKERS + (
+    "not available",
+    "unavailable",
+    "not bookable",
+    "no rooms",
+)
+
+
 def looks_sold_out(text: str) -> bool:
     """Whether a page fragment is announcing no availability.
 
@@ -88,6 +113,17 @@ def looks_sold_out(text: str) -> bool:
     """
     lowered = " ".join(text.lower().split())
     return any(marker in lowered for marker in _SOLD_OUT_MARKERS)
+
+
+def card_looks_sold_out(card_text: str) -> bool:
+    """Whether ONE room card, already known to show no price, says why.
+
+    Do not call this on anything wider than a single card, and do not call it
+    on a card whose price parsed -- see :data:`_CARD_SOLD_OUT_MARKERS` for
+    what each of those conditions is holding back.
+    """
+    lowered = " ".join((card_text or "").lower().split())
+    return any(marker in lowered for marker in _CARD_SOLD_OUT_MARKERS)
 
 
 def _normalise_number(raw: str) -> str:

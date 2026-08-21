@@ -537,6 +537,23 @@ _FIND_CARDS_JS = r"""
     const nameSel = resolved.selector;
     nameText = resolved.sampleText || nameText;
 
+    // A room's name and its price are never the same element.
+    //
+    // When both resolve to one selector the scan has not found a room card.
+    // It has found a repeated pair of sibling elements and read one of them
+    // twice -- and because the two reads agree, every check downstream
+    // agrees with them. A real hotel was configured with
+    // "div.vres-chk-box > span" as BOTH its room_name and its price, which
+    // is the amenity filter sidebar: "Air conditioning", "Show Only
+    // Available Rooms". Corroboration passed, because the number the scan
+    // called a price was a room size printed on the page it was checked
+    // against, and the repair wrote itself into the database as "1 rooms,
+    // 1/1 prices confirmed".
+    //
+    // Nothing further downstream can catch this, because from there the
+    // candidate is indistinguishable from a correct one. It has to die here.
+    if (nameSel === priceSel) continue;
+
     // Each card is read on its own terms. Resolving the SAMPLE's elements for
     // every card reported one room's price three times -- three rows, three
     // identical numbers, and a verification step with nothing to catch.

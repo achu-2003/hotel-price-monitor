@@ -43,7 +43,11 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
 
-from app.adapters.parsing import MAX_PLAUSIBLE_PRICE, MIN_PLAUSIBLE_PRICE
+from app.adapters.parsing import (
+    MAX_PLAUSIBLE_PRICE,
+    MIN_PLAUSIBLE_PRICE,
+    looks_sold_out,
+)
 from app.core.logging import get_logger
 
 log = get_logger("discovery")
@@ -111,6 +115,11 @@ class Candidate:
     room_count: int = 0
     #: How many of the prices were also found in the page's visible text.
     corroborated: int = 0
+    #: Of those, how many were printed with a currency beside them. A bare
+    #: number corroborates against whatever printed it -- a room size, a guest
+    #: count, a distance to the beach -- so this is the count that actually
+    #: distinguishes a rate from a coincidence. See :meth:`is_strongly_verified`.
+    corroborated_marked: int = 0
     score: float = 0.0
     #: DOM only. Whether the element the names came from is a heading or a
     #: self-declared name container, as opposed to something that merely scored
@@ -158,6 +167,33 @@ class Candidate:
             return False
         return True
 
+    @property
+    def is_strongly_verified(self) -> bool:
+        """Verified, AND at least one price was printed with a currency.
+
+        The bar for OVERWRITING a configuration a monitor is already running
+        on, where :meth:`is_verified` is the bar for proposing one to a person.
+        The two differ because the failure they have to survive differs: a
+        first-time discovery is read by whoever pasted the URL, and an
+        automatic repair is read by nobody.
+
+        What makes ``is_verified`` insufficient on its own is that
+        corroboration cannot tell a price from the number that happens to sit
+        where a price would. "Room Size 134 m2" contains 134; a candidate that
+        called 134 a price was confirmed against the page, because 134 really
+        is on the page. Requiring a currency marker beside it is the smallest
+        check that separates the two, and it is the one booking pages always
+        satisfy for real rates -- printing money without saying which money is
+        not something a page selling rooms does.
+
+        A page that prints no currency anywhere therefore cannot produce an
+        automatic repair at all. That is deliberate: on such a page nothing
+        distinguishes a rate from any other three-digit number, and the
+        outstanding alert -- which sends a person to look -- is a better
+        outcome than a confident guess that survives until someone notices.
+        """
+        return self.is_verified and self.corroborated_marked > 0
+
     def as_adapter_config(self, json_fragment: str) -> dict[str, Any]:
         if self.kind == "dom":
             # CSS selectors are far more fragile than a JSON contract: a
@@ -184,6 +220,12 @@ class DiscoveryResult:
     others: list[Candidate] = field(default_factory=list)
     page_prices: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Set when the page itself could not be read from, as opposed to read and
+    #: found wanting -- see :func:`why_the_page_cannot_be_learned`. Carried as
+    #: a field rather than left in ``notes`` because a caller has to act on the
+    #: distinction: "come back when this hotel has a room to sell" is not a
+    #: failed attempt, and must not be charged as one.
+    unlearnable: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -361,20 +403,48 @@ def _evaluate(url: str, path: str, rows: list[dict]) -> Candidate | None:
     return candidate
 
 
+def _price_digits(raw: str) -> str:
+    """A price reduced to the digits two spellings of it have in common.
+
+    "₹1,202.50" from the page and 1202.5 from a payload are the same number
+    and share no textual form until the separators and the trailing zeros are
+    gone. Only trailing zeros AFTER a decimal point: 3200 must not become 32.
+    """
+    cleaned = raw.replace(",", "").strip()
+    if "." in cleaned:
+        cleaned = cleaned.rstrip("0").rstrip(".")
+    return cleaned
+
+
 def _corroborate(candidate: Candidate, page_text: str) -> None:
     """Count how many of the prices actually appear on the page.
 
     This is the step that separates a finding from a guess. Digits are compared
     without separators, so ₹1,202.50 in the DOM matches 1202.5 in the payload.
+
+    Counted twice, against two different haystacks. ``corroborated`` is the
+    original test -- the number is somewhere in the page's text -- and it is
+    what a human-reviewed discovery is judged on. ``corroborated_marked`` is
+    the same test against only those numbers the page printed a currency
+    beside, which is what an unattended repair is judged on. See
+    :meth:`Candidate.is_strongly_verified` for why the difference matters.
     """
     haystack = re.sub(r"[,\s]", "", page_text)
-    hits = 0
+    marked = {
+        _price_digits(match.group("digits"))
+        for match in _MARKED_PRICE_RE.finditer(page_text or "")
+    }
+
+    hits = marked_hits = 0
     for price in candidate.sample_prices:
         whole = str(int(price))
         exact = f"{price.normalize():f}".rstrip("0").rstrip(".")
         if whole in haystack or exact in haystack:
             hits += 1
+        if _price_digits(whole) in marked or _price_digits(exact) in marked:
+            marked_hits += 1
     candidate.corroborated = hits
+    candidate.corroborated_marked = marked_hits
 
 
 def analyse(
@@ -425,8 +495,79 @@ def _has_usable_json(payloads: list[tuple[str, Any]], page_text: str) -> bool:
     return analyse(payloads, page_text).ok
 
 
+#: A number on a booking page is only provably a price when the page writes a
+#: currency beside it. Matched against the page's visible text, where the
+#: symbol and the digits are frequently in separate elements -- eZee renders
+#: "<p>Rs</p><span>3,200.00</span>" -- so anything short and non-numeric is
+#: allowed to sit between them.
+_MARKED_PRICE_RE = re.compile(
+    r"(?:₹|Rs\.?|INR|\$|€|£)[^0-9]{0,3}(?P<digits>[0-9][0-9,]{2,}(?:\.[0-9]{1,2})?)"
+)
+
+
+def why_the_page_cannot_be_learned(page_text: str) -> str | None:
+    """Why deriving selectors from this page would produce fiction, or None.
+
+    THE FAILURE THIS EXISTS TO STOP
+    ===============================
+    A real hotel was sold out for the night being checked. All three of its
+    rooms rendered "Not Available" and the page carried, in 206 KB of HTML,
+    not one price. Auto-repair ran against it anyway, found the "Filter Your
+    Search" sidebar, and stored the amenity checkboxes as the room list:
+
+        room_card  div.vres-check-gro
+        price      div.vres-chk-box > span
+        note       "Auto-repaired: 1 rooms, 1/1 prices confirmed"
+
+    Every guard downstream passed it. With no currency marker anywhere, the
+    scan's own ``pageHasMarkedPrices`` test had already switched off and bare
+    numbers were admissible, so "Room Size 134 m2" supplied a price;
+    corroboration then confirmed that 134 appears on the page, which it does.
+    A confident, self-certified, entirely invented configuration -- and it
+    replaced a working one, so the hotel could not recover on its own once it
+    had rooms to sell again.
+
+    The mistake was not in any single check. It was running discovery at all
+    against a page with nothing to discover. A booking page that is showing
+    rates always prints at least one of them with a currency beside it; one
+    that prints none is either sold out or has not loaded, and in both cases
+    the honest answer is "come back later", not a guess that outlives the
+    night it was made on.
+
+    Returning a reason rather than a bool because the caller puts it in front
+    of a person: "no prices on the page" and "the page says sold out" send an
+    operator to different places.
+    """
+    text = " ".join((page_text or "").split())
+    if not text:
+        return "the page rendered no text at all"
+    if not _MARKED_PRICE_RE.search(text):
+        # Checked BEFORE the sold-out wording, because it is the stronger
+        # signal and the one that holds when a page says nothing at all about
+        # why it is empty.
+        return (
+            "the page does not show a single price with a currency beside it, "
+            "so nothing here can be told from a room size or a guest count"
+        )
+    if looks_sold_out(text):
+        return "the page says it has no availability"
+    return None
+
+
 def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
     """Turn a DOM scan hit into the same Candidate the JSON route produces."""
+
+    name_selector = str(card.get("name_selector") or "")
+    price_selector = str(card.get("price_selector") or "")
+    if not name_selector or not price_selector:
+        return None
+    if name_selector == price_selector:
+        # Refused in the scan as well, where a rejected candidate lets the
+        # next one be considered. Repeated here because this is the function
+        # that turns a scan hit into something writable, and a config naming
+        # one element as both the room and its rate has never once been
+        # right -- see the identical guard in dom_discovery.py.
+        return None
 
     names = [str(n).strip() for n in (card.get("names") or []) if str(n).strip()]
     prices: list[Decimal] = []
@@ -440,10 +581,7 @@ def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
     return Candidate(
         source_url=source_url,
         rooms_path=card["card"],
-        fields={
-            "room_name": card["name_selector"],
-            "price": card["price_selector"],
-        },
+        fields={"room_name": name_selector, "price": price_selector},
         kind="dom",
         sample_names=names[:8],
         sample_prices=prices[:8],
@@ -662,6 +800,7 @@ def inspect_url(
 
     payloads: list[tuple[str, Any]] = []
     dom_cards: list[dict] = []
+    unlearnable: str | None = None
 
     with _subprocess_capable_loop_policy(), _playwright_for_this_thread() as playwright:
         browser = playwright.chromium.launch(
@@ -711,10 +850,19 @@ def inspect_url(
             # does not. The DOM scan is the fallback for pages that render
             # their prices server-side -- common among small independent
             # hotels, and the case that made this necessary.
-            if not _has_usable_json(payloads, page_text):
-                from app.adapters.dom_discovery import find_room_cards
+            # A page with no rates on it cannot teach anything about where
+            # its rates live, and the scan is not built to notice that -- it
+            # is built to find repetition, and an empty booking page is still
+            # full of repetition. See why_the_page_cannot_be_learned.
+            unlearnable = why_the_page_cannot_be_learned(page_text)
 
-                dom_cards = find_room_cards(page)
+            if not _has_usable_json(payloads, page_text):
+                if unlearnable:
+                    log.info("dom_scan_skipped", url=target[:120], why=unlearnable)
+                else:
+                    from app.adapters.dom_discovery import find_room_cards
+
+                    dom_cards = find_room_cards(page)
         finally:
             try:
                 browser.close()
@@ -724,25 +872,47 @@ def inspect_url(
     result = analyse(payloads, page_text)
 
     if not result.ok and dom_cards:
-        dom_candidate = _candidate_from_dom(dom_cards[0], target)
+        # Every candidate, not just the best-ranked one. The ranking is built
+        # from repetition and card size, which are good hints and are not the
+        # test -- the test is corroboration. Taking only the first meant a
+        # page whose top candidate failed to corroborate was reported as
+        # unreadable while the candidate directly behind it was correct.
+        dom_candidate = None
+        for card in dom_cards:
+            considered = _candidate_from_dom(card, target)
+            if considered is None:
+                continue
+            _corroborate(considered, page_text)
+            if considered.is_verified:
+                dom_candidate = considered
+                break
+
         if dom_candidate is not None:
-            _corroborate(dom_candidate, page_text)
-            if dom_candidate.is_verified:
-                # A verified DOM finding beats an unverified JSON one: the
-                # whole point of corroboration is that confirmed beats
-                # plausible, whatever it was read from.
-                if result.best is not None:
-                    result.others.insert(0, result.best)
-                result.best = dom_candidate
-                result.notes.append(
-                    f"No usable JSON, so the rendered page was scanned: found "
-                    f"{dom_candidate.room_count} room cards."
-                )
-            else:
-                result.notes.append(
-                    "Scanned the rendered page too, but its prices could not be "
-                    "confirmed against what the page displays."
-                )
+            # A verified DOM finding beats an unverified JSON one: the whole
+            # point of corroboration is that confirmed beats plausible,
+            # whatever it was read from.
+            if result.best is not None:
+                result.others.insert(0, result.best)
+            result.best = dom_candidate
+            result.notes.append(
+                f"No usable JSON, so the rendered page was scanned: found "
+                f"{dom_candidate.room_count} room cards."
+            )
+        else:
+            result.notes.append(
+                f"Scanned the rendered page too: none of its "
+                f"{len(dom_cards)} candidate room lists had prices that could "
+                f"be confirmed against what the page displays."
+            )
+
+    if not result.ok and unlearnable:
+        result.unlearnable = unlearnable
+        result.notes.append(
+            f"Did not read selectors off the rendered page: {unlearnable}. "
+            f"Nothing was changed. Try again when the page is showing rates — "
+            f"a configuration derived from an empty page would outlive the "
+            f"night that emptied it."
+        )
 
     _note_robots_disallowed_payloads(result, payloads, target)
 

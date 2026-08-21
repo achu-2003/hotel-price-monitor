@@ -139,8 +139,35 @@ def rediscover_source(
         return {"status": "failed", "why": str(exc)[:200]}
 
     # ── 3. decide ────────────────────────────────────────────────────
-    if not result.ok or result.best is None:
+    # ``is_strongly_verified`` rather than ``result.ok``.
+    #
+    # A repair is the one place discovery writes to live configuration with
+    # nobody reading the result, so it answers to a higher bar than the same
+    # finding shown to the person who pasted the URL: at least one of the
+    # prices has to have been printed with a currency beside it. A hotel sold
+    # out for the night otherwise supplies a page with no rates on it, and
+    # every remaining check will happily confirm that some number on that page
+    # is a number on that page. See Candidate.is_strongly_verified.
+    #
+    # The cost of the higher bar is a repair that declines and leaves the
+    # alert standing. That is the outcome this is for.
+    if result.unlearnable:
+        # Not a failed repair: there was nothing on the page to repair FROM.
+        # The attempt is handed back so a hotel that sells out for a few
+        # nights does not spend its budget on nights nobody could have read,
+        # and arrive at "this needs a person" having never been looked at.
+        _finish(hotel_source_id, outcome="unlearnable", now=now, refund=True)
+        logger.info("rediscovery_unlearnable", why=result.unlearnable[:200])
+        return {"status": "unlearnable", "why": result.unlearnable[:200]}
+
+    if not result.ok or result.best is None or not result.best.is_strongly_verified:
         note = (result.notes[-1] if result.notes else "nothing usable was found")
+        if result.ok and result.best is not None:
+            note = (
+                "found a room list, but not one of its prices was printed with "
+                "a currency beside it, so none of them can be told from an "
+                "ordinary number on the page"
+            )
         _finish(hotel_source_id, outcome="unverified", now=now)
         logger.info("rediscovery_unverified", why=note[:200])
         return {"status": "unverified", "why": note[:200]}
@@ -151,7 +178,8 @@ def rediscover_source(
     discovered["discovery_note"] = (
         f"Auto-repaired {now.date().isoformat()}: {best.room_count} rooms, "
         f"{best.corroborated}/{len(best.sample_prices)} prices confirmed "
-        f"against the page."
+        f"against the page, {best.corroborated_marked} of them printed with a "
+        f"currency."
     )
 
     with sync_session() as session:
@@ -305,8 +333,14 @@ def _retire_invented_rooms(
     return removed
 
 
-def _finish(hotel_source_id: int, *, outcome: str, now: datetime) -> None:
-    """Record how an attempt ended without touching the configuration itself."""
+def _finish(
+    hotel_source_id: int, *, outcome: str, now: datetime, refund: bool = False
+) -> None:
+    """Record how an attempt ended without touching the configuration itself.
+
+    ``refund`` hands the attempt back, for an ending that proved nothing about
+    whether this source can be repaired -- see ``RepairState.settle``.
+    """
     with sync_session() as session:
         row = session.execute(
             select(HotelSource)
@@ -320,6 +354,8 @@ def _finish(hotel_source_id: int, *, outcome: str, now: datetime) -> None:
         # claimed. This only records how it ended.
         row.adapter_config = {
             **config,
-            **RepairState.from_config(config).settle(now, outcome=outcome),
+            **RepairState.from_config(config).settle(
+                now, outcome=outcome, refund=refund
+            ),
         }
         session.commit()

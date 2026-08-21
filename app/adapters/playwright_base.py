@@ -47,6 +47,7 @@ from app.config import get_settings
 from app.core.errors import (
     BlockedError,
     BrowserCrashError,
+    FetchError,
     NetworkError,
     TimeoutError_,
 )
@@ -386,8 +387,27 @@ def open_page(
 
         try:
             yield BrowserFetch(page=page, json_responses=captured)
-        except Exception:
+        except Exception as exc:
             shot, html = save_artifacts(page, f"error-{artifact_label}")
+            # The paths go ONTO the error, not only into the log.
+            #
+            # ``record_error`` fills the screenshot_path and html_path columns
+            # from the error's context, and the only place that ever set them
+            # was the bot-wall branch twenty lines up. So every drift, every
+            # config failure, every crash wrote a screenshot and an HTML dump
+            # to disk -- and then the Attention page told whoever opened it
+            # "No screenshot or HTML was captured. Either this failed before
+            # the page loaded, or the artifacts have been pruned." Both halves
+            # untrue, about evidence sitting on disk the whole time, in a
+            # message that reads as a dead end rather than a plumbing gap.
+            #
+            # ``setdefault`` because an adapter that already recorded its own
+            # artifacts knows better than this generic handler does.
+            if isinstance(exc, FetchError):
+                if shot is not None:
+                    exc.context.setdefault("screenshot_path", shot)
+                if html is not None:
+                    exc.context.setdefault("html_path", html)
             log.warning(
                 "fetch_failed_artifacts_saved",
                 url=url, screenshot_path=shot, html_path=html,

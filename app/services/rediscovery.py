@@ -106,14 +106,38 @@ class RepairState:
         return self._fragment(now, outcome="started", attempts=self.attempts + 1)
 
     def settle(
-        self, now: datetime, *, outcome: str, reset: bool = False
+        self,
+        now: datetime,
+        *,
+        outcome: str,
+        reset: bool = False,
+        refund: bool = False,
     ) -> dict[str, Any]:
         """Record how the claimed attempt ended, without spending another.
 
         ``reset`` on a successful repair, so a source that breaks again years
         later gets a fresh budget rather than inheriting an exhausted one.
+
+        ``refund`` gives the attempt back. The budget is small because it is
+        rationing something specific -- a browser driven against someone
+        else's site, in the belief that the site can be read and we are
+        failing to read it. An attempt that ended because the PAGE had nothing
+        on it to read spent none of that: no selector was tried and found
+        wanting, and the same page tomorrow, with the hotel's rooms back on
+        sale, is a different page.
+
+        Charging those attempts is how a hotel that sells out for three nights
+        running exhausts a budget meant for three failed repairs, and arrives
+        at "this one needs a person" having never once been read. The cooldown
+        still applies, so a refund cannot become a retry loop.
         """
-        return self._fragment(now, outcome=outcome, attempts=0 if reset else self.attempts)
+        if refund:
+            attempts = max(0, self.attempts - 1)
+        elif reset:
+            attempts = 0
+        else:
+            attempts = self.attempts
+        return self._fragment(now, outcome=outcome, attempts=attempts)
 
     def _fragment(self, now: datetime, *, outcome: str, attempts: int) -> dict[str, Any]:
         return {
