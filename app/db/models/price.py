@@ -78,6 +78,25 @@ class PriceSeries(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
 
     # ── current state ────────────────────────────────────────────────
+    # TWO PRICES, AND THEY ANSWER DIFFERENT QUESTIONS
+    # ==============================================
+    # ``current_price``  what the hotel is asking RIGHT NOW -- every check
+    #                    overwrites it, unconditionally. This is the number to
+    #                    show a person, because it is the one they will see if
+    #                    they open the hotel's own booking page.
+    # ``last_price``     the CONFIRMED baseline the change detector compares
+    #                    against. It deliberately does not move for a wobble
+    #                    below the alert threshold, so that a run of small
+    #                    drifts accumulates against one fixed point and
+    #                    eventually alerts, instead of each step being waved
+    #                    through relative to the last.
+    #
+    # Displaying ``last_price`` conflated the two, and the dashboard drifted
+    # away from the hotel's own page and stayed there: a 2.8% drop that missed
+    # the 50-rupee floor was recorded correctly in price_observations, left
+    # last_price untouched, and so never reached the screen. The gap only ever
+    # widened, because nothing short of a threshold-clearing move closed it.
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     last_price_basis: Mapped[PriceBasis] = mapped_column(
         pg_enum(PriceBasis, "price_basis"), default=PriceBasis.INCLUSIVE, nullable=False
@@ -96,7 +115,7 @@ class PriceSeries(Base):
     pending_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     def __repr__(self) -> str:
-        return f"<PriceSeries {self.offer_key[:12]}... {self.currency} {self.last_price}>"
+        return f"<PriceSeries {self.offer_key[:12]}... {self.currency} {self.current_price}>"
 
 
 class PriceObservation(Base):

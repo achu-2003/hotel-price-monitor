@@ -32,7 +32,19 @@ class CurrentPriceOut(ORMModel):
     meal_plan: str | None
     refundable: bool | None
     currency: str
-    last_price: Decimal | None
+    current_price: Decimal | None = Field(
+        default=None,
+        description="What the source is asking as of the last check. This is "
+                    "the number to display: it tracks every check, including "
+                    "moves too small to alert on.",
+    )
+    last_price: Decimal | None = Field(
+        default=None,
+        description="The confirmed baseline the change detector compares "
+                    "against. Deliberately does not move for a change below "
+                    "the alert threshold, so successive small drifts "
+                    "accumulate against one fixed point. Not a display value.",
+    )
     last_price_basis: PriceBasis
     is_available: bool
     first_seen_at: datetime

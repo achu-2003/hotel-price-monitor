@@ -42,7 +42,22 @@
 </div>
 
 {# ── setup path: shown only while something is genuinely missing ───── #}
-{% if is_admin and not has_prices %}
+{# Collected before, but nothing for tonight. Distinct from "never set up":
+   the setup path below would be actively misleading here, because the source
+   and target already exist and it is collection that has stopped. #}
+{% if not has_prices and had_past_prices %}
+<section>
+  <h2>Nothing collected for tonight</h2>
+  <p class="muted">
+    This hotel has price history, but no check has succeeded for
+    {{ today }} yet. Earlier nights are kept in the history and are not shown
+    here, because they are not what the hotel is charging now. See the run log
+    below.
+  </p>
+</section>
+{% endif %}
+
+{% if is_admin and not has_prices and not had_past_prices %}
 <section class="setup">
   <h2 class="setup-title">Get this hotel collecting prices</h2>
   <ol class="steps">
@@ -161,21 +176,21 @@
 {% if has_prices %}
 <section>
   <h2>
-    Current prices
+    Tonight&rsquo;s prices
+    <span class="muted">{{ prices[0][0].check_in }} &rarr; {{ prices[0][0].check_out }}</span>
     {% if standing_rate %}
     <span class="pill pill-pending" title="This site publishes one rate for all dates">current rate</span>
     {% endif %}
   </h2>
   <table class="grid">
-    <thead><tr><th>Stay</th><th>Room</th><th class="num">Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
+    <thead><tr><th>Room</th><th class="num">Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
     <tbody>
       {% for series, room_name in prices %}
       <tr>
-        <td class="nowrap">{{ series.check_in }} → {{ series.check_out }}</td>
         <td>{{ room_name }}{% if series.meal_plan %} <span class="muted">{{ series.meal_plan }}</span>{% endif %}</td>
         <td class="num">{{ series.adults }}A</td>
         <td class="num strong">
-          {% if series.is_available %}{{ money(series.last_price, series.currency) }}
+          {% if series.is_available %}{{ money(series.current_price, series.currency) }}
           {% else %}<span class="pill pill-soldout">sold out</span>{% endif %}
           {% if series.pending_price %}
           {# Moved enough to matter, not yet confirmed across the required

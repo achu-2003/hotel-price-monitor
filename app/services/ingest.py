@@ -518,6 +518,19 @@ def _apply_comparison(
     # change".
     first_seen_at = series.pending_since or ctx.checked_at
 
+    # Unconditionally, whatever the comparison decided. This is the number the
+    # dashboard and the API show, and it must equal what the hotel's own
+    # booking page is displaying right now -- including for a move too small to
+    # alert on, which is precisely the case that used to never reach a screen.
+    #
+    # Kept distinct from `last_price` on purpose: see PriceSeries for why the
+    # confirmed baseline has to stay put while this one tracks every check.
+    # A sold-out check carries no price, and blanking the last known rate on
+    # one would lose it for as long as the room stays unavailable, so the
+    # previous value is left standing and `is_available` carries the state.
+    if observation.price is not None:
+        series.current_price = observation.price
+
     series.last_price = new_state.last_price
     series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available

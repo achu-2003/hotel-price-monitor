@@ -360,7 +360,7 @@ async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
                 Hotel.id,
                 Hotel.name,
                 func.count(PriceSeries.offer_key),
-                func.min(PriceSeries.last_price),
+                func.min(PriceSeries.current_price),
                 func.max(PriceSeries.last_checked_at),
             )
             .join(
@@ -478,7 +478,7 @@ async def matrix(
             {
                 "room_name": room_name,
                 "offer_key": series.offer_key,
-                "price": series.last_price,
+                "price": series.current_price,
                 "currency": series.currency,
                 "is_available": series.is_available,
                 "changed_recently": (
@@ -561,15 +561,40 @@ async def hotel_detail(
             .where(HotelSource.hotel_id == hotel_id)
         )
     ).all()
+    # TONIGHT ONLY -- the same rule the hotels list and the matrix already use.
+    #
+    # Every target is a rolling one-night window, so a fresh series is created
+    # each day and yesterday's is frozen at whatever the last check before
+    # check-in found. Unfiltered and sorted oldest-first, this table therefore
+    # led with the oldest night on record: days stale, and disagreeing with the
+    # hotel's own booking page. That is the failure this product exists to
+    # catch, showing up on its own dashboard.
+    #
+    # Restricting the screen to today is what makes every number on it
+    # checkable against the hotel's site right now. Past nights are not
+    # deleted -- the history is in price_observations, and the Changes screen
+    # still reports last night's closing price against tonight's opening one.
+    today = local_today(get_settings().timezone)
     prices = (
         await session.execute(
             select(PriceSeries, RoomType.name)
             .join(RoomType, PriceSeries.room_type_id == RoomType.id)
-            .where(PriceSeries.hotel_id == hotel_id)
-            .order_by(PriceSeries.check_in, RoomType.sort_order)
+            .where(PriceSeries.hotel_id == hotel_id, PriceSeries.check_in == today)
+            .order_by(RoomType.sort_order, PriceSeries.adults)
             .limit(100)
         )
     ).all()
+
+    # Whether anything was ever collected for another night, so a hotel that has
+    # stopped collecting says so instead of falling back to the first-run setup
+    # path and looking like it was never configured.
+    had_past_prices = bool(
+        await session.scalar(
+            select(func.count())
+            .select_from(PriceSeries)
+            .where(PriceSeries.hotel_id == hotel_id, PriceSeries.check_in != today)
+        )
+    )
     runs = (
         await session.scalars(
             select(CheckRun)
@@ -590,7 +615,7 @@ async def hotel_detail(
         hotel=hotel, sources=sources, rooms=rooms, targets=targets,
         prices=prices, runs=runs, now=datetime.now(UTC),
         all_sources=all_sources, attached_ids=attached_ids,
-        today=local_today(),
+        today=today, had_past_prices=had_past_prices,
         known_engines=known_engines(),
     )
 

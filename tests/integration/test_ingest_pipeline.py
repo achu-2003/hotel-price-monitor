@@ -169,6 +169,65 @@ class TestDebounce:
         # Still in the history, so the chart shows the wobble.
         assert session.scalar(select(func.count(PriceObservation.id))) == 2
 
+        series = session.scalars(select(PriceSeries)).one()
+        # The confirmed baseline holds, so that a run of small drifts is
+        # measured against one fixed point and eventually clears the threshold.
+        assert series.last_price == Decimal("3000.00")
+        # ...but the DISPLAYED price is what the hotel is actually asking. This
+        # is the number on the dashboard, and it has to agree with the hotel's
+        # own booking page even when the move was too small to alert on.
+        assert series.current_price == Decimal("2980.00")
+
+    def test_display_price_tracks_every_check_while_the_baseline_holds(
+        self, session, hotel_fixture
+    ):
+        """A run of sub-threshold drops, none of which ever alerts.
+
+        The regression this pins down: the dashboard read `last_price`, so a
+        hotel that walked its rate down in small steps was shown a number it
+        had long stopped charging, and the gap only widened -- nothing short of
+        one threshold-clearing move ever closed it.
+        """
+        base = datetime.now(UTC)
+        for minutes, price in ((0, "3000"), (30, "2970"), (60, "2945"), (90, "2920")):
+            ingest_fetch_result(
+                session,
+                _result(_offer(price=price)),
+                _context(hotel_fixture, checked_at=base + timedelta(minutes=minutes)),
+            )
+            session.flush()
+
+        series = session.scalars(select(PriceSeries)).one()
+        # Each step was under both floors against the 3000 baseline, so nothing
+        # was ever confirmed and nobody was told.
+        assert session.scalar(select(func.count(PriceChange.id))) == 0
+        assert series.last_price == Decimal("3000.00")
+        # The screen shows the live rate regardless.
+        assert series.current_price == Decimal("2920.00")
+
+    def test_a_sold_out_check_keeps_the_last_known_display_price(
+        self, session, hotel_fixture
+    ):
+        """Availability is carried by `is_available`, not by blanking the rate.
+
+        Wiping it would lose the last known price for as long as the room
+        stayed unavailable, and the dashboard would have nothing to show beside
+        the "sold out" pill.
+        """
+        base = datetime.now(UTC)
+        ingest_fetch_result(session, _result(_offer()), _context(hotel_fixture, checked_at=base))
+        session.flush()
+        ingest_fetch_result(
+            session,
+            _result(_offer(price=None, available=False)),
+            _context(hotel_fixture, checked_at=base + timedelta(minutes=30)),
+        )
+        session.flush()
+
+        series = session.scalars(select(PriceSeries)).one()
+        assert series.is_available is False
+        assert series.current_price == Decimal("3000.00")
+
 
 class TestAvailability:
     def test_sold_out_is_its_own_event_not_a_drop_to_zero(self, session, hotel_fixture):
@@ -235,7 +294,28 @@ class TestAvailability:
 
 
 class TestRoomMatching:
-    def test_an_unknown_room_is_queued_not_guessed(self, session, hotel_fixture):
+    """A name nothing matches is a NEW room, and gets one automatically.
+
+    This used to queue an ``UnmatchedOffer`` and record no price at all until
+    somebody mapped the name by hand. Two things went wrong with that, and the
+    second is the expensive one: the room had no price for as long as the queue
+    went unread, and the question put to the operator was "which of these
+    existing rooms is it?" -- whose obliging answer merges two different rooms
+    into one series.
+
+    That is not hypothetical. On a real property "Premium Room (Mahogany)" was
+    hand-mapped onto "Deluxe Room (Maple)", after which a night when the site
+    happened to show the premium room was published as a price rise on the
+    deluxe one.
+
+    The two mistakes are not symmetrical. A split series is a visible duplicate
+    anyone can merge afterwards; a merged series is invisible and corrupts the
+    history permanently. Creating always splits and never merges.
+    """
+
+    def test_an_unknown_room_gets_its_own_room_type_and_a_price(
+        self, session, hotel_fixture
+    ):
         summary = ingest_fetch_result(
             session,
             _result(_offer(name="Presidential Villa with Private Pool")),

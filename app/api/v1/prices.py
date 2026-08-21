@@ -294,7 +294,7 @@ async def price_matrix(
             MatrixCell(
                 room_name=room_name,
                 offer_key=series.offer_key,
-                price=series.last_price,
+                price=series.current_price,
                 is_available=series.is_available,
                 last_checked_at=series.last_checked_at,
                 changed_recently=(
