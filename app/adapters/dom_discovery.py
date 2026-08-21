@@ -196,7 +196,28 @@ _FIND_CARDS_JS = r"""
     return null;
   };
 
-  const selectorFor = (el) => {
+  // ``boundary`` is the room card the selector will be run INSIDE. Passing it
+  // is what keeps the result usable, because the selector is validated here
+  // and executed somewhere else, by a different CSS engine:
+  //
+  //   here          card.querySelector(sel)  -- the browser's own, which
+  //                 matches the selector against the whole document and then
+  //                 keeps the hits under `card`. An ancestor named in the
+  //                 selector may therefore sit OUTSIDE the card, including
+  //                 being the card.
+  //   in production ElementHandle.query_selector(sel) -- Playwright's engine,
+  //                 which evaluates strictly within the card's subtree. The
+  //                 card is not a descendant of itself, so the same selector
+  //                 matches nothing.
+  //
+  // "div.room-card > h2" is exactly that shape, and it is what the wrapper
+  // branch below produced for an unclassed <h2> sitting directly in the card.
+  // Discovery confirmed it against three cards and stored it; every check
+  // afterwards read no name from any card and reported the PRICE selector as
+  // stale, because that is what the aggregate error blamed. A real hotel sat
+  // broken on that, with auto-repair re-deriving the same dead selector and
+  // reporting "no change".
+  const selectorFor = (el, boundary) => {
     // A hand-written test hook beats anything inferred: it exists precisely to
     // be selected on, and it is the one thing on a hashed-class page that the
     // site intends to keep stable. Checked BEFORE classes for that reason.
@@ -220,8 +241,13 @@ _FIND_CARDS_JS = r"""
     // built from the FIRST card's room name, and therefore matching nothing in
     // the second. Every room after the first vanished from a page that listed
     // them all. The wrapper's class describes the shape instead of one room.
+    //
+    // Only an INTERMEDIATE wrapper will do. When the parent is the card
+    // itself the qualified form cannot be run inside that card, and the bare
+    // tag is both correct and what the adapter will resolve -- there is only
+    // one element to find, and it is a direct child.
     const parent = el.parentElement;
-    if (parent) {
+    if (parent && parent !== boundary) {
       const parentSig = signature(parent);
       if (parentSig.includes(".")) {
         return `${parentSig} > ${el.tagName.toLowerCase()}`;
@@ -382,7 +408,24 @@ _FIND_CARDS_JS = r"""
   // they are generated hashes. The second is not a lesser option here -- on a
   // styled-components site it is the only one that will still work after the
   // next deploy.
-  const usable = (s) => s && (s.includes(".") || s.includes("[") || s.startsWith("text="));
+  // A bare tag is meaningless page-wide, which is what this gate is for --
+  // except for a heading, which is only ever read INSIDE one room card.
+  //
+  // "h2" scoped to a card is precise, and on a page whose classes are hashed
+  // it is more durable than any of them. Rejecting it sent an unclassed <h2>
+  // to textSelectorFor, which builds a pattern out of the FIRST card's
+  // wording: "text=/Standard/i" then read "Standard Room" from card one and
+  // the paragraph of prose from cards two and three, because Playwright's
+  // text engine returns the smallest element containing a match and no card
+  // but the first contains that word at all.
+  //
+  // Only headings, and only h1-h6: a bare "div" or "span" really is too loose,
+  // and the price branch has no cross-card check to catch it. Names do --
+  // resolveNameSelector reads every sampled card through the candidate and
+  // drops one that resolves nowhere or says the same thing everywhere -- so
+  // the behavioural test does the filtering this cosmetic one cannot.
+  const usable = (s) => s && (s.includes(".") || s.includes("[")
+                              || s.startsWith("text=") || /^h[1-6]$/.test(s));
 
   // Playwright's "text=" selectors are not CSS and cannot be handed to
   // querySelector, so a card is read through one only by falling back to the
@@ -427,7 +470,7 @@ _FIND_CARDS_JS = r"""
   const resolveNameSelector = (cards, candidates) => {
     let fallback = null;
     for (const cand of candidates || []) {
-      let sel = selectorFor(cand.el);
+      let sel = selectorFor(cand.el, cards[0]);
       if (!usable(sel)) sel = textSelectorFor(cand.el);
       if (!usable(sel)) continue;
 
@@ -527,7 +570,7 @@ _FIND_CARDS_JS = r"""
     let priceEl = picked.priceEl, nameEl = picked.nameEl, nameText = picked.nameText;
     if (!priceEl || !nameEl) continue;
 
-    let priceSel = selectorFor(priceEl);
+    let priceSel = selectorFor(priceEl, sample);
     if (!usable(priceSel)) priceSel = textSelectorFor(priceEl);
     if (!usable(priceSel)) continue;
 

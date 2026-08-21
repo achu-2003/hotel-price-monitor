@@ -292,19 +292,38 @@ class PlaywrightDirectSiteAdapter:
             )
 
         offers: list[NormalizedOffer] = []
+        reasons: list[str] = []
         for card in cards:
             try:
                 offers.append(self._offer_from_card(card, selectors, context))
             except SchemaDriftError as exc:
                 # One malformed card must not discard the other four rooms that
                 # parsed cleanly. The gap is visible; a lost page load is not.
+                reasons.append(str(exc))
                 log.warning("room_card_skipped", reason=str(exc), hotel=context.hotel_name)
 
         if not offers:
+            # Report the selector that ACTUALLY failed.
+            #
+            # This message used to blame the price selector unconditionally.
+            # When every card had failed on its NAME instead -- which is what
+            # happens when the name selector cannot resolve inside a card at
+            # all -- it accused a price selector that was reading the page
+            # perfectly, and sent whoever read the alert to the one part of the
+            # config that was not broken.
+            blamed = (
+                "room_name" if all("carried no name" in r for r in reasons) else "price"
+            )
             raise SchemaDriftError(
-                f"{len(cards)} room cards matched but none yielded a price. "
-                f"The price selector {selectors.get('price')!r} is stale.",
-                context={"cards": len(cards), "hotel": context.hotel_name},
+                f"{len(cards)} room cards matched but none could be read. "
+                f"The {blamed} selector {selectors.get(blamed)!r} is stale: "
+                f"{reasons[0] if reasons else 'no card produced a usable offer'}.",
+                context={
+                    "cards": len(cards),
+                    "hotel": context.hotel_name,
+                    "failing_selector": blamed,
+                    "reasons": reasons[:3],
+                },
             )
 
         log.info("offers_from_dom", count=len(offers), hotel=context.hotel_name)
