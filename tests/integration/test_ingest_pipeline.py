@@ -25,7 +25,6 @@ from app.db.models import (
     PriceObservation,
     PriceSeries,
     RoomType,
-    RoomTypeAlias,
     UnmatchedOffer,
 )
 from app.services.comparison import Outcome, Thresholds
@@ -323,64 +322,124 @@ class TestRoomMatching:
         )
         session.flush()
 
-        assert summary.offers_unmatched == 1
-        assert summary.offers_matched == 0
-        # No series, no observation, no guess.
-        assert session.scalar(select(func.count(PriceSeries.offer_key))) == 0
+        assert summary.offers_matched == 1
+        assert summary.offers_unmatched == 0
 
-        unmatched = session.scalars(select(UnmatchedOffer)).one()
-        assert unmatched.raw_room_name == "Presidential Villa with Private Pool"
-        assert unmatched.occurrence_count == 1
+        created = session.scalars(
+            select(RoomType).where(RoomType.name == "Presidential Villa with Private Pool")
+        ).one()
+        assert created.hotel_id == hotel_fixture["hotel"].id
+        # After the room it already knew, so a dashboard someone has learned
+        # does not reshuffle when a new room turns up.
+        assert created.sort_order > hotel_fixture["room"].sort_order
 
-    def test_repeat_sightings_increment_rather_than_duplicate(self, session, hotel_fixture):
-        for _ in range(3):
+        # The price is recorded, which is the whole point: it used to be lost.
+        series = session.scalars(
+            select(PriceSeries).where(PriceSeries.room_type_id == created.id)
+        ).one()
+        assert series.current_price == Decimal("3000.00")
+
+        # Nothing is asked of a human.
+        assert session.scalar(select(func.count(UnmatchedOffer.id))) == 0
+
+    def test_repeat_sightings_reuse_the_room_rather_than_duplicating_it(
+        self, session, hotel_fixture
+    ):
+        """The second sighting must match by canonical name, not create again."""
+        # Explicit, spaced timestamps: observations are unique on
+        # (offer_key, checked_at) with ON CONFLICT DO NOTHING, so three
+        # ingests sharing a wall clock reading collapse into fewer rows and
+        # the count below fails for a reason that has nothing to do with
+        # room matching.
+        base = datetime.now(UTC)
+        for minutes in (0, 30, 60):
             ingest_fetch_result(
-                session, _result(_offer(name="Mystery Suite")), _context(hotel_fixture)
+                session,
+                _result(_offer(name="Mystery Suite")),
+                _context(hotel_fixture, checked_at=base + timedelta(minutes=minutes)),
             )
             session.flush()
 
-        unmatched = session.scalars(select(UnmatchedOffer)).one()
-        assert unmatched.occurrence_count == 3
+        rooms = session.scalars(
+            select(RoomType).where(RoomType.name == "Mystery Suite")
+        ).all()
+        assert len(rooms) == 1
+        # One series, three observations -- a genuine history, not three
+        # orphaned rooms each seen once.
+        series = session.scalars(
+            select(PriceSeries).where(PriceSeries.room_type_id == rooms[0].id)
+        ).one()
+        assert session.scalar(
+            select(func.count(PriceObservation.id)).where(
+                PriceObservation.offer_key == series.offer_key
+            )
+        ) == 3
 
-    def test_a_rename_is_queued_with_a_suggestion_rather_than_guessed(
+    def test_two_new_rooms_in_one_fetch_each_get_their_own(self, session, hotel_fixture):
+        """The room created for the first offer must be visible to the second."""
+        ingest_fetch_result(
+            session,
+            _result(_offer(name="Garden Villa"), _offer(name="Treehouse", price="4100")),
+            _context(hotel_fixture),
+        )
+        session.flush()
+
+        names = set(session.scalars(select(RoomType.name)).all())
+        assert {"Garden Villa", "Treehouse"} <= names
+        assert session.scalar(select(func.count(PriceSeries.offer_key))) == 2
+
+    def test_a_rename_splits_rather_than_merging_onto_the_near_miss(
         self, session, hotel_fixture
     ):
-        """The rename case: "Deluxe Room" becomes "Deluxe Double Room".
+        """"Deluxe Room" becomes "Deluxe Double Room": ambiguous, so split.
 
-        Resolving this automatically would be convenient, and the matcher
-        deliberately refuses. The shape of the change -- one qualifier added --
-        is identical to what separates "Deluxe Double Occupancy" from "Super
-        Deluxe Double Occupancy": two different rooms at very different rates,
-        which collapsed into a single price series on a real property until
-        score_similarity() started taking the minimum of two ratios.
+        The shape of this change -- one qualifier added -- is identical to what
+        separates "Deluxe Double Occupancy" from "Super Deluxe Double
+        Occupancy": two different rooms at very different rates. The rename
+        scores 63.2 against the stored canonical name and that sibling scores
+        88.5, so any threshold that merged the first would also merge the
+        second.
 
-        The numbers leave no room to have it both ways. The rename scores 63.2
-        against the stored canonical name and the sibling scores 88.5, so any
-        threshold that accepted the first would also merge the second. Both go
-        to a person.
-
-        What the pipeline owes the operator is therefore not a guess but a
-        one-click mapping, which is what this pins: the offer is queued WITH
-        the room type it most likely belongs to, and nothing is written to the
-        price history until someone confirms it.
+        Since the two cases cannot be told apart, the pipeline takes the
+        recoverable one. If it really was a rename the result is a duplicate
+        room on the hotel page, which is visible and mergeable; the alternative
+        silently welds two rooms together forever.
         """
         summary = ingest_fetch_result(
             session, _result(_offer(name="Deluxe Double Room")), _context(hotel_fixture)
         )
         session.flush()
 
-        assert summary.offers_matched == 0
+        assert summary.offers_matched == 1
+        created = session.scalars(
+            select(RoomType).where(RoomType.name == "Deluxe Double Room")
+        ).one()
+        assert created.id != hotel_fixture["room"].id
+
+        # The existing room is untouched -- nothing was folded into it.
+        assert session.scalar(
+            select(func.count(PriceSeries.offer_key)).where(
+                PriceSeries.room_type_id == hotel_fixture["room"].id
+            )
+        ) == 0
+
+    def test_a_name_that_normalises_to_nothing_is_still_queued(
+        self, session, hotel_fixture
+    ):
+        """The one case a person is still needed for.
+
+        With no canonical form there is nothing to match the room by next time,
+        so creating one would produce a room type that could never be found
+        again -- a fresh one on every single check.
+        """
+        summary = ingest_fetch_result(
+            session, _result(_offer(name="---")), _context(hotel_fixture)
+        )
+        session.flush()
+
         assert summary.offers_unmatched == 1
-
-        unmatched = session.scalars(select(UnmatchedOffer)).one()
-        assert unmatched.raw_room_name == "Deluxe Double Room"
-        # The near miss is carried, so the dashboard can offer the mapping.
-        assert unmatched.suggested_room_type_id == hotel_fixture["room"].id
-        assert 0.60 <= float(unmatched.suggested_confidence) < 0.90
-
-        # Nothing enters the price history on a guess.
         assert session.scalar(select(func.count(PriceSeries.offer_key))) == 0
-        assert session.scalar(select(func.count(RoomTypeAlias.id))) == 0
+        assert session.scalars(select(UnmatchedOffer)).one().raw_room_name == "---"
 
 
 class TestIdempotency:
@@ -670,37 +729,41 @@ class TestOffersThatCollapseIntoOneRoom:
 
 
 class TestTheNeedsMappingQueueClearsItself:
-    """An offer that starts matching must retire its own queue entry.
+    """A queued name that starts matching must retire its own entry.
 
-    Nothing used to close these, so the queue only ever grew. A name is queued
-    when no room type matches it; once a matching room type exists -- an
-    operator adding one, or the pipeline seeding a hotel's rooms after an
-    automatic repair -- the offer resolves cleanly and its prices are recorded
-    correctly, while the row asking a human to map it stays open forever.
+    Almost everything is auto-created now, so the queue only ever holds names
+    with no canonical form. Those can still be resolved -- by an operator
+    renaming the offer's room, or by the site itself starting to publish a
+    usable name -- and the row has to close when that happens.
 
-    That is how six rooms came to sit on the Attention page under "no
-    candidate" while those exact six rooms were already being monitored
-    correctly on the hotel page.
+    Nothing used to close them, so the queue only ever grew. That is how six
+    rooms came to sit on the Attention page under "no candidate" while those
+    exact six rooms were already being monitored correctly on the hotel page.
     """
 
-    def test_a_queued_name_is_closed_once_it_resolves(self, session, hotel_fixture):
-        # Seen once under a name nothing matches: queued for a human.
-        ingest_fetch_result(
-            session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
-        )
-        session.flush()
-        queued = session.scalars(select(UnmatchedOffer)).one()
-        assert queued.resolved_at is None
+    def test_a_row_queued_before_auto_creation_closes_on_the_next_sighting(
+        self, session, hotel_fixture
+    ):
+        """The migration path off the old behaviour.
 
-        # The room now exists -- however it came to exist.
-        session.add(
-            RoomType(
-                hotel_id=hotel_fixture["hotel"].id,
-                name="Garden Villa",
-                canonical_name="garden villa",
-            )
+        Every name queued while the pipeline still asked a human is still
+        sitting in this table. The next time the site shows that room the
+        pipeline creates it and records its price, so the row asking for a
+        mapping is work that no longer needs doing and must close itself --
+        otherwise the Attention page stays full of rooms that are already
+        being monitored correctly, and stops being read.
+        """
+        queued = UnmatchedOffer(
+            hotel_source_id=hotel_fixture["hotel_source"].id,
+            raw_room_name="Garden Villa",
+            normalized_name="garden villa",
+            first_seen_at=datetime.now(UTC),
+            last_seen_at=datetime.now(UTC),
+            occurrence_count=4,
         )
+        session.add(queued)
         session.flush()
+        assert queued.resolved_at is None
 
         ingest_fetch_result(
             session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
@@ -708,15 +771,16 @@ class TestTheNeedsMappingQueueClearsItself:
         session.flush()
 
         session.refresh(queued)
-        assert queued.resolved_at is not None, (
-            "the offer resolves now, so the row asking a human to map it is "
-            "work that no longer needs doing"
-        )
+        assert queued.resolved_at is not None
+        # And it closed because the room now genuinely exists.
+        assert session.scalars(
+            select(RoomType).where(RoomType.name == "Garden Villa")
+        ).one() is not None
 
     def test_a_name_that_still_does_not_match_stays_queued(self, session, hotel_fixture):
         """Only the row for the name that actually resolved is closed."""
         ingest_fetch_result(
-            session, _result(_offer(name="Garden Villa")), _context(hotel_fixture)
+            session, _result(_offer(name="---")), _context(hotel_fixture)
         )
         session.flush()
 
@@ -727,4 +791,4 @@ class TestTheNeedsMappingQueueClearsItself:
         still_open = session.scalars(
             select(UnmatchedOffer).where(UnmatchedOffer.resolved_at.is_(None))
         ).all()
-        assert [row.raw_room_name for row in still_open] == ["Garden Villa"]
+        assert [row.raw_room_name for row in still_open] == ["---"]

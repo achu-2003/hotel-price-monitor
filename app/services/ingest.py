@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -290,14 +290,112 @@ def _resolve_room(
         _clear_unmatched(session, match, offer, ctx)
         return match.room_type_id
 
-    _record_unmatched(session, match, offer, ctx)
-    log.info(
-        "offer_unmatched",
-        hotel_id=ctx.hotel_id,
-        raw_name=offer.raw_room_name[:80],
-        best_score=match.score,
+    # A name with nothing left after normalising ("---", "  ") cannot become a
+    # room type, because there is no canonical form to match it by next time.
+    # This is the one case still worth a person's attention.
+    if not match.normalized:
+        _record_unmatched(session, match, offer, ctx)
+        log.info(
+            "offer_unmatched",
+            hotel_id=ctx.hotel_id,
+            raw_name=offer.raw_room_name[:80],
+            best_score=match.score,
+        )
+        return None
+
+    # Nothing matched, so this is a room we have not seen. Give it one.
+    #
+    # The site is the authority on what its rooms are called -- the same
+    # reasoning _seed_room_types already applies on a hotel's first fetch,
+    # applied continuously instead of only once.
+    #
+    # WHY CREATING BEATS ASKING
+    # =========================
+    # This used to record an UnmatchedOffer and return None, which dropped the
+    # price entirely until a human mapped the name. Two things went wrong, and
+    # the second is the expensive one:
+    #
+    #   * the room had no price at all for as long as the queue went unread;
+    #   * the question put to the person was "which of these existing rooms is
+    #     it?", and the obliging answer merges two different rooms into one
+    #     series. That is how "Premium Room (Mahogany)" came to be recorded as
+    #     "Deluxe Room (Maple)" on a real property -- after which a night when
+    #     the site showed the premium room was published as a price rise on
+    #     the deluxe one.
+    #
+    # The two mistakes are not symmetrical, and the room_matching docstring
+    # already says which way to lean: a split series is a visible duplicate
+    # that anyone can merge afterwards, while a merged series is invisible and
+    # corrupts the history permanently. Creating always splits and never
+    # merges, so it is the safe default -- and unlike a queue, it needs
+    # nobody to be reading.
+    #
+    # What reaches here is genuinely unfamiliar: the fuzzy matcher still
+    # absorbs renames and cosmetic variants at 90, and an exact alias -- which
+    # includes every manual decision -- still wins outright above.
+    room_type_id = _create_room_type_for(session, offer, match.normalized, ctx)
+    aliases[match.normalized] = room_type_id
+    candidates.append((room_type_id, match.normalized))
+    _clear_unmatched(session, match, offer, ctx)
+
+    if match.suggestion is not None:
+        # Close enough to be a rename rather than a new room, but not close
+        # enough to act on. Recorded loudly rather than queued: the price is
+        # already being collected under its own room, and if the two really are
+        # one room the duplicate is visible on the hotel page and mergeable.
+        log.warning(
+            "room_type_auto_created_near_existing",
+            hotel_id=ctx.hotel_id,
+            raw_name=offer.raw_room_name[:80],
+            room_type_id=room_type_id,
+            resembles=match.suggestion.canonical_name[:80],
+            score=match.suggestion.score,
+        )
+    else:
+        log.info(
+            "room_type_auto_created",
+            hotel_id=ctx.hotel_id,
+            raw_name=offer.raw_room_name[:80],
+            room_type_id=room_type_id,
+            best_score=match.score,
+        )
+    return room_type_id
+
+
+def _create_room_type_for(
+    session: Session, offer: NormalizedOffer, canonical: str, ctx: IngestContext
+) -> int:
+    """Create the room type for a name this hotel has not shown before.
+
+    ``ON CONFLICT DO NOTHING`` against the (hotel_id, canonical_name) unique
+    constraint, then read the id back: two workers can meet the same new room
+    in the same cycle, and losing that race must return the winner's row rather
+    than fail a fetch that was otherwise fine.
+
+    ``sort_order`` puts new rooms after the ones already known, so a room
+    appearing mid-life does not reshuffle a dashboard someone has learned.
+    """
+    next_order = session.scalar(
+        select(func.coalesce(func.max(RoomType.sort_order), -1) + 1).where(
+            RoomType.hotel_id == ctx.hotel_id
+        )
     )
-    return None
+    session.execute(
+        pg_insert(RoomType)
+        .values(
+            hotel_id=ctx.hotel_id,
+            name=offer.raw_room_name.strip()[:200],
+            canonical_name=canonical[:200],
+            sort_order=next_order or 0,
+        )
+        .on_conflict_do_nothing(index_elements=["hotel_id", "canonical_name"])
+    )
+    return session.scalar(
+        select(RoomType.id).where(
+            RoomType.hotel_id == ctx.hotel_id,
+            RoomType.canonical_name == canonical[:200],
+        )
+    )
 
 
 def _record_alias(session: Session, match, offer: NormalizedOffer, ctx: IngestContext) -> None:
