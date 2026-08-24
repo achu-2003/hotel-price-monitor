@@ -16,6 +16,8 @@ recorded payload with no network.
 """
 from __future__ import annotations
 
+import re
+
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -64,18 +66,38 @@ def _or_default(default: Any, path: str) -> Any:
     return default
 
 
+#: ``{check_in}`` or ``{check_in:%d-%m-%Y}``. The format is an strftime pattern
+#: and applies only to dates; anything else ignores it.
+_PLACEHOLDER_RE = re.compile(r"\{(?P<key>[a-z_]+)(?::(?P<fmt>[^{}]+))?\}")
+
+
 def render_template(template: str, **values: Any) -> str:
     """Substitute ``{check_in}``-style placeholders in a URL template.
 
     ``str.format`` would raise on a stray brace in a real URL and would happily
     evaluate attribute access, so substitution is done by explicit replacement.
+
+    A placeholder may carry a DATE FORMAT, because not every engine speaks ISO.
+    bookingsmaker asks for ``gindate=03-09-2026``; rendering that as 2026-09-03
+    produces a URL the site does not understand, and rendering it without a
+    placeholder at all pins the source to whichever night the operator happened
+    to be looking at. ``{check_in:%d-%m-%Y}`` says which night AND in which
+    dialect.
+
+    An unknown key is left exactly as written, so a stray brace in a real URL
+    survives untouched.
     """
-    rendered = template
-    for key, value in values.items():
-        token = "{" + key + "}"
-        if token in rendered:
-            rendered = rendered.replace(token, _stringify(value))
-    return rendered
+    def substitute(match: re.Match[str]) -> str:
+        key = match.group("key")
+        if key not in values:
+            return match.group(0)
+        value = values[key]
+        fmt = match.group("fmt")
+        if fmt and isinstance(value, date):
+            return value.strftime(fmt)
+        return _stringify(value)
+
+    return _PLACEHOLDER_RE.sub(substitute, template)
 
 
 def _stringify(value: Any) -> str:

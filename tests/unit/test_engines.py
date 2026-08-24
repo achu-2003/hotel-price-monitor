@@ -237,3 +237,212 @@ class TestDatesInThePath:
         """Only the ISO shape counts -- an id is not a night."""
         url, _ = parameterise_url("https://x.example/hotel/20260819/rooms")
         assert "20260819" in url
+
+
+class TestAnEngineThatDoesNotSpeakISO:
+    """A URL whose dates are written 03-09-2026, not 2026-09-03.
+
+    bookingsmaker asks for ``gindate=03-09-2026``. Two ways to get this wrong,
+    and the system managed both in turn:
+
+    1. Not parameterising it at all, because "gindate" was in none of the alias
+       lists. The URL was stored verbatim, ``is_complete`` said the source
+       could not price a specific night, and the monitor re-checked whichever
+       night the operator happened to paste -- forever, and looking healthy.
+
+    2. Parameterising it as ISO. The placeholder renders 2026-09-03, the site
+       does not understand it, and the answer is a page for some other night
+       or no page at all.
+
+    So the placeholder carries the engine's own spelling: ``{check_in:%d-%m-%Y}``.
+    """
+
+    URL = ("https://www.bookingsmaker.com/ibe/rooms.php?ghotelid=4594"
+           "&gindate=03-09-2026&goutdate=04-09-2026&adults=2")
+
+    def test_the_dates_become_placeholders_at_all(self):
+        template, substituted = parameterise_url(self.URL)
+        assert "03-09-2026" not in template
+        assert "04-09-2026" not in template
+        assert "gindate" in substituted
+
+    def test_the_placeholder_carries_the_engines_own_date_format(self):
+        template, _ = parameterise_url(self.URL)
+        assert "gindate={check_in:%d-%m-%Y}" in template
+        assert "goutdate={check_out:%d-%m-%Y}" in template
+
+    def test_the_format_survives_url_encoding(self):
+        """%25d would render a literal percent, not a day of the month."""
+        template, _ = parameterise_url(self.URL)
+        assert "%25" not in template
+        assert "%3A" not in template
+
+    def test_a_literal_percent_elsewhere_is_still_encoded(self):
+        """Sparing "%" for the placeholder must not spare it for real data."""
+        from urllib.parse import parse_qsl, urlparse
+
+        template, _ = parameterise_url(self.URL + "&promo=SAVE%2550")
+        assert dict(parse_qsl(urlparse(template).query))["promo"] == "SAVE%50"
+
+    def test_the_source_can_price_a_specific_night(self):
+        """is_complete reads the placeholder, and nearly missed the formatted one."""
+        from app.adapters.engines import Detection, EngineProfile
+
+        template, substituted = parameterise_url(self.URL)
+        detection = Detection(
+            profile=EngineProfile(
+                key="x", display_name="x", adapter_key="playwright_direct_site",
+                domains=("www.bookingsmaker.com",), adapter_config={},
+            ),
+            url_template=template, external_id=None, substituted=substituted,
+        )
+        assert detection.is_complete is True
+
+    def test_an_iso_url_is_left_in_iso(self):
+        """The format is only added where it is needed."""
+        template, _ = parameterise_url(AIOSELL)
+        assert "{check_in}" in template
+        assert "{check_in:" not in template
+
+
+class TestWhichWayRoundADateIsRead:
+    """03-09-2026 is 3 September here and 9 March in the United States.
+
+    The pair decides it: a check-out is a night or two after its check-in, so
+    normally only one reading describes a stay at all. Where both do, neither
+    is chosen -- a source that cannot be re-dated is honest, one re-dated into
+    the wrong month is not.
+    """
+
+    def test_day_first_is_read_when_only_day_first_is_a_stay(self):
+        from app.adapters.engines import _date_format_of
+
+        # Month-first would be 9 Mar -> 9 Apr, which is not a hotel booking.
+        assert _date_format_of("03-09-2026", "04-09-2026") == "%d-%m-%Y"
+
+    def test_month_first_is_read_when_only_month_first_is_a_stay(self):
+        from app.adapters.engines import _date_format_of
+
+        # Day-first would be 9 Mar -> 9 Apr.
+        assert _date_format_of("09/03/2026", "09/04/2026") == "%m/%d/%Y"
+
+    def test_a_pair_that_reads_as_a_stay_both_ways_is_refused(self):
+        """2 Mar -> 3 Mar, or 3 Feb -> 3 Mar. Both are stays; neither wins."""
+        from app.adapters.engines import _date_format_of
+
+        assert _date_format_of("02-03-2026", "03-03-2026") is None
+
+    def test_a_pair_that_reads_as_a_stay_neither_way_is_refused(self):
+        from app.adapters.engines import _date_format_of
+
+        assert _date_format_of("03-09-2026", "03-09-2027") is None
+        assert _date_format_of("not-a-date", "also-not") is None
+
+    def test_an_ambiguous_pair_leaves_the_url_alone_rather_than_guessing(self):
+        url = ("https://x.example/book?checkin=02-03-2026"
+               "&checkout=03-03-2026&adults=2")
+        template, _ = parameterise_url(url)
+        assert "02-03-2026" in template
+        assert "{check_in" not in template
+
+    def test_a_lone_date_is_read_when_it_can_only_mean_one_thing(self):
+        """No check-out to compare against, but there is no month 25."""
+        url, _ = parameterise_url("https://x.example/book?checkin=25-12-2026&adults=2")
+        assert "checkin={check_in:%d-%m-%Y}" in url
+
+    def test_a_lone_date_that_could_mean_two_things_is_left_alone(self):
+        url, _ = parameterise_url("https://x.example/book?checkin=03-09-2026&adults=2")
+        assert "checkin=03-09-2026" in url
+        assert "{adults}" in url  # the rest of the URL is still parameterised
+
+    def test_an_iso_date_written_with_slashes_keeps_its_slashes(self):
+        """{check_in} alone would render 2026-09-03 to a site that wrote 2026/09/03."""
+        url, _ = parameterise_url(
+            "https://x.example/book?checkin=2026/09/03&checkout=2026/09/04"
+        )
+        assert "checkin={check_in:%Y/%m/%d}" in url
+        assert "checkout={check_out:%Y/%m/%d}" in url
+
+
+class TestAUrlThatKeepsEverythingAfterTheHash:
+    """A single-page booking engine routes on the fragment.
+
+    swiftbook hands out ``/inst/#home?propertyId=...&checkIn=2026-08-25``.
+    urlparse puts none of that in `query`, so nothing was parameterised: the
+    URL was stored with 25 August baked in, and is_complete reported a source
+    that cannot price a specific night -- of a site that prices per night
+    perfectly well. Every check would have re-read one night forever while
+    reporting success, which is the failure this whole function exists to stop.
+    """
+
+    URL = ("https://www.swiftbook.io/inst/#home"
+           "?propertyId=362NTRtI6w1gSaEHad4Im74Q1Njg=&JDRN=Y"
+           "&checkIn=2026-08-25&checkOut=2026-08-26&currency=INR"
+           "&adult=2&child=0&source=mapresults")
+
+    def test_the_dates_become_placeholders(self):
+        template, substituted = parameterise_url(self.URL)
+        assert "checkIn={check_in}" in template
+        assert "checkOut={check_out}" in template
+        assert "2026-08-25" not in template
+        assert substituted["checkIn"] == "2026-08-25 -> {check_in}"
+
+    def test_occupancy_in_the_fragment_is_parameterised_too(self):
+        template, _ = parameterise_url(self.URL)
+        assert "adult={adults}" in template
+        assert "child={children}" in template
+
+    def test_the_source_can_price_a_specific_night(self):
+        from app.adapters.engines import Detection, EngineProfile
+
+        template, substituted = parameterise_url(self.URL)
+        detection = Detection(
+            profile=EngineProfile(
+                key="x", display_name="x", adapter_key="playwright_direct_site",
+                domains=("www.swiftbook.io",), adapter_config={},
+            ),
+            url_template=template, external_id=None, substituted=substituted,
+        )
+        assert detection.is_complete is True
+
+    def test_a_base64_property_id_survives_byte_for_byte(self):
+        """The fragment is read by the page's own JavaScript, not by a server.
+
+        Percent-encoding the "=" that ends a base64 id produces a URL the page
+        cannot open, so the fragment is rewritten as text and only the values
+        being replaced are touched.
+        """
+        template, _ = parameterise_url(self.URL)
+        assert "propertyId=362NTRtI6w1gSaEHad4Im74Q1Njg=" in template
+        assert "%3D" not in template
+
+    def test_everything_else_in_the_fragment_is_left_alone(self):
+        template, _ = parameterise_url(self.URL)
+        assert "#home?" in template
+        assert "JDRN=Y" in template
+        assert "currency=INR" in template
+        assert "source=mapresults" in template
+
+    def test_it_renders_back_to_a_url_the_site_can_open(self):
+        from datetime import date
+
+        from app.adapters.mapping import render_template
+
+        template, _ = parameterise_url(self.URL)
+        rendered = render_template(
+            template, check_in=date(2026, 12, 24), check_out=date(2026, 12, 25),
+            adults=2, children=0, rooms=1, nights=1,
+        )
+        assert rendered == (
+            "https://www.swiftbook.io/inst/#home"
+            "?propertyId=362NTRtI6w1gSaEHad4Im74Q1Njg=&JDRN=Y"
+            "&checkIn=2026-12-24&checkOut=2026-12-25&currency=INR"
+            "&adult=2&child=0&source=mapresults"
+        )
+
+    def test_a_plain_fragment_is_not_disturbed(self):
+        """#section is an anchor, not a parameter list."""
+        url = "https://x.example/book?checkin=2026-08-18#rooms"
+        template, _ = parameterise_url(url)
+        assert template.endswith("#rooms")
+        assert "checkin={check_in}" in template

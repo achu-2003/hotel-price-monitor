@@ -25,17 +25,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote_plus, urlparse, urlunparse
 
 #: Query parameters that mean "check-in", across the engines seen so far.
 #: Matching is case-insensitive and covers the common spellings, because every
 #: engine names these slightly differently and all of them mean the same thing.
 _PARAM_ALIASES: dict[str, tuple[str, ...]] = {
     "{check_in}": ("checkin", "check_in", "checkindate", "arrival", "arrivaldate",
-                   "startdate", "fromdate", "from"),
+                   "startdate", "fromdate", "from", "gindate", "indate"),
     "{check_out}": ("checkout", "check_out", "checkoutdate", "departure",
-                    "departuredate", "enddate", "todate", "to"),
+                    "departuredate", "enddate", "todate", "to", "goutdate",
+                    "outdate"),
     "{adults}": ("adults", "adult", "noofadults", "noofadult", "noofguests",
                  "guests", "numadults", "pax"),
     "{children}": ("children", "child", "noofkids", "kids", "noofchildren",
@@ -55,6 +57,87 @@ _COMBINED_OCCUPANCY_PARAMS: tuple[str, ...] = (
 _ISO_DATE_IN_PATH_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _COMBINED_OCCUPANCY_RE = re.compile(r"^(\d+)-(\d+)$")
+
+
+#: Date spellings seen in booking URLs, with the strftime pattern that
+#: reproduces each. ISO first, because it is unambiguous.
+_DATE_VALUE_FORMATS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("%Y-%m-%d", re.compile(r"^\d{4}-\d{2}-\d{2}$")),
+    ("%Y/%m/%d", re.compile(r"^\d{4}/\d{2}/\d{2}$")),
+    ("%d-%m-%Y", re.compile(r"^\d{1,2}-\d{1,2}-\d{4}$")),
+    ("%m-%d-%Y", re.compile(r"^\d{1,2}-\d{1,2}-\d{4}$")),
+    ("%d/%m/%Y", re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")),
+    ("%m/%d/%Y", re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")),
+)
+
+
+#: A date written day-and-month-first in some order -- the shape whose reading
+#: has to be settled before it can be rewritten. An ISO date is not in here:
+#: there is nothing to settle about 2026-09-03.
+_AMBIGUOUS_DATE_RE = re.compile(r"^\d{1,2}[-/]\d{1,2}[-/]\d{4}$")
+
+
+def _date_format_of(check_in: str, check_out: str | None = None) -> str | None:
+    """The strftime pattern the value or values are written in, or None.
+
+    "03-09-2026" is 3 September to most of the world and 9 March to the United
+    States, and a URL carries nothing that says which. Guessing wrong asks the
+    hotel for a night six months from the one intended -- a plausible answer to
+    the wrong question, which is the failure mode this codebase refuses
+    everywhere else.
+
+    THE PAIR RESOLVES IT. A stay has a check-out a night or two after its
+    check-in, so only one reading of the pair describes a booking at all:
+
+        03-09-2026 -> 04-09-2026    day-first:  3 Sep to 4 Sep, one night  OK
+                                    month-first: 9 Mar to 9 Apr, 31 nights  no
+
+    A pair that makes sense under neither reading, or under both, returns None
+    and the caller leaves the dates alone. A source that cannot be re-dated is
+    recorded as such, which is honest; one re-dated in the wrong dialect is
+    not.
+
+    "Under both" is rarer than it sounds but it is real, and February is where
+    it lives:
+
+        02-03-2026 -> 03-03-2026    day-first:   2 Mar to 3 Mar,  one night
+                                    month-first: 3 Feb to 3 Mar,  28 nights
+
+    Both are stays, so neither reading can be preferred and None is the answer.
+    Two spellings that agree on the DATE are not a disagreement, though --
+    03-03-2026 reads the same either way -- so the readings are compared by
+    what they mean rather than by which pattern produced them.
+
+    WITH ONLY A CHECK-IN, the pair is unavailable and the value must speak for
+    itself: "25-12-2026" has no month 25 and so is day-first beyond argument,
+    while "03-09-2026" has two readings and gets none. Some sites carry a
+    check-in and a night count rather than a check-out, and a lone date that
+    IS decidable should not be refused for the company it keeps.
+    """
+    readings: dict[tuple[date, date | None], str] = {}
+    for fmt, pattern in _DATE_VALUE_FORMATS:
+        if not pattern.match(check_in):
+            continue
+        try:
+            start = datetime.strptime(check_in, fmt).date()
+        except ValueError:
+            continue
+        # First pattern wins for a date two of them spell identically, so the
+        # ISO forms listed above stay the ones that get reported.
+        if check_out is None:
+            readings.setdefault((start, None), fmt)
+            continue
+        if not pattern.match(check_out):
+            continue
+        try:
+            end = datetime.strptime(check_out, fmt).date()
+        except ValueError:
+            continue
+        if 1 <= (end - start).days <= 30:
+            readings.setdefault((start, end), fmt)
+    if len(readings) != 1:
+        return None
+    return next(iter(readings.values()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,8 +295,122 @@ class Detection:
 
         A URL with no recognisable date parameter would fetch the same night
         forever, which looks like it is working and is not.
+
+        A date placeholder may carry the engine's own spelling of a date --
+        "{check_in:%d-%m-%Y}" for a site that asks for 03-09-2026 -- so the
+        prefix is what is tested. Matching the bare form alone declared a
+        perfectly re-datable URL a standing rate, which then pinned it to the
+        night the operator happened to paste.
         """
-        return "{check_in}" in self.url_template
+        return (
+            "{check_in}" in self.url_template
+            or "{check_in:" in self.url_template
+        )
+
+
+def _placeholder_for_each(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    """Which placeholder, if any, should replace each parameter's value.
+
+    Keyed by the parameter name exactly as the URL writes it, so a caller can
+    rewrite either a parsed query or the raw text of a fragment without
+    restating any of the reasoning below.
+    """
+    lookup = {
+        alias: placeholder
+        for placeholder, aliases in _PARAM_ALIASES.items()
+        for alias in aliases
+    }
+
+    # Which dialect this engine writes its dates in, decided from the PAIR
+    # before anything is rewritten -- see _date_format_of. Left as None when
+    # the dates are already ISO, in which case the placeholders render the
+    # default and the behaviour is unchanged.
+    date_values: dict[str, str] = {}
+    for key, value in pairs:
+        placeholder = lookup.get(key.lower().replace("-", "").replace("_", ""))
+        if placeholder in ("{check_in}", "{check_out}") and value:
+            date_values.setdefault(placeholder, value)
+
+    date_format: str | None = None
+    # A day-and-month date whose order cannot be settled. The dates are then
+    # left exactly as pasted: substituting the plain placeholder would render
+    # ISO, which is a DIFFERENT wrong answer from the one just refused -- the
+    # site would be asked for 2026-03-02 when it spells that date 02-03-2026.
+    # Leaving them alone makes is_complete false, so the source is reported as
+    # unable to price a specific night and a person is asked. That is the
+    # honest end of an unanswerable question.
+    dates_are_ambiguous = False
+    if date_values:
+        detected = _date_format_of(
+            date_values.get("{check_in}") or date_values["{check_out}"],
+            date_values.get("{check_out}") if "{check_in}" in date_values else None,
+        )
+        if detected is None:
+            dates_are_ambiguous = any(
+                _AMBIGUOUS_DATE_RE.match(value) for value in date_values.values()
+            )
+        elif detected != "%Y-%m-%d":
+            date_format = detected
+
+    resolved: dict[str, str] = {}
+    for key, value in pairs:
+        placeholder = lookup.get(key.lower().replace("-", "").replace("_", ""))
+        if placeholder in ("{check_in}", "{check_out}"):
+            if dates_are_ambiguous:
+                continue
+            if date_format:
+                placeholder = placeholder[:-1] + ":" + date_format + "}"
+        if placeholder and value:
+            resolved[key] = placeholder
+    return resolved
+
+
+#: One ``key=value`` inside a fragment's query. The value may itself contain
+#: "=" -- swiftbook's propertyId is base64 and ends in one -- so it runs to the
+#: next "&" rather than to the next "=".
+_FRAGMENT_PAIR_RE = re.compile(r"(?P<key>[^=&]+)=(?P<value>[^&]*)")
+
+
+def _parameterise_fragment(fragment: str) -> tuple[str, dict[str, str]]:
+    """The same substitution, for a URL that keeps its parameters after the #.
+
+    Single-page booking engines route on the hash. swiftbook hands out
+
+        https://www.swiftbook.io/inst/#home?propertyId=...&checkIn=2026-08-25
+
+    where everything that matters is in the FRAGMENT. ``urlparse`` puts none of
+    that in ``query``, so the scan found no date parameter, the URL was stored
+    with 25 August baked into it, and ``is_complete`` reported a source that
+    cannot price a specific night -- of a site that prices per night perfectly
+    well. Every check would then re-read one night forever while succeeding.
+
+    Rewritten as TEXT, not parsed and re-encoded. A fragment is read by the
+    site's own JavaScript rather than by a server, and it carries values that
+    survive only if left byte-for-byte alone: percent-encoding the "=" that
+    ends a base64 propertyId is exactly the kind of helpfulness that produces a
+    URL the page cannot open. Only the values being replaced are touched.
+    """
+    route, separator, query = fragment.partition("?")
+    if not separator:
+        return fragment, {}
+    pairs = parse_qsl(query, keep_blank_values=True)
+    if not pairs:
+        return fragment, {}
+    by_key = _placeholder_for_each(pairs)
+    if not by_key:
+        return fragment, {}
+
+    substituted: dict[str, str] = {}
+
+    def replace(match: "re.Match[str]") -> str:
+        key, value = match.group("key"), match.group("value")
+        placeholder = by_key.get(key)
+        if not placeholder or not value:
+            return match.group(0)
+        substituted[key] = f"{value} -> {placeholder}"
+        return f"{key}={placeholder}"
+
+    return route + "?" + _FRAGMENT_PAIR_RE.sub(replace, query), substituted
 
 
 def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
@@ -249,20 +446,28 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
         path = path.replace(iso_dates[0], "{check_in}", 1)
         substituted["path date"] = f"{iso_dates[0]} -> {{check_in}}"
 
+    # ...nor are they always in the query string. A single-page booking engine
+    # routes on the hash and puts everything after it -- see
+    # _parameterise_fragment, which is where the whole of swiftbook's URL
+    # lives.
+    fragment, from_fragment = _parameterise_fragment(parts.fragment)
+    substituted.update(from_fragment)
+
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     if not pairs:
-        return urlunparse(parts._replace(path=path)), substituted
-
-    lookup = {
-        alias: placeholder
-        for placeholder, aliases in _PARAM_ALIASES.items()
-        for alias in aliases
-    }
+        return (
+            urlunparse(parts._replace(path=path, fragment=fragment)),
+            substituted,
+        )
 
     rebuilt: list[tuple[str, str]] = []
+    # Exactly the values written by this loop, so the encoder below can spare
+    # those and only those.
+    placeholder_values: set[str] = set()
+    by_key = _placeholder_for_each(pairs)
     for key, value in pairs:
         normalised = key.lower().replace("-", "").replace("_", "")
-        placeholder = lookup.get(normalised)
+        placeholder = by_key.get(key)
         combined = (
             _COMBINED_OCCUPANCY_RE.match(value)
             if normalised in _COMBINED_OCCUPANCY_PARAMS and value
@@ -270,17 +475,33 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
         )
         if placeholder and value:
             substituted[key] = f"{value} -> {placeholder}"
+            placeholder_values.add(placeholder)
             rebuilt.append((key, placeholder))
         elif combined:
             substituted[key] = f"{value} -> {{adults}}-{{children}}"
+            placeholder_values.add("{adults}-{children}")
             rebuilt.append((key, "{adults}-{children}"))
         else:
             rebuilt.append((key, value))
 
-    # safe="{}" keeps the placeholders readable instead of percent-encoding the
-    # braces into %7B, which the adapter would not recognise.
-    query = urlencode(rebuilt, safe="{}")
-    return urlunparse(parts._replace(path=path, query=query)), substituted
+    # Placeholders are written through untouched; everything else is encoded
+    # normally.
+    #
+    # urlencode's "safe" is the obvious tool and it is the wrong one here,
+    # because it applies to EVERY value. A date placeholder carries its
+    # strftime pattern -- "{check_in:%d-%m-%Y}" -- so sparing it means sparing
+    # "%", and a real query value containing a literal percent then comes out
+    # as an escape sequence that reads back as a different string. The
+    # placeholders are the ones this function just wrote, so they are known
+    # exactly and need no exemption applied to anyone else's data.
+    query = "&".join(
+        f"{quote_plus(key)}={value if value in placeholder_values else quote_plus(value)}"
+        for key, value in rebuilt
+    )
+    return (
+        urlunparse(parts._replace(path=path, query=query, fragment=fragment)),
+        substituted,
+    )
 
 
 def detect(url: str) -> Detection | None:
