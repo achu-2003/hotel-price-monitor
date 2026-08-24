@@ -31,7 +31,9 @@ from app.core.logging import get_logger
 from app.db.models import AuditLog, HotelSource, MonitoringError
 from app.db.session import sync_session
 from app.services.rediscovery import (
+    DISCOVERY_VERSION,
     REPAIRABLE,
+    VERSION_KEY,
     RepairState,
     is_a_real_change,
     may_attempt,
@@ -193,8 +195,19 @@ def rediscover_source(
             # The page still matches what is stored, so whatever is wrong is
             # not the selectors. Leaving the alert open is the point: this is
             # the case where an automatic fix would have hidden the problem.
+            #
+            # The version stamp is written even though the config did not
+            # change, and it has to be. "This generation looked and found
+            # nothing to alter" is a real answer from the CURRENT scanner, and
+            # recording it is what ends the attempt. Without the stamp the
+            # source would still read as never-tried, the gate would wave the
+            # next fetch straight through, and the repair would drive a browser
+            # at somebody else's site every half hour forever -- the runaway
+            # loop the attempt budget exists to prevent, reintroduced by the
+            # mechanism meant to let a fixed scanner reach old configs.
             source_row.adapter_config = {
                 **current,
+                VERSION_KEY: DISCOVERY_VERSION,
                 **state.settle(now, outcome="no_change"),
             }
             session.commit()

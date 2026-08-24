@@ -273,7 +273,7 @@ class PlaywrightDirectSiteAdapter:
             )
 
         page = fetch.page
-        cards = page.query_selector_all(card_selector)
+        cards = _innermost_cards(page, card_selector, context)
 
         if not cards:
             # Nothing found. The page either says "sold out" or it has been
@@ -405,6 +405,76 @@ class PlaywrightDirectSiteAdapter:
             rooms_left=parse_rooms_left(_text_in(card, selectors.get("rooms_left"))),
             raw_payload={"card_text": card_text[:1000]},
         )
+
+
+#: Returns the indices of the matched elements that contain no other match.
+#: Runs in the page because "does this element contain that one" is a DOM
+#: question, and asking it once for the whole set beats a round trip per pair.
+_INNERMOST_JS = """
+els => els
+    .map((el, i) => els.some((other, j) => j !== i && el.contains(other)) ? -1 : i)
+    .filter(i => i >= 0)
+"""
+
+
+def _innermost_cards(page, card_selector: str, context: FetchContext) -> list:
+    """The matched cards that do not contain another matched card.
+
+    A room_card selector built from generic layout classes -- "div.row",
+    "div.col-md-12", anything a CSS framework repeats -- matches the card AND
+    the container holding all of them. Every room is then read twice: once from
+    its own card, once from an ancestor that happens to answer to the same
+    name.
+
+    Discovery already knows this. It keeps only the innermost matches when it
+    scores a candidate signature, precisely so a five-room page is not ranked
+    as eleven cards. But it writes the bare signature to adapter_config, and
+    the fetch then re-runs that selector against the whole document with no
+    such filter -- so the duplication discovery took care to avoid came back at
+    collection time.
+
+    The visible symptom was not lost prices. The duplicates carry the same room
+    and the same rate, so ingest's identity check dropped them and the stored
+    series stayed correct. What it produced was a parse_schema_drift row every
+    half hour saying the hotel was "monitored as 5 rooms instead of 11" -- when
+    5 was the true count -- naming a room_name selector that was working. An
+    alert that fires forever and names the wrong cause is worse than no alert,
+    because it teaches people to ignore the screen it appears on.
+
+    Applied to every DOM hotel rather than the ones seen to be affected: the
+    selector that triggers it is the ordinary output of discovery on any
+    Bootstrap-derived page, so the next hotel added has the same odds as these.
+    """
+    cards = page.query_selector_all(card_selector)
+    if len(cards) < 2:
+        return cards
+
+    try:
+        keep = page.eval_on_selector_all(card_selector, _INNERMOST_JS)
+    except Exception as exc:  # noqa: BLE001 - a filter must never lose the fetch
+        # Better to read a page twice than not at all. The duplicates are
+        # dropped downstream on identity; a raised exception here would discard
+        # rooms that parsed perfectly well.
+        log.warning("innermost_filter_failed", reason=str(exc), hotel=context.hotel_name)
+        return cards
+
+    # query_selector_all and eval_on_selector_all both return document order,
+    # so the indices line up. Guarded anyway: a mismatch means that assumption
+    # has stopped holding, and silently keeping the wrong subset would file one
+    # room's price under another's name.
+    if not keep or max(keep) >= len(cards):
+        return cards
+
+    innermost = [cards[i] for i in keep]
+    if len(innermost) != len(cards):
+        log.info(
+            "nested_cards_dropped",
+            hotel=context.hotel_name,
+            selector=card_selector,
+            matched=len(cards),
+            kept=len(innermost),
+        )
+    return innermost
 
 
 def _refundable(card, selectors: dict) -> bool | None:

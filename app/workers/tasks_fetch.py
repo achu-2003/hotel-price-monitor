@@ -288,11 +288,14 @@ def _ingest(
                 session,
                 error=SchemaDriftError(
                     f"{summary.offers_collapsed} of {summary.offers_seen} offers "
-                    f"shared an identity with another offer in the same fetch and "
-                    f"were dropped, so this hotel is being monitored as "
-                    f"{summary.offers_seen - summary.offers_collapsed} room(s) "
-                    f"instead of {summary.offers_seen}. The room_name selector is "
-                    f"almost certainly reading a label every room card shares.",
+                    f"shared an identity with another offer in the same fetch "
+                    f"AT A DIFFERENT PRICE, so the cheaper or dearer of each "
+                    f"pair was dropped and this hotel is being monitored as "
+                    f"{summary.offers_matched - summary.offers_collapsed} room(s). "
+                    f"Either the room_name selector is reading a label several "
+                    f"cards share, or the site sells these rooms under rate "
+                    f"plans the config does not capture — add a meal_plan or "
+                    f"refundable selector so the two can be told apart.",
                     context={
                         "names_seen": summary.collapsed_names[:8],
                         "hotel_source_id": payload["hotel_source_id"],

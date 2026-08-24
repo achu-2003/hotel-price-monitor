@@ -58,12 +58,45 @@ DISCOVERY_OWNED_KEYS = frozenset({
     "json_url_contains",
     "wait_timeout_ms",
     "discovery_note",
+    "discovery_version",
 })
 
 #: Where the repair history is kept. Inside ``adapter_config`` rather than in
 #: new columns because ``discovery_note`` already establishes that this column
 #: carries the provenance of the configuration beside the configuration.
 STATE_KEY = "auto_repair"
+
+#: The scanner's generation. BUMP THIS whenever discovery or the DOM scan is
+#: changed in a way that could produce a different config for the same page --
+#: a new heuristic, a widened ancestor walk, a changed ranking, a fixed guard.
+#:
+#: WHY A VERSION EXISTS AT ALL
+#: ===========================
+#: The attempt budget rests on one premise: "a source that has defeated
+#: discovery three times will not yield on the fourth, so stop and fetch a
+#: person". That premise holds only while the scanner is the same code. The
+#: moment it is improved, every exhausted source is holding a verdict reached
+#: by a scanner that no longer exists -- and the budget, which exists to
+#: prevent a pointless retry loop, instead locks those sources out of the very
+#: fix that was written for them.
+#:
+#: That is not hypothetical. Two hotels sat on Attention repeating the same
+#: alert every thirty minutes; the scanner fault behind it was found and fixed,
+#: and the fix could not reach either of them, because both had spent their
+#: attempts proving the OLD scanner could not do it. The only way through was a
+#: person clicking Resolve on each affected source, one at a time, having first
+#: worked out that this was what the button was for.
+#:
+#: So a config records the generation that produced it, and a source whose
+#: stamp is behind gets a fresh, unbudgeted attempt. Not an extra attempt --
+#: the counter is not a resource being topped up. The refusal simply no longer
+#: applies, because the question "can discovery read this page?" has not
+#: actually been asked of the scanner now doing the asking.
+DISCOVERY_VERSION = 2
+
+#: Where that stamp lives. Discovery-owned, so a repair overwrites it with the
+#: current generation rather than carrying an old one forward.
+VERSION_KEY = "discovery_version"
 
 #: Error classes worth re-deriving a config for. Both mean "the page no longer
 #: matches what we stored". A timeout or a block means the opposite -- the page
@@ -82,10 +115,25 @@ class RepairState:
     attempts: int = 0
     last_attempt_at: datetime | None = None
     last_outcome: str | None = None
+    #: The scanner generation that produced the config this state belongs to.
+    #: Absent on every row written before versioning existed, which is exactly
+    #: the population that predates the fixes -- so a missing stamp reads as
+    #: "older than the current scanner", not as "current".
+    discovery_version: int = 0
+
+    @property
+    def scanner_moved_on(self) -> bool:
+        """Has discovery changed since this config was derived?
+
+        When it has, the stored verdict was reached by code that no longer
+        exists and says nothing about what the scanner would do now.
+        """
+        return self.discovery_version < DISCOVERY_VERSION
 
     @classmethod
     def from_config(cls, config: dict[str, Any] | None) -> RepairState:
-        raw = (config or {}).get(STATE_KEY) or {}
+        config = config or {}
+        raw = config.get(STATE_KEY) or {}
         stamp = raw.get("last_attempt_at")
         parsed: datetime | None = None
         if isinstance(stamp, str):
@@ -98,10 +146,18 @@ class RepairState:
                 # cooldown comparison. Treat it as UTC, which is what it was.
                 if parsed.tzinfo is None:
                     parsed = parsed.replace(tzinfo=UTC)
+        # Read from the config, not from the repair state: a config written by
+        # first-attach discovery has never had a repair, so it carries no
+        # STATE_KEY at all and would otherwise always look out of date.
+        try:
+            stamped = int(config.get(VERSION_KEY) or 0)
+        except (TypeError, ValueError):
+            stamped = 0
         return cls(
             attempts=int(raw.get("attempts") or 0),
             last_attempt_at=parsed,
             last_outcome=raw.get("last_outcome"),
+            discovery_version=stamped,
         )
 
     def claim(self, now: datetime) -> dict[str, Any]:
@@ -212,6 +268,23 @@ def may_attempt(
     if not enabled:
         return Verdict(False, "auto-rediscovery is disabled by configuration")
 
+    # Checked BEFORE the budget and the cooldown, because it is the reason both
+    # of them stop meaning anything. Neither is a punishment; both encode "we
+    # already know the answer". A scanner change is precisely the event that
+    # makes that false, and the stored refusal is then an answer to a question
+    # nobody is asking any more.
+    #
+    # This is what stops a fixed scanner from being unable to reach the hotels
+    # it was written for. Without it the only route was a person clicking
+    # Resolve on every affected source, which does not scale past a handful and
+    # depends on somebody knowing that is what the button does.
+    if state.scanner_moved_on:
+        return Verdict(
+            True,
+            f"config was derived by scanner generation {state.discovery_version}; "
+            f"generation {DISCOVERY_VERSION} has not tried this page yet",
+        )
+
     if max_attempts >= 0 and state.attempts >= max_attempts:
         return Verdict(
             False,
@@ -245,13 +318,19 @@ def merge_config(
     Everything outside :data:`DISCOVERY_OWNED_KEYS` is carried through: those
     are the settings a person chose, and no automatic repair has any business
     reconsidering them.
+
+    The result is stamped with the scanner generation that produced it. Stamped
+    HERE, in the one place every written config passes through, rather than at
+    each call site -- a repair that forgot to stamp would be re-attempted on
+    every fetch forever, which is the failure this whole mechanism exists to
+    prevent, arriving from the other direction.
     """
     kept = {
         key: value
         for key, value in (current or {}).items()
         if key not in DISCOVERY_OWNED_KEYS
     }
-    return {**kept, **discovered}
+    return {**kept, **discovered, VERSION_KEY: DISCOVERY_VERSION}
 
 
 def names_to_retire(

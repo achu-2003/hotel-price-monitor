@@ -13,7 +13,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from app.services.rediscovery import (
+    DISCOVERY_VERSION,
     STATE_KEY,
+    VERSION_KEY,
     RepairState,
     is_a_real_change,
     may_attempt,
@@ -59,14 +61,15 @@ class TestWhenARepairMayRun:
         """Three failed attempts is not bad luck. Continuing would be an
         automatic retry loop against somebody else's website."""
         verdict = may_attempt(
-            RepairState(attempts=3), now=NOW,
+            RepairState(attempts=3, discovery_version=DISCOVERY_VERSION), now=NOW,
             enabled=True, cooldown_minutes=360, max_attempts=3,
         )
         assert not verdict.allowed
         assert "needs a person" in verdict.reason
 
     def test_the_cooldown_holds(self):
-        state = RepairState(attempts=1, last_attempt_at=NOW - timedelta(minutes=30))
+        state = RepairState(attempts=1, last_attempt_at=NOW - timedelta(minutes=30),
+                            discovery_version=DISCOVERY_VERSION)
         verdict = may_attempt(
             state, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3
         )
@@ -85,7 +88,8 @@ class TestWhenARepairMayRun:
         to an aware `now` raises TypeError, which inside a worker would look
         like the repair machinery itself being broken."""
         state = RepairState.from_config(
-            {STATE_KEY: {"attempts": 1, "last_attempt_at": "2026-08-20T11:30:00"}}
+            {STATE_KEY: {"attempts": 1, "last_attempt_at": "2026-08-20T11:30:00"},
+             VERSION_KEY: DISCOVERY_VERSION}
         )
         verdict = may_attempt(
             state, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3
@@ -235,7 +239,7 @@ class TestHandingTheBudgetBack:
 
     SPENT = RepairState(
         attempts=3, last_attempt_at=NOW - timedelta(minutes=5),
-        last_outcome="no_change",
+        last_outcome="no_change", discovery_version=DISCOVERY_VERSION,
     )
 
     def test_a_spent_source_is_refused_before_the_reset(self):

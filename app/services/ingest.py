@@ -30,6 +30,7 @@ would quietly lie.
 """
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -86,6 +87,11 @@ class IngestSummary:
     offers_collapsed: int = 0
     #: The room names involved, for the message a person eventually reads.
     collapsed_names: list[str] = field(default_factory=list)
+    #: Offers dropped because an earlier offer in the same fetch already held
+    #: their identity AND their price -- the page read twice, nothing lost.
+    #: Kept apart from ``offers_collapsed`` because it is not a defect and must
+    #: not raise: see the duplicate branch in :func:`ingest_fetch_result`.
+    offers_duplicated: int = 0
 
     @property
     def changes_detected(self) -> int:
@@ -129,7 +135,9 @@ def ingest_fetch_result(
         # with zero existing rooms there is nothing to mis-map against, which
         # is exactly the condition that makes matching risky elsewhere.
         candidates = _seed_room_types(session, result.offers, ctx)
-    seen_keys: set[str] = set()
+    # The price each identity was first filed under, so a second offer claiming
+    # it can be asked whether it actually disagrees. See the duplicate branch.
+    seen_keys: dict[str, tuple[Decimal | None, bool]] = {}
 
     for offer in result.offers:
         if _filtered_out(offer, ctx):
@@ -153,36 +161,61 @@ def ingest_fetch_result(
             refundable=offer.refundable,
             currency=offer.currency or ctx.currency,
         )
+        this_price = offer.price_on(ctx.price_basis.value)
         if offer_key in seen_keys:
-            # Two offers in one fetch resolved to the same identity. Legitimate
-            # when a site lists one room under two rate plans that differ only
-            # in something the key does not carry; a bug when two DIFFERENT
-            # rooms matched the same room type.
+            # Two offers in one fetch resolved to the same identity. Either way
+            # the second must not be inserted: the offer key is the primary key
+            # of price_series, so writing both aborts the whole transaction and
+            # the entire fetch is lost — including the rooms that were fine.
             #
-            # Either way the second must not be inserted: the offer key is the
-            # primary key of price_series, so writing both aborts the whole
-            # transaction and the entire fetch is lost — including the rooms
-            # that were perfectly fine.
-            log.warning(
+            # But the two cases behind it are not the same defect, and for a
+            # year they were reported as one.
+            #
+            #   * The page was read twice. Same room, same rate, same
+            #     availability — a card selector built from a framework class
+            #     that matched a room AND its container. NOTHING IS LOST: the
+            #     duplicate is identical to what was already filed.
+            #   * Two genuinely different offers were merged. The prices
+            #     disagree, so one of them is about to be discarded and the
+            #     hotel really is being monitored as fewer rooms than it sells.
+            #
+            # Only the second is worth a person's attention. Reporting the
+            # first as "the room_name selector is reading a label every card
+            # shares" sent an operator hunting for a broken selector that was
+            # working, every thirty minutes, on a hotel whose five rooms were
+            # all stored correctly. The repair ran, found nothing to change,
+            # and the row came back on the next check — forever.
+            kept_price, kept_available = seen_keys[offer_key]
+            lossless = kept_price == this_price and kept_available == offer.is_available
+            log.log(
+                logging.INFO if lossless else logging.WARNING,
                 "duplicate_offer_key_in_fetch",
                 hotel_id=ctx.hotel_id,
                 offer_key=offer_key[:12],
                 raw_name=offer.raw_room_name[:80],
                 room_type_id=room_type_id,
-                hint="two room names mapped to one room type; check the alias table",
+                lossless=lossless,
+                kept_price=str(kept_price),
+                dropped_price=str(this_price),
             )
+            if lossless:
+                # Counted so the duplication is still visible to anyone who
+                # goes looking, and so a fetch that is ALL duplicates cannot
+                # look like a fetch that found one room.
+                summary.offers_duplicated += 1
+                continue
             # Counted, not just logged. A log line is read by nobody after the
-            # fact, and this is the exact footprint of a room_name selector
-            # that has landed on something every card shares: the fetch
-            # succeeds, the check run records six offers found and zero
-            # unmatched, and five of the hotel's rooms are simply absent from
-            # every screen. The caller turns a sustained count into a row on
-            # Attention, because a person is the only thing that can fix it.
+            # fact, and this is the shape a genuinely broken room_name selector
+            # takes by the time it reaches the database: the fetch succeeds,
+            # the run reports six offers found and none unmatched, and five of
+            # the hotel's rooms are simply absent from every screen. The caller
+            # turns a sustained count into a row on Attention, because a person
+            # is the only thing that can fix it.
             summary.offers_collapsed += 1
             if offer.raw_room_name not in summary.collapsed_names:
                 summary.collapsed_names.append(offer.raw_room_name[:80])
             continue
-        seen_keys.add(offer_key)
+        seen_keys[offer_key] = (this_price, offer.is_available)
 
         observation_id = _write_observation(session, offer, offer_key, ctx)
         outcome = _apply_comparison(
