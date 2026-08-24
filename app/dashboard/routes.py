@@ -111,6 +111,35 @@ templates.env.globals["money"] = money
 templates.env.globals["now"] = lambda: datetime.now(UTC)
 
 
+def _asset_version(name: str) -> str:
+    """A stylesheet's modification time, for the URL that requests it.
+
+    WHY A VERSION AND NOT JUST A PATH
+    =================================
+    /static/app.css never changed its address, so a browser holding yesterday's
+    copy had no way to learn there was a new one short of being told to
+    revalidate. A fixed layout was corrected, deployed, and reported still
+    broken three times over -- the file on disk right, the file on screen
+    stale, and no way to tell those apart by looking at the page.
+
+    The mtime is read on every render rather than cached at import: the whole
+    point is to notice a file that changed underneath a running process, and a
+    value captured at startup would go stale exactly when it mattered. It is
+    one stat() per page against a local file, next to a database round trip.
+
+    Falls back to a constant if the file cannot be read, which loses cache
+    busting rather than the page.
+    """
+    try:
+        return str(int((STATIC_DIR / name).stat().st_mtime))
+    except OSError:  # pragma: no cover - a missing asset is the mount's problem
+        return "0"
+
+
+STATIC_DIR = Path(__file__).parent.parent / "static"
+templates.env.globals["asset_version"] = _asset_version
+
+
 def _localtime(value, fmt: str = "%d %b %H:%M") -> str:
     """Render a timestamp in the deployment's timezone, not UTC.
 

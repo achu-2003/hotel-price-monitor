@@ -29,7 +29,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Hotel Price Monitor{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  {# ?v=<mtime>: a changed stylesheet arrives at a new address, so no browser
+     can serve yesterday's copy of it. See _asset_version. #}
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_version('app.css') }}">
   <link rel="icon" href="data:,">
 </head>
 <body>
@@ -73,6 +75,6 @@
 #}
 <div class="toast-stack" id="toast-stack" role="status" aria-live="polite"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ asset_version('app.js') }}"></script>
 </body>
 </html>
