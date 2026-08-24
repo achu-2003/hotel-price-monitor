@@ -31,6 +31,7 @@ from app.core.logging import get_logger
 from app.db.models import AuditLog, HotelSource, MonitoringError
 from app.db.session import sync_session
 from app.services.rediscovery import (
+    REPAIRABLE,
     RepairState,
     is_a_real_change,
     may_attempt,
@@ -39,12 +40,6 @@ from app.services.rediscovery import (
 )
 
 log = get_logger("tasks.repair")
-
-#: Error classes worth re-deriving a config for. Both mean "the page no longer
-#: matches what we stored". A timeout or a block means the opposite — the page
-#: was never read — and re-running discovery against it would only add load to
-#: a site that is already refusing us.
-REPAIRABLE = frozenset({"parse_schema_drift", "adapter_config"})
 
 
 @shared_task(name="repair.rediscover_source", ignore_result=True)

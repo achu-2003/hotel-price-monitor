@@ -65,6 +65,15 @@ DISCOVERY_OWNED_KEYS = frozenset({
 #: carries the provenance of the configuration beside the configuration.
 STATE_KEY = "auto_repair"
 
+#: Error classes worth re-deriving a config for. Both mean "the page no longer
+#: matches what we stored". A timeout or a block means the opposite -- the page
+#: was never read -- and re-running discovery against it would only add load to
+#: a site that is already refusing us.
+#:
+#: Here rather than in the task, because the task and the operator-facing
+#: resolve endpoint have to agree on what "this is a selector problem" means.
+REPAIRABLE = frozenset({"parse_schema_drift", "adapter_config"})
+
 
 @dataclass(frozen=True, slots=True)
 class RepairState:
@@ -138,6 +147,33 @@ class RepairState:
         else:
             attempts = self.attempts
         return self._fragment(now, outcome=outcome, attempts=attempts)
+
+    def release(self) -> dict[str, Any]:
+        """Hand the budget back because a PERSON has looked at this.
+
+        The attempt budget rations a browser driven against someone else's
+        site, and running out is a deliberate signal: "this one needs a
+        person". What was missing was the other half of that sentence -- a way
+        for the person, having arrived, to say they are done and it may try
+        again.
+
+        Without it the only human action on the Health tab, Resolve, closed the
+        alert row and left the source locked out of repair for good. The next
+        fetch collapsed the same offers, raised the same alert, and refused the
+        same repair, forever. A fault fixed in the scanner itself could not
+        reach the hotels that needed it.
+
+        ``last_attempt_at`` is cleared as well as the counter. Keeping it would
+        start a fresh six-hour cooldown on top of the reset, which reads as
+        "try again later" when what was asked for was "try again".
+        """
+        return {
+            STATE_KEY: {
+                "attempts": 0,
+                "last_attempt_at": None,
+                "last_outcome": "budget_restored",
+            }
+        }
 
     def _fragment(self, now: datetime, *, outcome: str, attempts: int) -> dict[str, Any]:
         return {

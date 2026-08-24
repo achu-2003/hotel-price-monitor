@@ -218,3 +218,53 @@ class TestRetiringTheRoomsABrokenConfigInvented:
 
     def test_surrounding_whitespace_does_not_defeat_the_match(self):
         assert names_to_retire([" Deluxe Room "], ["Deluxe Room"]) == set()
+
+
+class TestHandingTheBudgetBack:
+    """The counter has to be resettable by a person, or it is a dead end.
+
+    Running out of attempts means "this one needs a person". Nothing in the
+    system let that person say they had arrived: Resolve on the Health tab
+    closed the alert row and left the source locked out, so the next check
+    raised the identical alert and declined the identical repair. A source
+    could be permanently unrepairable while the only visible action appeared
+    to do something about it -- and a fault fixed in the SCANNER could never
+    reach the hotels that needed it, because none of them would ever run
+    discovery again.
+    """
+
+    SPENT = RepairState(
+        attempts=3, last_attempt_at=NOW - timedelta(minutes=5),
+        last_outcome="no_change",
+    )
+
+    def test_a_spent_source_is_refused_before_the_reset(self):
+        verdict = may_attempt(
+            self.SPENT, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3,
+        )
+        assert verdict.allowed is False
+        assert "needs a person" in verdict.reason
+
+    def test_and_eligible_after_it(self):
+        released = RepairState.from_config(self.SPENT.release())
+        verdict = may_attempt(
+            released, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3,
+        )
+        assert verdict.allowed is True
+
+    def test_the_cooldown_does_not_survive_the_reset(self):
+        """Otherwise "try again" quietly means "try again in six hours"."""
+        released = RepairState.from_config(self.SPENT.release())
+        assert released.attempts == 0
+        assert released.last_attempt_at is None
+
+    def test_it_says_why_the_counter_is_zero(self):
+        """A reset that looks like a fresh source hides that someone acted."""
+        assert self.SPENT.release()[STATE_KEY]["last_outcome"] == "budget_restored"
+
+    def test_it_touches_nothing_but_the_repair_state(self):
+        config = {**DOM_CONFIG, STATE_KEY: {"attempts": 3}}
+        released = {**config, **RepairState.from_config(config).release()}
+        assert released["selectors"] == DOM_CONFIG["selectors"]
+        assert released["room_card"] == DOM_CONFIG["room_card"]
+        assert released["discovery_note"] == DOM_CONFIG["discovery_note"]

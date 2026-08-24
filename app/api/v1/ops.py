@@ -21,6 +21,7 @@ from app.db.models import (
     CheckRun,
     CircuitState,
     Hotel,
+    HotelSource,
     Notification,
     NotificationStatus,
     MonitoringError,
@@ -31,6 +32,7 @@ from app.db.models import (
 from app.schemas.common import HealthStatus, Page, ReadinessStatus
 from app.schemas.monitoring import MonitoringErrorOut
 from app.schemas.prices import DashboardSummary
+from app.services.rediscovery import REPAIRABLE, RepairState
 
 router = APIRouter(tags=["ops"])
 log = get_logger("api.ops")
@@ -122,15 +124,65 @@ async def list_errors(
 async def resolve_error(
     error_id: int, request: Request, session: DbSession, admin: AdminUser
 ):
-    """Mark an error handled, so the Health tab shows what still needs work."""
+    """Mark an error handled, so the Health tab shows what still needs work.
+
+    Resolving a SELECTOR fault also hands its source's repair budget back.
+
+    Automatic re-discovery gets three attempts per source, and running out is
+    meant to say "this one needs a person". Resolve is the person: it is the
+    only action the Health tab offers, and it used to close the row and nothing
+    else -- so a source that had spent its budget stayed locked out of repair
+    permanently. The next check collapsed the same offers, raised the same
+    alert, and declined the same repair, and no amount of fixing the scanner
+    could ever reach it.
+
+    Restricted to the classes a repair could actually fix, because resolving a
+    blocked source or an expired certificate says nothing about whether the
+    selectors deserve another try.
+    """
     error = await get_object_or_404(session, MonitoringError, error_id, "Error")
     error.resolved_at = datetime.now(UTC)
+
+    restored = await _restore_repair_budget(session, error)
+
     await record_audit(
         session, user=admin, action="resolve", entity="monitoring_error",
         entity_id=error_id, request=request,
     )
     await session.commit()
+    if restored:
+        log.info("repair_budget_restored", error_id=error_id, hotel_id=error.hotel_id)
     return MonitoringErrorOut.model_validate(error)
+
+
+async def _restore_repair_budget(session, error: MonitoringError) -> bool:
+    """Give this error's source its re-discovery attempts back. See above.
+
+    Silent about a source it cannot find: an error row keeps its hotel and
+    source ids after the pairing itself is deleted, and an alert must stay
+    resolvable regardless.
+    """
+    if str(error.error_class.value) not in REPAIRABLE:
+        return False
+    if error.hotel_id is None or error.source_id is None:
+        return False
+
+    pairing = await session.scalar(
+        select(HotelSource).where(
+            HotelSource.hotel_id == error.hotel_id,
+            HotelSource.source_id == error.source_id,
+        )
+    )
+    if pairing is None:
+        return False
+
+    config = dict(pairing.adapter_config or {})
+    state = RepairState.from_config(config)
+    if not state.attempts and state.last_attempt_at is None:
+        return False  # nothing spent, nothing to give back
+
+    pairing.adapter_config = {**config, **state.release()}
+    return True
 
 
 @router.get("/errors/{error_id}/artifact")
