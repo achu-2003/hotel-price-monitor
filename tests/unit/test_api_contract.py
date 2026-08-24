@@ -108,6 +108,9 @@ class TestAuthEnforcement:
         ("POST", "/api/v1/hotels"),
         ("POST", "/api/v1/monitor-targets"),
         ("POST", "/api/v1/manual-entry"),
+        # Closes a row without mapping it. Admin-only for the same reason
+        # resolving one is: it decides what the queue stops asking about.
+        ("POST", "/api/v1/prices/unmatched/1/dismiss"),
     ]
 
     @pytest.mark.parametrize("method,path", PROTECTED)

@@ -582,16 +582,44 @@ async def replace_hotel_source_url(
         session, HotelSource, hotel_source_id, "Hotel source"
     )
 
+    current_source = await session.get(Source, hotel_source.source_id)
+
     detection = detect(payload.url)
     if detection is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"That URL is not on a booking engine this build knows. Known: "
-                f"{[e['display_name'] for e in known_engines()]}. Run "
-                f"scripts/probe_site.py against it to find out what it exposes."
-            ),
-        )
+        # No engine profile, which for an AUTO-DISCOVERED source is normal
+        # rather than a problem: it was attached by inspecting the page, and
+        # no profile was ever written for it.
+        #
+        # Refusing here left those sources with no way to correct their link
+        # from the dashboard at all -- and they are the ones most likely to
+        # need it, because a URL that no profile understands is exactly the
+        # kind this function's own docstring is about. One swiftbook hotel was
+        # stored with its dates baked in, and nothing short of deleting the
+        # source and losing its history could change that.
+        #
+        # Safe without inspecting the page because this endpoint changes only
+        # the URL: no selector is re-derived, so nothing is being invented for
+        # a site nobody has looked at. The same-domain condition is what keeps
+        # it honest -- re-pointing a source at a page on the host it was
+        # already reading is a new link, not a new engine.
+        replacement_host = (urlparse(payload.url).hostname or "").lower()
+        if (
+            current_source is not None
+            and current_source.base_domain
+            and current_source.base_domain.lower() in replacement_host
+        ):
+            detection = _detection_for_discovery(payload.url)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"That URL is not on a booking engine this build knows, and "
+                    f"it is not on {current_source.base_domain if current_source else 'this source'}'s "
+                    f"domain either. Known: "
+                    f"{[e['display_name'] for e in known_engines()]}. Run "
+                    f"scripts/probe_site.py against it to find out what it exposes."
+                ),
+            )
     if not detection.is_complete:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -603,7 +631,6 @@ async def replace_hotel_source_url(
             ),
         )
 
-    current_source = await session.get(Source, hotel_source.source_id)
     # Identity is the DOMAIN, not the source's code. A source created by hand
     # before the paste flow existed can carry any code at all, and rejecting a
     # perfectly correct URL because a label does not match would be a puzzle

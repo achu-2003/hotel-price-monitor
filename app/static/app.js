@@ -567,6 +567,33 @@
       }
     });
   });
+  /*
+   * "None of these." Confirmed, because it closes a row a person will not be
+   * shown again -- but no alias is written, so nothing is taught and nothing
+   * is merged, and a name that is real comes straight back next time it is
+   * seen. That makes it the recoverable action of the two on this row.
+   */
+  document.querySelectorAll("button.dismiss-unmatched").forEach(function (button) {
+    button.addEventListener("click", async function () {
+      const name = button.dataset.rawName || "this name";
+      if (!window.confirm(
+        "Close \u201c" + name + "\u201d without mapping it to a room?\n\n" +
+        "Nothing is merged and no alias is written. If the site really does " +
+        "have a room by this name, it will appear here again."
+      )) return;
+
+      const result = await api(
+        "/api/v1/prices/unmatched/" + button.dataset.unmatchedId + "/dismiss",
+        "POST",
+        {}
+      );
+      if (result.ok) {
+        window.location.reload();
+      } else {
+        window.alert(problemText(result));
+      }
+    });
+  });
   // -- stopping and deleting a hotel ---------------------------------
   /*
    * Two verbs, deliberately unequal. Stopping is a DELETE that only clears

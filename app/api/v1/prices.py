@@ -360,6 +360,56 @@ async def list_unmatched(
     return Page[UnmatchedOfferOut](items=items)
 
 
+@router.post("/unmatched/{unmatched_id}/dismiss", response_model=UnmatchedOfferOut)
+async def dismiss_unmatched(
+    unmatched_id: int,
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+):
+    """Close the row without mapping it to anything. "None of these."
+
+    WHY THIS HAS TO EXIST
+    =====================
+    The queue asks "which of this hotel's rooms is this?", and until now the
+    only way to answer was to pick one. That is fine while the question is
+    fair. It stops being fair the moment the name in the queue came from a
+    BROKEN selector:
+
+        name on the site : Room        (30x)
+        best guess       : no candidate
+        map to           : Villa
+
+    "Room" is a category chip the scan mistook for a room name; "Villa" is the
+    only room type that hotel has, and it is the other half of the same
+    mistake. Mapping one to the other writes a permanent manual alias that
+    merges eleven rooms' prices into the Villa series -- the exact corruption
+    the queue's own subtitle warns about, arrived at by using the queue as
+    designed. With no third option, the only available action was the harmful
+    one, and the honest answer -- "neither, the selector was wrong" -- could
+    not be given.
+
+    It is also how such a row ends. Once the source is repaired the site's real
+    names arrive, the invented one is never seen again, and nothing clears a
+    row whose name simply stopped appearing: it sits on Attention forever.
+
+    No alias is written, so nothing is taught and nothing is merged. If the
+    name turns out to be real it will be queued again the next time it is seen.
+    """
+    unmatched = await get_object_or_404(
+        session, UnmatchedOffer, unmatched_id, "Unmatched offer"
+    )
+    unmatched.resolved_at = datetime.now(UTC)
+    await record_audit(
+        session, user=admin, action="dismiss_unmatched", entity="unmatched_offer",
+        entity_id=unmatched_id,
+        after={"raw_room_name": unmatched.raw_room_name, "mapped_to": None},
+        request=request,
+    )
+    await session.commit()
+    return UnmatchedOfferOut.model_validate(unmatched)
+
+
 @router.post("/unmatched/{unmatched_id}/resolve", response_model=UnmatchedOfferOut)
 async def resolve_unmatched(
     unmatched_id: int,

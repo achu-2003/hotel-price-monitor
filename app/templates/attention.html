@@ -89,7 +89,9 @@
   <p class="muted">
     The system will not guess: a wrong mapping corrupts a price series silently
     and indefinitely, while this queue is a visible gap. Map one once and it
-    resolves forever after.
+    resolves forever after. If none of the rooms offered is the right answer --
+    which is what a name from a broken selector looks like -- use
+    <strong>Not a room</strong> rather than the closest one.
   </p>
   <table class="grid">
     <thead>
@@ -126,6 +128,14 @@
               {% endfor %}
             </select>
             <button type="submit">Map</button>
+            <button type="button" class="dismiss-unmatched"
+                    data-unmatched-id="{{ row.id }}"
+                    data-raw-name="{{ row.raw_room_name }}"
+                    title="None of these rooms. Closes the row without mapping
+                           it, which is the right answer when the name came
+                           from a selector reading the wrong element.">
+              Not a room
+            </button>
           </form>
           {% endif %}
         </td>
