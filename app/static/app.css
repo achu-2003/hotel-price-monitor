@@ -263,6 +263,11 @@ section > h2:first-child { margin-top: 0; }
 .own-property td { background: var(--accent-bg); }
 .own-property td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .scroll-x { overflow-x: auto; border-radius: var(--radius); }
+/* width:100% inside a scrolling box means "the box's width", which would let
+   the table shrink back to the space available and wrap everything it was
+   supposed to be allowed to overflow. min-content is the width it actually
+   needs; it still stretches to fill anything wider. */
+.scroll-x > .grid { width: 100%; min-width: min-content; }
 
 /* The confirmation time, under the time the price actually moved. Smaller and
    on its own line: it is context for the number above it, not a second
@@ -353,6 +358,54 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
   font-size: 11px; font-weight: 700; text-align: center;
 }
 .topbar nav a.nav-alert.active .nav-count { background: #be123c; color: #fff; }
+
+/* -- the hotels table ------------------------------------------------
+ *
+ * A table with no width hints is laid out by its CONTENT, and content is a
+ * poor guide to importance here. Addresses run to sixty characters and hotel
+ * names to twenty, so the browser handed the address column most of the table
+ * and squeezed "Cloud Residency Yercaud" into three wrapped lines -- the name
+ * being both the identifier and the link, and the address being the thing
+ * nobody scans for.
+ *
+ * The name column is therefore given a floor and the address a ceiling. Both
+ * are limits rather than fixed widths, so the layout still adapts: a page of
+ * short names does not leave a gap, and a narrow window still gets a table
+ * that fits. min-width on the name is what stops it wrapping mid-phrase;
+ * max-width on the address is what leaves the room for it.
+ */
+/*
+ * table-layout: fixed, so the shares below are OBEYED rather than suggested.
+ *
+ * Automatic layout sizes a column by its widest cell, and one row here holds a
+ * 150-character booking URL where an address should be. That single row
+ * claimed seventy per cent of the table for the location column and left a
+ * band of white running the full height of the page -- every other row's
+ * address ending a third of the way across it. The lanes were already declared
+ * and the browser was entitled to ignore them.
+ *
+ * Fixed layout reads the widths from the first row and nothing else, so no
+ * single value can distort the table. The cost is that content must be made to
+ * fit its lane, which is what the two rules under it do.
+ */
+.grid-hotels { table-layout: fixed; }
+.grid-hotels .col-name { width: 22%; }
+.grid-hotels .col-location { width: 42%; }
+.grid-hotels .col-targets { width: 9%; }
+.grid-hotels .col-status { width: 11%; }
+.grid-hotels .col-actions { width: 16%; }
+/* A URL has no spaces to break at, so it would otherwise run straight out of
+   its cell and across the columns beside it. */
+.grid-hotels .hotel-location { overflow-wrap: anywhere; }
+/* The name column is sized to hold a hotel name on one line, which is why it
+   gets the second-largest share. It is NOT held there by white-space: nowrap
+   -- under fixed layout an over-long name would then run across the address
+   beside it, and a name that has to wrap is better than one that collides. */
+
+/* Every row's cells start on the same line as its name, which is the row's
+   subject. The default `top` did that only while all cells were one line
+   tall. */
+.grid-hotels td { vertical-align: middle; }
 
 /* -- matrix cells ---------------------------------------------------- */
 .cells { display: flex; gap: var(--s2); flex-wrap: wrap; }
