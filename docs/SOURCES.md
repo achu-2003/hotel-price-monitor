@@ -8,6 +8,8 @@ outcome in `docs/TOS_REVIEW.md` before that source is enabled.
 |---|---|---|---|---|---|
 | https://letsbook.me/booking/hotelgoldennest?checkin=2026-08- | BEST - JSON endpoint available (use HttpJsonAdapter) | `http_json` | allowed | yes | 7 |
 | https://www.treebo.com/hotels-in-yelagiri/itsy-hotels-kurinj | DOM ONLY - prices are behind `/api/`, which robots.txt disallows; the hotel page itself is allowed and shows the tax-inclusive rate | `playwright_direct_site` | page allowed, **`/api/` disallowed** | yes, but off-limits | 1 |
+| https://www.bookingsmaker.com/ibe/rooms.php?ghotelid=4594&gi | OK - DOM scraping viable (use PlaywrightDirectSiteAdapter) | `playwright_direct_site` | allowed | no | 6 |
+| https://www.swiftbook.io/inst/#home?propertyId=362NTRtI6w1gS | OK - DOM scraping viable (use PlaywrightDirectSiteAdapter) | `playwright_direct_site` | allowed | no | 10 |
 
 ## Next steps
 

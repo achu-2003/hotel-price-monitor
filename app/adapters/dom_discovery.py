@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.adapters.parsing import CURRENCY_ICON_SELECTOR
 from app.core.logging import get_logger
 
 log = get_logger("discovery.dom")
@@ -65,6 +66,30 @@ _FIND_CARDS_JS = r"""
   const INVISIBLE = new RegExp("[\u00ad\u200b-\u200f\u2060-\u206f\ufeff]", "g");
   const NBSP = new RegExp("\u00a0", "g");
   const clean = (t) => (t || "").replace(INVISIBLE, "").replace(NBSP, " ");
+
+  // textContent GLUES adjacent elements together with no separator.
+  //
+  // A rack rate struck out above the real one renders as two labels:
+  //
+  //   <label>2000</label><br><b><label>1300</label></b>/Night
+  //
+  // whose textContent is the single run "20001300". The bare-number branch of
+  // PRICE is anchored on word boundaries at both ends, so an eight-digit run
+  // matches nothing and the card was recorded as holding no price at all -- on
+  // a page showing five rates, every one displayed with its discount.
+  //
+  // innerText is what the reader sees: it honours the <br>, the block
+  // boundaries and the CSS, so the same card reads the two numbers on separate
+  // lines and both are found. Falls back to textContent for a node innerText
+  // cannot serve (detached, or not an HTMLElement), which is no worse than
+  // before.
+  const blockText = (el) => {
+    try {
+      const rendered = el.innerText;
+      if (rendered) return rendered;
+    } catch (e) { /* not an HTMLElement, or detached */ }
+    return el.textContent || "";
+  };
 
   const ownText = (el) => {
     let out = "";
@@ -107,10 +132,31 @@ _FIND_CARDS_JS = r"""
     return unmarked;
   };
 
+  // A currency drawn as an ICON rather than written as a character.
+  //
+  // Font Awesome's rupee glyph is extremely common on Indian booking engines:
+  //
+  //   <label class="fa fa-inr">2000</label>
+  //   <b><label class="fa fa-inr"></label><label class="value">1300</label></b>
+  //
+  // The symbol is painted by a CSS ::before rule, so the DOM text is bare
+  // digits and NOTHING on the page carries a currency character. Every
+  // currency test here is written against text, so a page covered in rates
+  // read as a page with no prices on it -- and the guard that refuses to learn
+  // from a priceless page then refused a page that was showing five.
+  //
+  // Matched on the class, which is the only place the currency is stated. The
+  // tokeniser splits on non-alphanumerics, so "fa fa-inr" yields "inr" as a
+  // word of its own and \b anchors it -- a class like "printer" cannot match.
+  const CURRENCY_ICON_CLASS = /\b(inr|rupee|rupees|webrupee|taka|dirham)\b/;
+  const CURRENCY_ICON_SEL = '__CURRENCY_ICON_SELECTOR__';
+
   // Does this page write its prices with a currency marker at all? If so, only
   // marked numbers are considered: on such a page an unmarked number is
   // something else, and there is no reason to guess.
-  const pageHasMarkedPrices = /(?:₹|Rs\.?|INR)\s*[\d,]{3,}/.test(clean(document.body.innerText));
+  const pageHasMarkedPrices =
+    /(?:₹|Rs\.?|INR)\s*[\d,]{3,}/.test(clean(document.body.innerText))
+    || document.querySelector(CURRENCY_ICON_SEL) !== null;
 
   const MARKER = /(?:₹|Rs\.?|INR)/;
 
@@ -120,6 +166,22 @@ _FIND_CARDS_JS = r"""
   // them -- reporting "no prices found" for a page covered in prices. So the
   // number is trusted when the marker sits anywhere in its immediate
   // neighbourhood: its own text, its parent's, or the text just before it.
+  //
+  // An icon currency counts the same way and in the same neighbourhood: the
+  // glyph is usually its own empty element sitting immediately before the
+  // number, so it is the SIBLING that carries the class rather than the
+  // element holding the digits.
+  const iconMarked = (el) => {
+    if (!el) return false;
+    if (CURRENCY_ICON_CLASS.test(" " + tokens(el.className).join(" ") + " ")) return true;
+    const parent = el.parentElement;
+    if (parent && parent.querySelector(CURRENCY_ICON_SEL)) return true;
+    const grandparent = parent && parent.parentElement;
+    if (grandparent && (grandparent.textContent || "").length < 200
+        && grandparent.querySelector(CURRENCY_ICON_SEL)) return true;
+    return false;
+  };
+
   const nearbyMarked = (el) => {
     if (MARKER.test(clean(el.textContent))) return true;
     const parent = el.parentElement;
@@ -127,7 +189,7 @@ _FIND_CARDS_JS = r"""
     const grandparent = parent && parent.parentElement;
     if (grandparent && (grandparent.textContent || "").length < 200
         && MARKER.test(clean(grandparent.textContent))) return true;
-    return false;
+    return iconMarked(el);
   };
 
   const parsePriceStrict = (text, el) => {
@@ -299,6 +361,37 @@ _FIND_CARDS_JS = r"""
   // opposite reason. "₹3,559 incl. taxes" is the price, not a supplement.
   const INCLUSIVE_TEXT = /\b(incl|inclusive|including|included|all in|all inclusive)\b/i;
 
+  // A price that is crossed out by STYLE rather than by class name.
+  //
+  // context() reads class and id tokens, which is where most sites say it --
+  // but a rack rate is just as often struck with nothing but
+  // style="text-decoration:line-through", or by a stylesheet rule, or by
+  // wrapping it in <s>/<del>. None of those leave a token behind, so the
+  // struck number scored identically to the real one, and the tie-break
+  // (larger wins, because an extra bed is never dearer than the bed) then
+  // chose the rack rate every time:
+  //
+  //   <label class="fa fa-inr" style="line-through">2000</label>   <- picked
+  //   <label class="value">1300</label>                            <- the rate
+  //
+  // Computed style rather than the attribute, so a rule in a stylesheet counts
+  // too. Walked up a few levels because the decoration is frequently set on a
+  // wrapper and merely painted through the leaf holding the digits.
+  const isStruck = (el) => {
+    let node = el;
+    for (let i = 0; i < 4 && node && node.nodeType === 1; i++) {
+      const tag = node.tagName.toLowerCase();
+      if (tag === "s" || tag === "del" || tag === "strike") return true;
+      try {
+        const decoration = getComputedStyle(node).textDecorationLine
+          || getComputedStyle(node).textDecoration || "";
+        if (decoration.indexOf("line-through") !== -1) return true;
+      } catch (e) { /* detached node: nothing to read */ }
+      node = node.parentElement;
+    }
+    return false;
+  };
+
   // Markers on a price that has been crossed out. "line-through" is the
   // Tailwind spelling and tokenises to "line through", so both forms are
   // listed -- the whole-word rule means neither can be caught by accident.
@@ -333,6 +426,8 @@ _FIND_CARDS_JS = r"""
         // verification just as well as the real one; it has to be excluded by
         // what it IS, not by whether it can be found.
         if (STALE_PRICE.test(where)) score -= 6;
+        // Same penalty, arrived at by looking rather than by reading a name.
+        if (isStruck(el)) score -= 6;
         if (SUPPLEMENT_CLASS.test(where)) score -= 4;
         // What the element SAYS outranks what its classes are called, because
         // the text is the part the site cannot rename. On a real page the tax
@@ -439,6 +534,32 @@ _FIND_CARDS_JS = r"""
     return found.nameText;
   };
 
+  // The same, for the price -- and for the same reason.
+  //
+  // The sampled prices used to come from each card's own best-scoring price
+  // element, while the ADAPTER reads the first element matching the stored
+  // selector. On a card holding one price those are the same element and the
+  // difference never showed. On a room card holding a rate per plan they are
+  // not: the scan reported 6,800 for a room the adapter would read as 5,000,
+  // and every check downstream -- corroboration, the "prices confirmed"
+  // count, the preview an operator approves -- was about a number that would
+  // never be fetched again.
+  //
+  // Read the way the adapter reads, so what is shown is what will be
+  // monitored. A selector that turns out to find the wrong price is then a
+  // visible fault rather than one that appears after the source goes live.
+  const readPrice = (card, selector, found) => {
+    if (selector && !selector.startsWith("text=")) {
+      let hit = null;
+      try { hit = card.querySelector(selector); } catch (e) { hit = null; }
+      if (hit) {
+        const value = parsePriceStrict(clean(blockText(hit)), hit);
+        if (value !== null) return value;
+      }
+    }
+    return found.priceValue;
+  };
+
   // A name that reads the same on every card is USUALLY not a name.
   //
   // On one real site "King Size Bed" sits in the amenity chips of all six
@@ -530,10 +651,33 @@ _FIND_CARDS_JS = r"""
   if (!priceEls.length) return { cards: [], priceCount: 0 };
 
   // 2/3. walk up, and count how often each ancestor signature repeats
+  //
+  // HOW FAR UP. Six levels was the original limit, on the reasoning that a
+  // room card is close to its price and anything further up is the page. That
+  // holds right up until a booking engine wraps its rates in a collapsible
+  // price-breakdown widget, and then it is catastrophically wrong:
+  //
+  //   div.current-price          <- the price
+  //   ...9 levels of breakdown, card, row, wrapper...
+  //   div.col-lg-12.d-flex       <- the RATE ROW. six levels reaches here.
+  //   ...7 more levels...
+  //   div.prty-bx                <- the ROOM. h3 with the room name lives here.
+  //
+  // On such a page NO container within six levels holds both a price and a
+  // room name, so the scan cannot find a room card -- it finds the rate row
+  // and takes the only label inside it, an occupancy chip reading "Room" or
+  // "Villa". A seven-room property was monitored as two, every room renamed
+  // after its category, and every check reported success.
+  //
+  // Twenty levels reaches the room. It does NOT mean deep containers are
+  // preferred: a page-level container matches once and so has one card, which
+  // the ranking puts last, and the tightest card still wins a tie. Depth
+  // decides what may be CONSIDERED; the ranking below decides what wins.
+  const MAX_ANCESTOR_DEPTH = 20;
   const groups = new Map();
   for (const { el, value } of priceEls) {
     let node = el.parentElement, depth = 0;
-    while (node && depth < 6 && node.tagName !== "BODY") {
+    while (node && depth < MAX_ANCESTOR_DEPTH && node.tagName !== "BODY") {
       const sig = selectorFor(node);
       if (sig.includes(".") || sig.includes("[") || sig.includes("#")) {
         if (!groups.has(sig)) groups.set(sig, { nodes: new Set(), prices: [] });
@@ -543,6 +687,27 @@ _FIND_CARDS_JS = r"""
       node = node.parentElement;
       depth++;
     }
+  }
+
+  // A ROOM CARD NEVER CONTAINS ANOTHER ROOM CARD.
+  //
+  // Walking further up brought a new failure with it. Generic class names --
+  // "row", "col-md-12" -- repeat at several levels of the same page, so one
+  // signature can match a room card AND the container holding four of them.
+  // Both go in the same group, the group's card count inflates, and the
+  // candidate outranks the correct one while reporting each room several
+  // times with a neighbour's price attached. A five-room page came back as
+  // eleven cards naming three rooms.
+  //
+  // Only the innermost survivors are kept, which is the reading that means
+  // "room card" -- the tightest element that matches. Dropping the signature
+  // instead would take the correct cards with it, since they answer to the
+  // very same name.
+  for (const g of groups.values()) {
+    const nodes = [...g.nodes];
+    if (nodes.length < 2) continue;
+    const innermost = nodes.filter(n => !nodes.some(o => o !== n && n.contains(o)));
+    if (innermost.length && innermost.length !== nodes.length) g.nodes = new Set(innermost);
   }
 
   // 4. for each candidate signature, find the name and price inside one card
@@ -562,7 +727,7 @@ _FIND_CARDS_JS = r"""
   const cards = [];
   for (const [sig, g] of groups) {
     const nodes = [...g.nodes];
-    const withPrice = nodes.filter(n => parsePriceStrict(clean(n.textContent), n) !== null);
+    const withPrice = nodes.filter(n => parsePriceStrict(clean(blockText(n)), n) !== null);
     if (!withPrice.length) continue;
 
     const sample = withPrice[0];
@@ -609,7 +774,7 @@ _FIND_CARDS_JS = r"""
     for (const card of sampled) {
       const found = pickFrom(card);
       const n = readName(card, nameSel, found);
-      const p = found.priceValue;
+      const p = readPrice(card, priceSel, found);
       if (n && p !== null) { names.push(n); prices.push(p); }
     }
     if (!names.length) continue;
@@ -639,16 +804,36 @@ _FIND_CARDS_JS = r"""
     });
   }
 
-  // Most rooms first; then the candidate whose names actually differ, which
-  // separates a room list from a column of identical buttons; then the
-  // tightest card, because a container holding one room beats one holding the
-  // whole page; and only then a stable anchor over a class list.
+  // How many rooms this candidate could actually be MONITORED as.
+  //
+  // Not the same as how many cards it found, and that difference is the whole
+  // point. Downstream, a room's identity is its name: two cards reporting the
+  // same name are one room, the second is dropped as a duplicate, and the
+  // hotel is watched with rooms missing. So a candidate finding eight cards
+  // that share two names is worth two rooms, not eight -- and it must not
+  // outrank one finding seven cards with seven names.
+  //
+  // Ranking on card count alone did exactly that. On a page whose rate rows
+  // each carry a category chip, the thirteen-rate-row candidate beat the
+  // seven-room one, and the property was monitored as "Room" and "Villa".
+  //
+  // A TRUSTED name keeps its full count. When the name came from a heading or
+  // a container calling itself a name, repetition means one room type on
+  // several rate plans -- a real listing, not a broken selector -- and those
+  // rows are told apart downstream by rate plan rather than by name.
+  for (const c of cards) c.rooms = c.name_trusted ? c.matched : c.distinct;
+
+  // Most rooms it can tell apart first; then most cards, because among
+  // candidates that distinguish equally well the fuller one is the better
+  // read; then the candidate whose names differ most; then the tightest card,
+  // because a container holding one room beats one holding the whole page;
+  // and only then a stable anchor over a class list.
   cards.sort((a, b) =>
-    (b.matched - a.matched) || (b.distinct - a.distinct) ||
+    (b.rooms - a.rooms) || (b.matched - a.matched) || (b.distinct - a.distinct) ||
     (a.cardLen - b.cardLen) || (b.anchored - a.anchored) || (b.count - a.count));
   return { cards: cards.slice(0, 5), priceCount: priceEls.length };
 }
-"""
+""".replace("__CURRENCY_ICON_SELECTOR__", CURRENCY_ICON_SELECTOR)
 
 
 def find_room_cards(page) -> list[dict[str, Any]]:

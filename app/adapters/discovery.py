@@ -39,11 +39,13 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urlparse
 
 from app.adapters.parsing import (
+    CURRENCY_ICON_SELECTOR,
     MAX_PLAUSIBLE_PRICE,
     MIN_PLAUSIBLE_PRICE,
     looks_sold_out,
@@ -156,13 +158,22 @@ class Candidate:
         So: several rooms sharing one name is accepted from a trusted element
         and refused from an untrusted one. One sampled room is exempt either
         way -- there is nothing for it to differ from.
+
+        PARTIAL repetition counts too, and asking only whether ALL the names
+        were identical missed the case that matters most. A booking engine
+        labelling each rate row with its category gave eight cards reading
+        "Room", "Room", "Room", "Room", "Villa", "Villa", "Room", "Room": not
+        one name, so the check passed, and a seven-room property was written
+        into live configuration as two. The test is therefore whether the names
+        tell the rooms APART -- fewer than half of them distinct is a label,
+        not a room list.
         """
         if not self.sample_prices or self.corroborated * 2 < len(self.sample_prices):
             return False
         if (
             not self.name_trusted
             and len(self.sample_names) > 1
-            and len(set(self.sample_names)) == 1
+            and len(set(self.sample_names)) * 2 <= len(self.sample_names)
         ):
             return False
         return True
@@ -416,7 +427,12 @@ def _price_digits(raw: str) -> str:
     return cleaned
 
 
-def _corroborate(candidate: Candidate, page_text: str) -> None:
+def _corroborate(
+    candidate: Candidate,
+    page_text: str,
+    *,
+    icon_marked: frozenset[str] = frozenset(),
+) -> None:
     """Count how many of the prices actually appear on the page.
 
     This is the step that separates a finding from a guess. Digits are compared
@@ -428,12 +444,21 @@ def _corroborate(candidate: Candidate, page_text: str) -> None:
     the same test against only those numbers the page printed a currency
     beside, which is what an unattended repair is judged on. See
     :meth:`Candidate.is_strongly_verified` for why the difference matters.
+
+    ``icon_marked`` carries the second spelling of "printed with a currency
+    beside it": the numbers whose currency the page draws as an ICON, which
+    leaves nothing in the text for ``_MARKED_PRICE_RE`` to find. Without it a
+    page like bookingsmaker's -- every rate in a ``class="fa fa-inr"`` label --
+    corroborates fully and marks nothing, so it can be discovered by a person
+    and can never be repaired unattended. It is supplied by
+    :func:`icon_marked_prices`, which reads it off the DOM; the default empty
+    set leaves every text-currency page behaving exactly as before.
     """
     haystack = re.sub(r"[,\s]", "", page_text)
     marked = {
         _price_digits(match.group("digits"))
         for match in _MARKED_PRICE_RE.finditer(page_text or "")
-    }
+    } | set(icon_marked)
 
     hits = marked_hits = 0
     for price in candidate.sample_prices:
@@ -448,19 +473,24 @@ def _corroborate(candidate: Candidate, page_text: str) -> None:
 
 
 def analyse(
-    payloads: list[tuple[str, Any]], page_text: str
+    payloads: list[tuple[str, Any]],
+    page_text: str,
+    *,
+    icon_marked: frozenset[str] = frozenset(),
 ) -> DiscoveryResult:
     """Score every captured payload and return the best verified candidate.
 
     Pure: takes what the browser saw and returns a verdict. Kept separate from
     the browser work so it can be tested against recorded payloads.
+
+    ``icon_marked`` is passed straight to :func:`_corroborate` -- see there.
     """
     candidates: list[Candidate] = []
     for url, payload in payloads:
         for path, rows in _iter_arrays(payload):
             found = _evaluate(url, path, rows)
             if found is not None:
-                _corroborate(found, page_text)
+                _corroborate(found, page_text, icon_marked=icon_marked)
                 # A candidate whose prices are on the page outranks every
                 # unverified one, however good its field names look.
                 found.score += 25.0 if found.is_verified else 0.0
@@ -487,12 +517,17 @@ def analyse(
 
 
 
-def _has_usable_json(payloads: list[tuple[str, Any]], page_text: str) -> bool:
+def _has_usable_json(
+    payloads: list[tuple[str, Any]],
+    page_text: str,
+    *,
+    icon_marked: frozenset[str] = frozenset(),
+) -> bool:
     """Whether the JSON route already produced something corroborated.
 
     Runs before the browser closes so the DOM scan can still happen if not.
     """
-    return analyse(payloads, page_text).ok
+    return analyse(payloads, page_text, icon_marked=icon_marked).ok
 
 
 #: A number on a booking page is only provably a price when the page writes a
@@ -504,8 +539,15 @@ _MARKED_PRICE_RE = re.compile(
     r"(?:₹|Rs\.?|INR|\$|€|£)[^0-9]{0,3}(?P<digits>[0-9][0-9,]{2,}(?:\.[0-9]{1,2})?)"
 )
 
+#: The digits of a price, in the shape ``_MARKED_PRICE_RE`` accepts them. Used
+#: on text taken from beside a currency ICON, where the marker has already been
+#: established by the class and only the number is left to read.
+_PRICE_DIGITS_RE = re.compile(r"[0-9][0-9,]{2,}(?:\.[0-9]{1,2})?")
 
-def why_the_page_cannot_be_learned(page_text: str) -> str | None:
+
+def why_the_page_cannot_be_learned(
+    page_text: str, *, currency_is_an_icon: bool = False
+) -> str | None:
     """Why deriving selectors from this page would produce fiction, or None.
 
     THE FAILURE THIS EXISTS TO STOP
@@ -541,7 +583,12 @@ def why_the_page_cannot_be_learned(page_text: str) -> str | None:
     text = " ".join((page_text or "").split())
     if not text:
         return "the page rendered no text at all"
-    if not _MARKED_PRICE_RE.search(text):
+    # ...unless the page draws its currency as an icon, in which case there is
+    # no currency character to find and its absence says nothing. Font
+    # Awesome's rupee glyph is common on Indian booking engines: the symbol
+    # comes from a CSS ::before rule and the DOM text is bare digits, so a page
+    # showing five rates read as a page showing none and was refused.
+    if not currency_is_an_icon and not _MARKED_PRICE_RE.search(text):
         # Checked BEFORE the sold-out wording, because it is the stronger
         # signal and the one that holds when a page says nothing at all about
         # why it is empty.
@@ -593,6 +640,68 @@ def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
         # restyle, an API contract usually does not.
         score=20.0 + min(int(card.get("matched") or 0), 10),
     )
+
+
+#: Text sitting beside a currency icon, read off the DOM. Each icon element
+#: contributes its own text and that of the element on either side of it,
+#: because the glyph is as often an empty tag next to the digits as it is the
+#: tag holding them. Siblings are only read when short, so a card's whole
+#: description cannot arrive disguised as a price.
+_ICON_MARKED_TEXT_JS = r"""
+() => {
+  const SEL = '_CURRENCY_ICON_SELECTOR__';
+  const out = [];
+  const take = (el) => {
+    if (!el) return;
+    const text = el.textContent || "";
+    if (text.length <= 40) out.push(text);
+  };
+  for (const icon of document.querySelectorAll(SEL)) {
+    out.push(icon.textContent || "");
+    take(icon.previousElementSibling);
+    take(icon.nextElementSibling);
+  }
+  return out;
+}
+""".replace("_CURRENCY_ICON_SELECTOR__", CURRENCY_ICON_SELECTOR)
+
+
+def icon_marked_prices(page) -> frozenset[str]:
+    """The numbers this page marks as money with an icon rather than a symbol.
+
+    The counterpart to ``_MARKED_PRICE_RE`` for a page that never writes its
+    currency as a character. What ``corroborated_marked`` is really asking is
+    "did the page SAY this number is money", and on these pages it said so in a
+    class name -- so the answer is read from the DOM instead of the text.
+
+    Both numbers of a discounted pair come back, the struck rack rate included.
+    That is correct: this set decides what is money, not which of two prices a
+    guest pays. Choosing between them is the scan's job, and it is done by
+    :func:`find_room_cards` before a candidate reaches here.
+    """
+    try:
+        chunks = page.evaluate(_ICON_MARKED_TEXT_JS) or []
+    except Exception:  # noqa: BLE001 - an unreadable page marks nothing, as before
+        return frozenset()
+    return frozenset(
+        _price_digits(match.group())
+        for chunk in chunks
+        for match in _PRICE_DIGITS_RE.finditer(chunk or "")
+    )
+
+
+def _page_shows_a_price(page) -> bool:
+    """Is this page already displaying rates?
+
+    Both spellings of "a price is on screen": a currency written as text, and
+    one drawn as an icon class with the digits bare beside it.
+    """
+    try:
+        if page.query_selector(CURRENCY_ICON_SELECTOR) is not None:
+            return True
+        return bool(_MARKED_PRICE_RE.search(page.inner_text("body", timeout=5_000) or ""))
+    except Exception:  # noqa: BLE001 - a page we cannot read has nothing to protect
+        return False
 
 
 def _open_booking_widget(page) -> None:
@@ -789,18 +898,44 @@ def inspect_url(
 
     settings = get_settings()
     target = url
-    if check_in and "{check_in}" in url:
-        target = (
-            url.replace("{check_in}", check_in)
-            .replace("{check_out}", check_out or check_in)
-            .replace("{adults}", str(adults))
-            .replace("{children}", "0")
-            .replace("{rooms}", "1")
+    if check_in and "{check_in" in url:
+        # The adapter's own renderer rather than a second implementation of
+        # it. A date placeholder may carry the engine's spelling of a date --
+        # "{check_in:%d-%m-%Y}" for a site that will not read ISO -- and a
+        # plain str.replace of "{check_in}" matches none of those, so the probe
+        # fetched a URL with the placeholder still in it and reported, of a
+        # page it had never loaded, that it showed no prices.
+        from app.adapters.mapping import render_template
+
+        def _as_date(value: str) -> date | str:
+            """ISO in, a date out -- so a format spec has something to format.
+
+            Anything else is handed over as written: a caller who passed a
+            date already in the engine's own spelling gets it back unchanged,
+            which is the behaviour this had before.
+            """
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                return value
+
+        target = render_template(
+            url,
+            check_in=_as_date(check_in),
+            check_out=_as_date(check_out or check_in),
+            adults=adults,
+            children=0,
+            rooms=1,
+            nights=1,
         )
 
     payloads: list[tuple[str, Any]] = []
     dom_cards: list[dict] = []
     unlearnable: str | None = None
+    # Declared out here because corroboration below runs after the browser is
+    # gone, and a probe that fails before the page is read must still leave a
+    # defined -- and empty -- set behind it.
+    icon_marked: frozenset[str] = frozenset()
 
     with _subprocess_capable_loop_policy(), _playwright_for_this_thread() as playwright:
         browser = playwright.chromium.launch(
@@ -834,7 +969,16 @@ def inspect_url(
             # Many booking widgets fetch nothing until they are opened: the
             # rates arrive on click, not on load. Without this, a site with a
             # perfectly good API reports as exposing none.
-            if not payloads:
+            #
+            # ONLY when the page is not already showing them. A rates page
+            # carries a "Book Room" button per room, and clicking one is how a
+            # guest LEAVES that page for the booking form -- so on a page that
+            # had already rendered five rates this navigated away from them and
+            # then reported, accurately and uselessly, that the page it ended up
+            # on had no prices. The click is for pages that hide their rates
+            # behind a button, and a page displaying them plainly is exactly the
+            # page that must not be touched.
+            if not payloads and not _page_shows_a_price(page):
                 _open_booking_widget(page)
                 page.wait_for_timeout(5_000)
 
@@ -854,9 +998,24 @@ def inspect_url(
             # its rates live, and the scan is not built to notice that -- it
             # is built to find repetition, and an empty booking page is still
             # full of repetition. See why_the_page_cannot_be_learned.
-            unlearnable = why_the_page_cannot_be_learned(page_text)
+            # Asked of the DOM, because a currency painted by CSS leaves
+            # nothing in the text for the guard to find.
+            try:
+                currency_is_an_icon = page.query_selector(CURRENCY_ICON_SELECTOR) is not None
+            except Exception:  # noqa: BLE001 - a selector failure must not end the probe
+                currency_is_an_icon = False
+            unlearnable = why_the_page_cannot_be_learned(
+                page_text, currency_is_an_icon=currency_is_an_icon
+            )
 
-            if not _has_usable_json(payloads, page_text):
+            # Collected while the browser is still open: corroboration runs
+            # after it closes, and by then the only record of which numbers
+            # the page called money is this set.
+            icon_marked = (
+                icon_marked_prices(page) if currency_is_an_icon else frozenset()
+            )
+
+            if not _has_usable_json(payloads, page_text, icon_marked=icon_marked):
                 if unlearnable:
                     log.info("dom_scan_skipped", url=target[:120], why=unlearnable)
                 else:
@@ -869,7 +1028,7 @@ def inspect_url(
             except Exception:  # noqa: BLE001 - shutdown must not mask the result
                 pass
 
-    result = analyse(payloads, page_text)
+    result = analyse(payloads, page_text, icon_marked=icon_marked)
 
     if not result.ok and dom_cards:
         # Every candidate, not just the best-ranked one. The ranking is built
@@ -882,7 +1041,7 @@ def inspect_url(
             considered = _candidate_from_dom(card, target)
             if considered is None:
                 continue
-            _corroborate(considered, page_text)
+            _corroborate(considered, page_text, icon_marked=icon_marked)
             if considered.is_verified:
                 dom_candidate = considered
                 break

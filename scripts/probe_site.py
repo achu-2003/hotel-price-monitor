@@ -146,9 +146,23 @@ def probe(url: str, check_in: date, nights: int, out_dir: Path) -> ProbeReport:
             body_text = page.inner_text("body", timeout=5_000) or ""
             report.sold_out_detected = looks_sold_out(body_text[:5_000])
 
+            # Two spellings of "a price is on the page". The second exists
+            # because Font Awesome's rupee glyph is painted by CSS: the DOM
+            # text is bare digits and NOTHING carries a currency character, so
+            # a page showing five rates was probed as showing none and written
+            # into docs/SOURCES.md as MANUAL ENTRY. Asked of the DOM, using the
+            # same reader discovery uses, so the probe and the thing it is
+            # recommending cannot disagree about what a price is.
+            from app.adapters.discovery import icon_marked_prices
+
             report.price_samples = list(
                 dict.fromkeys(m.group() for m in PRICE_TEXT_RE.finditer(body_text))
             )[:12]
+            if not report.price_samples:
+                report.price_samples = [
+                    f"{digits} (currency drawn as an icon)"
+                    for digits in sorted(icon_marked_prices(page))
+                ][:12]
             report.room_samples = list(dict.fromkeys(
                 line.strip()[:70]
                 for line in body_text.splitlines()
@@ -207,6 +221,29 @@ def print_report(r: ProbeReport) -> None:
         print(f"  html fixture     : {r.html_fixture}")
 
 
+def _existing_rows(path: Path) -> dict[str, str]:
+    """The table rows already in the doc, keyed by their URL cell.
+
+    Probing one hotel used to rewrite the whole file from that one run, so the
+    record of every hotel probed before it was deleted -- a survey of thirty
+    sites reduced to whichever was checked last, with nothing to say the
+    others had ever been looked at. Rows are read back and merged instead: a
+    re-probe replaces its own row and leaves the rest standing.
+    """
+    if not path.exists():
+        return {}
+    rows: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        # The header and its |---| separator are not data.
+        if len(cells) < 2 or cells[0] in ("URL", "") or set(cells[0]) <= set("- :"):
+            continue
+        rows[cells[0]] = line
+    return rows
+
+
 def write_sources_doc(reports: list[ProbeReport], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -219,12 +256,16 @@ def write_sources_doc(reports: list[ProbeReport], path: Path) -> None:
         "| URL | Verdict | Adapter | robots.txt | JSON API | Prices found |",
         "|---|---|---|---|---|---|",
     ]
+    rows = _existing_rows(path)
     for r in reports:
         robots = "allowed" if r.robots_allowed else "DISALLOWED"
-        lines.append(
+        # Keyed on the same slice that is displayed, so a re-probe of a URL
+        # lands on the row it wrote last time rather than beside it.
+        rows[r.url[:60]] = (
             f"| {r.url[:60]} | {r.verdict} | `{r.recommended_adapter}` | {robots} | "
             f"{'yes' if r.json_endpoints else 'no'} | {len(r.price_samples)} |"
         )
+    lines.extend(rows.values())
     lines += ["", "## Next steps", "",
               "1. Review ToS for every row not already ruled out.",
               "2. Rows marked BEST get an `http_json` adapter (cheap, stable).",

@@ -20,6 +20,17 @@ from app.core.errors import SchemaDriftError
 MIN_PLAUSIBLE_PRICE = Decimal("100")
 MAX_PLAUSIBLE_PRICE = Decimal("500000")
 
+#: Elements whose CLASS states the currency because the page never writes it as
+#: a character. Font Awesome's "fa fa-inr" and the older WebRupee font paint the
+#: symbol from a CSS ::before rule, leaving bare digits in the DOM -- so on
+#: those pages this selector is the ONLY place the currency is stated.
+#:
+#: Here rather than beside either of its two readers. The DOM scan asks it in
+#: JavaScript and discovery asks it in Python, and the day the two disagreed
+#: about what names a currency, a page would be learnable and uncorroboratable
+#: at the same time.
+CURRENCY_ICON_SELECTOR = '[class*="inr" i],[class*="rupee" i],[class*="webrupee" i]'
+
 _CURRENCY_SYMBOLS = {
     "₹": "INR",  # rupee sign
     "rs.": "INR",
