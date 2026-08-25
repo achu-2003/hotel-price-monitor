@@ -254,6 +254,14 @@ section > h2:first-child { margin-top: 0; }
 .muted { color: var(--muted); }
 .nowrap { white-space: nowrap; }
 .truncate { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/*
+ * max-width, overflow and text-overflow are all ignored on a NON-REPLACED
+ * INLINE box, so a <span class="truncate"> kept only the nowrap and ran its
+ * one line as far as the text went -- widening the cell, the table and the
+ * page behind it. It has to be a block (or a flex item, which is why the same
+ * class works inside .error-expand) before any of the clipping applies.
+ */
+span.truncate { display: block; }
 .up { color: var(--up); font-weight: 600; }
 .down { color: var(--down); font-weight: 600; }
 /* The two tinted rows also get a solid edge, so they survive a greyscale
@@ -406,6 +414,53 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
    subject. The default `top` did that only while all cells were one line
    tall. */
 .grid-hotels td { vertical-align: middle; }
+
+/* -- the recipients table --------------------------------------------
+ *
+ * Same failure as the hotels table, from the other direction: "hotels
+ * covered" holds every hotel a person watches, so one recipient on eight
+ * hotels wrote a 130-character line that automatic layout was obliged to
+ * honour. The table grew past the window and took Status and the test
+ * buttons off the right-hand edge of the page.
+ *
+ * The count is the answer to "does this person receive anything at all",
+ * which is what the column is for; the names are a reminder, and the full
+ * list is one click away in the row's own panel. So the lane is declared,
+ * fixed layout makes it stick, and the names are clipped to it.
+ */
+.grid-recipients { table-layout: fixed; }
+/* Fixed layout computes a table's min-content width from the declared lanes
+   and not from what is in them, so .scroll-x's min-content had nothing to
+   push against: below about a thousand pixels the lanes kept their shares and
+   the one-line cells inside them -- a quiet-hours window, a timestamp -- ran
+   over their neighbours instead. A floor in pixels is what those cells
+   actually need; under it the box scrolls, which is what it is for. */
+.scroll-x > .grid-recipients { min-width: 1060px; }
+.grid-recipients .col-name { width: 15%; }
+.grid-recipients .col-reach { width: 19%; }
+.grid-recipients .col-quiet { width: 14%; }
+.grid-recipients .col-covered { width: 27%; }
+.grid-recipients .col-status { width: 8%; }
+.grid-recipients .col-actions { width: 17%; }
+/* The lane is narrower than the truncate default on every window this page is
+   read on; 100% keeps the ellipsis at the edge of the cell rather than at
+   460px inside a wider one. */
+.grid-recipients .covered-names { max-width: 100%; }
+
+/* The delivery history, same treatment. Detail holds an alert subject or a
+   provider's error text -- both long, neither worth a third of the table. */
+.grid-history { table-layout: fixed; }
+.scroll-x > .grid-history { min-width: 1040px; }
+.grid-history .col-when { width: 11%; }
+.grid-history .col-to { width: 10%; }
+.grid-history .col-hotel { width: 15%; }
+.grid-history .col-channel { width: 9%; }
+.grid-history .col-status { width: 12%; }
+.grid-history .col-detail { width: 36%; }
+.grid-history .col-actions { width: 7%; }
+/* max-width is ignored on a cell under fixed layout, so the clip has to come
+   from the lane; the cell's own overflow is what draws the ellipsis. */
+.grid-history .truncate { max-width: none; }
 
 /* -- matrix cells ---------------------------------------------------- */
 .cells { display: flex; gap: var(--s2); flex-wrap: wrap; }
@@ -892,7 +947,7 @@ button.danger:hover { filter: brightness(1.08); box-shadow: 0 3px 10px rgba(190,
 
 /* Kept small and low-contrast: a table with a full-size button on every line
    reads as a form rather than as a list. */
-.row-actions { display: flex; align-items: center; gap: var(--s3); }
+.row-actions { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 .row-actions button { padding: 2px 8px; font-size: 12px; }
 
 /* -- overview: hotel freshness strip ---------------------------------- */
