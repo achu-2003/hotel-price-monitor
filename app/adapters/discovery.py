@@ -823,6 +823,77 @@ def _playwright_for_this_thread() -> Iterator[Any]:
         yield playwright
 
 
+def _drop_robots_disallowed(
+    payloads: list[tuple[str, Any]]
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    """Keep only the responses we would be allowed to read.
+
+    A RESPONSE WE MAY NOT FETCH IS NOT EVIDENCE WE MAY USE. The page fetches
+    these itself, so nothing here was requested by us -- but a candidate built
+    from one becomes a stored configuration, and every check from then on reads
+    a path the site asked us to stay out of. That is the reasoning already
+    written down for Treebo in engines.py, where json_url_contains is
+    deliberately absent because "configuring it would read exactly what we have
+    been asked not to". It was a rule one profile followed by hand; here it is
+    the rule.
+
+    It has to happen BEFORE the JSON is scored, not after. The DOM scan only
+    runs when the JSON route found nothing usable, so a disallowed payload that
+    wins on merit and is refused afterwards leaves discovery with nothing at
+    all -- when the rendered page, which IS allowed, was sitting there the
+    whole time. Dropped early, the fallback works as designed.
+
+    Fails open, per RobotsChecker: an unreachable robots.txt is not evidence of
+    a prohibition, and refusing on a network blip would turn a transient into a
+    hotel nobody can attach.
+    """
+    if not payloads:
+        return payloads, []
+
+    from app.adapters.playwright_base import build_user_agent
+    from app.adapters.robots import UNREADABLE_REASON, RobotsChecker
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.respect_robots_txt:
+        return payloads, []
+
+    checker = RobotsChecker(
+        build_user_agent(settings.browser_user_agent_suffix), enabled=True
+    )
+    kept: list[tuple[str, Any]] = []
+    refused: list[str] = []
+    for url, body in payloads:
+        try:
+            verdict = checker.check(url)
+            # ONLY A REAL PROHIBITION DROPS EVIDENCE.
+            #
+            # A robots.txt that answers 5xx is read as a blanket disallow, and
+            # that is correct when the question is "may we fetch this?" -- a
+            # server which cannot state its rules has granted nothing. It is
+            # the wrong answer to "may we READ what the page already fetched
+            # in front of us?", because the site never said no; its robots
+            # host was down.
+            #
+            # Hotel Golden Nest is the case. commonservice.ipms247.com answers
+            # 503 to /robots.txt, so every one of its ten availability
+            # endpoints came back disallowed, discovery found nothing, and a
+            # working hotel would have been left unrepairable by an outage on
+            # a file that has never contained a rule about it.
+            refuse = not verdict.allowed and verdict.reason != UNREADABLE_REASON
+        except Exception:  # noqa: BLE001 - a failed lookup proves nothing
+            refuse = False
+        if refuse:
+            refused.append(url)
+        else:
+            kept.append((url, body))
+
+    if refused:
+        log.info("discovery_payloads_refused", count=len(refused),
+                 first=refused[0][:120])
+    return kept, refused
+
+
 def _note_robots_disallowed_payloads(
     result: DiscoveryResult, payloads: list[tuple[str, Any]], target: str
 ) -> None:
@@ -841,8 +912,8 @@ def _note_robots_disallowed_payloads(
     if not payloads:
         return
 
-    from app.adapters.robots import RobotsChecker
     from app.adapters.playwright_base import build_user_agent
+    from app.adapters.robots import UNREADABLE_REASON, RobotsChecker
     from app.config import get_settings
 
     settings = get_settings()
@@ -859,7 +930,13 @@ def _note_robots_disallowed_payloads(
     disallowed: list[str] = []
     for url in considered:
         try:
-            if not checker.check(url).allowed:
+            verdict = checker.check(url)
+            # Only what the site actually said. A 5xx on robots.txt reads as a
+            # blanket disallow inside the checker, and printing that as
+            # "disallowed by its robots.txt" would put words in the site's
+            # mouth on a screen where someone decides whether to trust a
+            # hotel's configuration. See _drop_robots_disallowed.
+            if not verdict.allowed and verdict.reason != UNREADABLE_REASON:
                 disallowed.append(url)
         except Exception:  # noqa: BLE001
             # A robots lookup that fails is not evidence of anything, and this
@@ -951,6 +1028,8 @@ def inspect_url(
     # than to cause one.
     never_settled = False
     waited_for_quiet_ms = 0
+    # Endpoints the site asked us to stay out of, dropped before scoring.
+    refused_by_robots: list[str] = []
     # Declared out here because corroboration below runs after the browser is
     # gone, and a probe that fails before the page is read must still leave a
     # defined -- and empty -- set behind it.
@@ -1109,6 +1188,11 @@ def inspect_url(
             except Exception:  # noqa: BLE001 - see above
                 icon_marked = frozenset()
 
+            # Before the JSON is scored, and so before the decision about
+            # whether the DOM is needed: a payload we may not read must not
+            # win, and must not suppress the fallback that would have.
+            payloads, refused_by_robots = _drop_robots_disallowed(payloads)
+
             if not _has_usable_json(payloads, page_text, icon_marked=icon_marked):
                 if unlearnable:
                     log.info("dom_scan_skipped", url=target[:120], why=unlearnable)
@@ -1173,6 +1257,16 @@ def inspect_url(
             f"Nothing was changed. Try again when the page is showing rates — "
             f"a configuration derived from an empty page would outlive the "
             f"night that emptied it."
+        )
+
+    if refused_by_robots:
+        paths = sorted({urlparse(u).path[:60] for u in refused_by_robots})[:4]
+        result.notes.append(
+            f"{len(refused_by_robots)} JSON response(s) were left out of this "
+            f"reading because the site's robots.txt disallows them "
+            f"({', '.join(paths)}). A configuration built on one would read a "
+            f"path we have been asked to stay out of, on every check. The "
+            f"rendered page is the permitted surface here."
         )
 
     _note_robots_disallowed_payloads(result, payloads, target)

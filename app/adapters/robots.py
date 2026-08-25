@@ -40,6 +40,18 @@ log = get_logger("robots")
 CACHE_TTL_SECONDS = 86_400
 _FETCH_TIMEOUT = 10.0
 
+#: The blanket disallow synthesised when robots.txt answers 5xx. It is a
+#: SUBSTITUTE for rules, not rules: "we could not ask", rather than "they said
+#: no", and the two have to stay tellable apart.
+#:
+#: Refusing to FETCH on either is right -- a server that cannot state its rules
+#: has not granted anything. Refusing to READ evidence already in hand is right
+#: only for a real prohibition. commonservice.ipms247.com answers 503 to
+#: /robots.txt, so treating the two alike would let one outage declare a
+#: hotel's own rates off-limits and strand it with no configuration at all.
+_UNREADABLE = "# robots.txt unreadable\nUser-agent: *\nDisallow: /"
+UNREADABLE_REASON = "robots.txt unreadable (server error), treated as disallow"
+
 
 @dataclass(frozen=True, slots=True)
 class RobotsVerdict:
@@ -114,7 +126,7 @@ class RobotsChecker:
             # erroring on robots.txt cannot tell us its rules, and assuming
             # permission while it is broken is the wrong default.
             log.warning("robots_server_error", url=robots_url, status=resp.status_code)
-            return "User-agent: *\nDisallow: /"
+            return _UNREADABLE
 
         return resp.text
 
@@ -166,10 +178,17 @@ class RobotsChecker:
         except Exception:  # noqa: BLE001 - malformed robots.txt
             delay = None
 
+        if allowed:
+            reason = "allowed by robots.txt"
+        elif text == _UNREADABLE:
+            reason = UNREADABLE_REASON
+        else:
+            reason = "disallowed by robots.txt"
+
         return RobotsVerdict(
             allowed=allowed,
             crawl_delay=float(delay) if delay else None,
-            reason="allowed by robots.txt" if allowed else "disallowed by robots.txt",
+            reason=reason,
         )
 
     def assert_allowed(self, url: str) -> RobotsVerdict:
