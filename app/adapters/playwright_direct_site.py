@@ -279,16 +279,41 @@ class PlaywrightDirectSiteAdapter:
             # Nothing found. The page either says "sold out" or it has been
             # redesigned, and the difference decides whether we write a
             # business event or raise an alert. We never guess between them.
-            body = _safe_text(page, "body")[:4000]
+            #
+            # ASKED OF THE WHOLE PAGE, because where a site puts its
+            # availability notice is not a decision it makes with us in mind.
+            # This read the first 4,000 characters. Treebo puts a header, a
+            # search bar, breadcrumbs, the hotel name, ratings, amenities and
+            # the policy list ahead of the booking panel, so "SOLD OUT for
+            # the selected dates" sat at character 8,319 of 10,780 and the
+            # cut fell four thousand short of it. A hotel that was simply
+            # full was reported as "almost certainly a redesign", every half
+            # hour, for as long as it stayed full -- an alert a human has to
+            # close and a repair attempt spent on a page with nothing to
+            # teach, while the night itself went unrecorded.
+            #
+            # _wait_for_price, eleven lines above, had already found that
+            # very phrase -- it searches the whole body -- and returned early
+            # on it. The answer was known and then discarded by a slice.
+            body = _safe_text(page, "body")
+            lowered = body.lower()
             markers = config.get("sold_out_markers") or []
-            if any(m.lower() in body.lower() for m in markers) or looks_sold_out(body):
-                log.info("sold_out_detected", hotel=context.hotel_name)
+            if any(m.lower() in lowered for m in markers) or looks_sold_out(body):
+                log.info("sold_out_detected", hotel=context.hotel_name,
+                         page_text_chars=len(body))
                 return [], True
+            # What was searched, and how much of it. The old message asserted
+            # a redesign and offered nothing to check that claim against, so
+            # a marker this list is simply missing looks identical, on the
+            # screen where someone has to act, to a site that really did move
+            # its markup.
             raise SchemaDriftError(
-                f"No elements matched room_card selector {card_selector!r} and "
-                f"the page does not say it is sold out. This is almost "
-                f"certainly a redesign — see the saved screenshot.",
-                context={"selector": card_selector, "hotel": context.hotel_name},
+                f"No elements matched room_card selector {card_selector!r}, and "
+                f"no sold-out phrase appears anywhere in the "
+                f"{len(body):,} characters of text the page rendered. This is "
+                f"almost certainly a redesign — see the saved screenshot.",
+                context={"selector": card_selector, "hotel": context.hotel_name,
+                         "page_text_chars": len(body)},
             )
 
         offers: list[NormalizedOffer] = []
