@@ -386,13 +386,25 @@ async def attach_source_from_url(
             result = await run_in_threadpool(inspect_url, str(payload.url))
         except Exception as exc:  # noqa: BLE001 - reported, never leaked raw
             log.warning("discovery_failed", url=str(payload.url)[:120], error=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
+            # A FetchError has already said what happened, to an
+            # operator, in a sentence they can act on: which bot wall
+            # matched, or how long the page was given to load. Reporting
+            # only the class name threw all of that away and told
+            # everyone the same thing about CAPTCHAs -- including the
+            # people whose page had simply been slow.
+            from app.core.errors import FetchError
+
+            if isinstance(exc, FetchError):
+                detail = f"Could not inspect that page. {exc}"
+            else:
+                detail = (
                     f"Could not inspect that page: {type(exc).__name__}. If it "
                     f"showed a CAPTCHA or a bot wall, that is a refusal and this "
                     f"hotel needs manual entry instead."
-                ),
+                )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=detail,
             ) from exc
 
         if not result.ok:

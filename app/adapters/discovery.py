@@ -54,6 +54,13 @@ from app.core.logging import get_logger
 
 log = get_logger("discovery")
 
+#: How long to wait for a page to stop fetching things before giving up on
+#: quiet and inspecting it as it stands. Long enough for a booking widget to
+#: finish its availability call; short enough that a page with a permanent
+#: heartbeat -- most large OTAs -- costs a quarter of a minute rather than
+#: the whole navigation budget.
+_SETTLE_MS = 15_000
+
 #: Field names that tend to hold the room's name. Ordered: an exact hit on an
 #: earlier entry beats a fuzzy hit on a later one.
 _NAME_HINTS = (
@@ -885,16 +892,23 @@ def inspect_url(
     a real fetch: pinned locale and timezone, resource blocking, an honest
     User-Agent, and a hard stop if a bot wall appears.
 
-    Booking engines load availability after first paint, so this waits for the
-    network to settle and then a little longer — returning at DOMContentLoaded
-    would inspect an empty page and report that the site exposes nothing.
+    Booking engines load availability after first paint, so the document
+    being ready is not the same as the rates being there. This loads, then
+    waits for the network to go quiet, then waits a little longer still.
+
+    The quiet is ASKED FOR, not required. A page that never stops fetching
+    things is read as it stands rather than abandoned — see the navigation
+    block for why that distinction is the difference between supporting an
+    OTA and reporting "TimeoutError" about a page that had rendered fine.
     """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
     from app.adapters.playwright_base import (
         build_user_agent,
         detect_bot_wall,
     )
     from app.config import get_settings
-    from app.core.errors import BlockedError
+    from app.core.errors import BlockedError, TimeoutError_
 
     settings = get_settings()
     target = url
@@ -932,6 +946,11 @@ def inspect_url(
     payloads: list[tuple[str, Any]] = []
     dom_cards: list[dict] = []
     unlearnable: str | None = None
+    # Set when the page never stopped talking, with how long it was given.
+    # Read after the browser is closed, to explain an empty result rather
+    # than to cause one.
+    never_settled = False
+    waited_for_quiet_ms = 0
     # Declared out here because corroboration below runs after the browser is
     # gone, and a probe that fails before the page is read must still leave a
     # defined -- and empty -- set behind it.
@@ -962,9 +981,52 @@ def inspect_url(
                     pass
 
             page.on("response", _on_response)
-            page.goto(target, wait_until="networkidle", timeout=timeout_ms)
+            # A PAGE IS READY WHEN IT HAS PAINTED ITS RATES, NOT WHEN THE
+            # NETWORK GOES QUIET.
+            #
+            # networkidle means "no requests for 500ms", and a large OTA
+            # never offers that: analytics beacons, session heartbeats,
+            # lazy-loaded imagery and third-party frames keep traffic moving
+            # for as long as the tab is open. Asking for it as the condition
+            # of the NAVIGATION meant the whole probe failed on pages that
+            # had loaded perfectly -- and failed by machine rather than by
+            # site, because whether a page draws breath for half a second is
+            # a race between the connection and the trackers. The same URL
+            # attached on one laptop and reported "TimeoutError" on another.
+            #
+            # So: load the document, then ASK for quiet and carry on without
+            # it. A page that never settles is inspected anyway -- every JSON
+            # response it fetched in the meantime is already captured, which
+            # is the thing the wait was ever for.
+            try:
+                page.goto(target, wait_until="domcontentloaded",
+                          timeout=timeout_ms)
+            except PlaywrightTimeout as exc:
+                # The page genuinely did not load. Said in words,
+                # because the caller reports what it catches and
+                # "TimeoutError" tells an operator nothing about which
+                # of the several waits in here ran out.
+                raise TimeoutError_(
+                    f"{target[:80]} did not finish loading within "
+                    f"{timeout_ms // 1000}s. A slow connection or a site "
+                    f"that is down; worth trying again before treating "
+                    f"it as a hotel that needs manual entry.",
+                    context={"url": target},
+                ) from exc
+            # Never longer than the caller's whole budget: a probe given ten
+            # seconds must not spend fifteen of them waiting for quiet.
+            settle_ms = min(_SETTLE_MS, timeout_ms)
+            try:
+                page.wait_for_load_state("networkidle", timeout=settle_ms)
+            except PlaywrightTimeout:
+                never_settled = True
+                waited_for_quiet_ms = settle_ms
+                log.info("discovery_page_never_idle", url=target[:120],
+                         waited_ms=settle_ms)
             # Widgets frequently fetch rates a beat after the network settles.
-            page.wait_for_timeout(4_000)
+            # A page that never settled gets longer: nothing has told us its
+            # rates have arrived, so the grace period is all it has.
+            page.wait_for_timeout(8_000 if never_settled else 4_000)
 
             # Many booking widgets fetch nothing until they are opened: the
             # rates arrive on click, not on load. Without this, a site with a
@@ -988,7 +1050,34 @@ def inspect_url(
                     f"site needs a human decision, not a workaround.",
                     context={"url": target, "marker": marker},
                 )
-            page_text = page.inner_text("body", timeout=5_000) or ""
+            # THE OTHER WAIT THAT USED TO END THE PROBE THE SAME WAY.
+            #
+            # Reading the body of a heavy OTA page is not always a
+            # five-second job, and when it was not, this raised a bare
+            # Playwright TimeoutError from three lines below a bot-wall
+            # check -- indistinguishable, to whoever read the message, from
+            # the navigation timing out. One more try with a longer budget,
+            # by which point the page has had several seconds more to
+            # finish laying itself out.
+            #
+            # No fallback to page.content(): corroboration is the rule that
+            # makes discovery trustworthy, and it asks whether a price is on
+            # SCREEN. Matching against raw HTML would confirm prices out of
+            # scripts and hidden markup -- a config that looks verified and
+            # is not. Better to fail, and say so.
+            try:
+                page_text = page.inner_text("body", timeout=5_000) or ""
+            except PlaywrightTimeout:
+                try:
+                    page_text = page.inner_text("body", timeout=15_000) or ""
+                except PlaywrightTimeout as exc:
+                    raise TimeoutError_(
+                        f"Loaded {target[:80]} but could not read the text of "
+                        f"the page within 20s -- it is unusually heavy, or "
+                        f"still rendering. Worth one more attempt; if it "
+                        f"keeps happening this hotel needs manual entry.",
+                        context={"url": target},
+                    ) from exc
 
             # JSON first, because an API contract survives a restyle and CSS
             # does not. The DOM scan is the fallback for pages that render
@@ -1011,9 +1100,14 @@ def inspect_url(
             # Collected while the browser is still open: corroboration runs
             # after it closes, and by then the only record of which numbers
             # the page called money is this set.
-            icon_marked = (
-                icon_marked_prices(page) if currency_is_an_icon else frozenset()
-            )
+            # Guarded like the query_selector above it, and for the reason:
+            # a DOM read that fails is a lost hint, not a lost probe.
+            try:
+                icon_marked = (
+                    icon_marked_prices(page) if currency_is_an_icon else frozenset()
+                )
+            except Exception:  # noqa: BLE001 - see above
+                icon_marked = frozenset()
 
             if not _has_usable_json(payloads, page_text, icon_marked=icon_marked):
                 if unlearnable:
@@ -1063,6 +1157,14 @@ def inspect_url(
                 f"{len(dom_cards)} candidate room lists had prices that could "
                 f"be confirmed against what the page displays."
             )
+
+    if not result.ok and never_settled:
+        result.notes.append(
+            f"The page never stopped fetching things, so it was read after "
+            f"{waited_for_quiet_ms // 1000}s rather than when it went quiet. If its "
+            f"rates arrive later than that, the URL you land on AFTER "
+            f"picking dates will have them on it already."
+        )
 
     if not result.ok and unlearnable:
         result.unlearnable = unlearnable
