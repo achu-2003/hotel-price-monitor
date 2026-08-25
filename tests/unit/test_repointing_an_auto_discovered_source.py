@@ -73,3 +73,48 @@ def test_the_property_is_not_read_as_having_changed():
     in its link.
     """
     assert _detection_for_discovery(SWIFTBOOK).external_id is None
+
+
+# -- a standing-rate source may keep its date-less link ----------------
+#
+# A hotel whose booking page carries no dates -- pripgo, and every small site
+# that prices from its homepage -- is attached by LABELLING it a standing rate,
+# not by refusing it: attach_source_from_url sets standing_rate = not
+# detection.is_complete, and create_target then refuses a future-dated window
+# on such a source, which is the only way the missing dates could produce a
+# wrong number.
+#
+# replace-url did not know that, and refused every URL without a check-in
+# parameter. The effect was a hotel that could be attached from its homepage
+# and then never have its link corrected, because the only URL that site has
+# is the one being refused -- with a warning about prices going stale that
+# describes a per-night source, not this one.
+
+from app.api.v1.hotels import _may_carry_no_dates  # noqa: E402
+
+
+class _Detection:
+    def __init__(self, complete: bool):
+        self.is_complete = complete
+
+
+class TestAStandingRateSource:
+    def test_it_may_be_repointed_at_another_date_less_url(self):
+        """The dead end: this is the only kind of URL the site has."""
+        assert _may_carry_no_dates(_Detection(False), was_standing_rate=True) is True
+
+    def test_a_dated_url_is_still_accepted(self):
+        """An upgrade, not a downgrade -- and the endpoint clears the flag so
+        the hotel can be watched ahead."""
+        assert _may_carry_no_dates(_Detection(True), was_standing_rate=True) is True
+
+
+class TestAPerNightSource:
+    def test_a_date_less_url_is_still_refused(self):
+        """The guard's real job. Pinning a source that follows dates to one
+        night is silent: every check re-reads it and the dashboard goes on
+        presenting the number as current."""
+        assert _may_carry_no_dates(_Detection(False), was_standing_rate=False) is False
+
+    def test_a_dated_url_is_accepted(self):
+        assert _may_carry_no_dates(_Detection(True), was_standing_rate=False) is True

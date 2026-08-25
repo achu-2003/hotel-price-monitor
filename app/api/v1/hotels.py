@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import delete, func, select
 
-from app.adapters.engines import detect, known_engines
+from app.adapters.engines import Detection, detect, known_engines
 from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
 from app.db.models import (
     Hotel,
@@ -556,6 +556,26 @@ async def update_hotel_source(
     )
 
 
+def _may_carry_no_dates(detection: Detection, was_standing_rate: bool) -> bool:
+    """May this replacement URL leave the stay dates out?
+
+    A URL with no check-in parameter pins a source to whatever night the page
+    happens to show. For a source that follows dates that is a silent downgrade
+    -- every check re-reads one night while the dashboard goes on presenting it
+    as current -- so it is refused.
+
+    For a source that was attached from a date-less URL it is not a downgrade
+    at all: it is the same kind of URL it already has. Those are STANDING RATE
+    sources, accepted and labelled deliberately on attach, and the label is
+    what keeps them honest (``create_target`` refuses a future-dated window on
+    one). Refusing here meant a hotel could be attached from its homepage and
+    then never have its link corrected, because every URL it could
+    legitimately carry was rejected by the one flow that exists to fix it --
+    with a staleness warning that does not describe it.
+    """
+    return detection.is_complete or was_standing_rate
+
+
 @router.post("/hotel-sources/{hotel_source_id}/replace-url", response_model=ReplaceUrlResult)
 async def replace_hotel_source_url(
     hotel_source_id: int,
@@ -632,7 +652,25 @@ async def replace_hotel_source_url(
                     f"scripts/probe_site.py against it to find out what it exposes."
                 ),
             )
-    if not detection.is_complete:
+    # A SOURCE ATTACHED FROM A DATE-LESS URL IS ALREADY A STANDING RATE.
+    #
+    # attach_source_from_url does not refuse those: it accepts and LABELS them
+    # (see the comment above ``standing_rate = not detection.is_complete``),
+    # because a site that publishes one current price with no notion of a night
+    # is a real thing to monitor, and the flag is what stops a future-dated
+    # target filing today's rate under next Saturday.
+    #
+    # This guard did not know that. So a hotel could be attached from its
+    # homepage and then never have its link corrected -- every URL that source
+    # could legitimately carry was refused by the one flow that exists to fix
+    # it, with a warning about going stale that does not apply to it. It is the
+    # same trap the unknown-engine branch above was fixed for, reached by a
+    # different door.
+    #
+    # Refused only when it would DOWNGRADE: a source that follows dates today
+    # must not be quietly pinned to a single night.
+    was_standing_rate = bool((hotel_source.adapter_config or {}).get("standing_rate"))
+    if not _may_carry_no_dates(detection, was_standing_rate):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
@@ -709,9 +747,20 @@ async def replace_hotel_source_url(
     # template there would keep fetching the OLD property while the row, the
     # dashboard and the audit trail all said the link had been replaced —
     # the worst kind of wrong, because everything visible agrees.
-    if hotel_source.adapter_config and "url_template" in hotel_source.adapter_config:
-        config = dict(hotel_source.adapter_config)
+    config = dict(hotel_source.adapter_config or {})
+    if "url_template" in config:
         config["url_template"] = detection.url_template
+
+    # A DATED URL ON A STANDING-RATE SOURCE IS AN UPGRADE, and the flag has to
+    # go with it. It is what makes create_target refuse a future-dated window,
+    # so leaving it behind would keep the hotel pinned to tonight by a fact
+    # that had just stopped being true -- and the operator who fixed the link
+    # would have no way to see why.
+    if was_standing_rate and detection.is_complete:
+        config.pop("standing_rate", None)
+        log.info("standing_rate_cleared", hotel_source_id=hotel_source_id)
+
+    if config != (hotel_source.adapter_config or {}):
         hotel_source.adapter_config = config
 
     hotel_source.last_verified_at = None
