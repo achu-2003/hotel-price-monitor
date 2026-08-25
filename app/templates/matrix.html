@@ -15,7 +15,10 @@
   <label>Check out <input type="date" name="check_out" value="{{ check_out }}"></label>
   <label>Adults <input type="number" name="adults" min="1" max="20" value="{{ adults }}"></label>
   <button type="submit">Show</button>
-  <span class="muted">Defaults to the coming weekend.</span>
+  {# The note is decided by the route, because what the default IS depends on
+     what has been collected. A form that claims "defaults to the coming
+     weekend" while showing tonight is worse than one that says nothing. #}
+  {% if default_note %}<span class="muted">{{ default_note }}</span>{% endif %}
 </form>
 
 {% if rows %}
@@ -70,5 +73,24 @@
   Nothing has been collected for these dates and occupancy yet. Prices appear
   once a monitor target covering this stay window has run successfully.
 </p>
+{% if collected %}
+{# The nights that DO have prices. A blank page invites "is it broken?", and
+   the honest answer is usually "nothing is watching that night" -- which is
+   visible the moment the collected windows are listed beside it. #}
+<p class="muted">
+  Collected so far:
+  {% for night in collected %}
+  <a href="/matrix?check_in={{ night[0] }}&check_out={{ night[1] }}&adults={{ night[2] }}">
+    {{ night[0].strftime('%d %b') }}–{{ night[1].strftime('%d %b') }}
+    {%- if night[2] != adults %} ({{ night[2] }} adults){% endif -%}
+  </a>{% if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
+<p class="muted">
+  A night that is not listed has nothing watching it. Monitor targets carry a
+  lead time — a target at 7 days out collects the night a week ahead — so a
+  window nobody covers stays blank however often the checks run.
+</p>
+{% endif %}
 {% endif %}
 {% endblock %}

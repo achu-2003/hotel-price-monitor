@@ -465,8 +465,17 @@ async def matrix(
 ):
     """All hotels x rooms for one night. The comparison screen.
 
-    Defaults to the next weekend, because that is the window where rates move
-    most and the one an operator is most often asked about.
+    DEFAULTS TO A NIGHT THAT HAS BEEN COLLECTED, which is not the same as the
+    night one would most like to see. It defaulted to the coming weekend --
+    the window where rates move most, and a good answer if anything were
+    watching it. Every enabled target on this deployment is rolling with a
+    lead time of zero, so the only nights that ever have prices are tonight
+    and the recent past, and the comparison screen opened empty every single
+    day: "Nothing has been collected for these dates" about dates the page
+    itself had chosen.
+
+    A default is a guess at what someone wants to see. Guessing at data that
+    exists beats guessing at data that would be more interesting.
     """
     if user is None:
         return _redirect_to_login(request)
@@ -477,9 +486,26 @@ async def matrix(
     if adults is None:
         adults = 2
 
+    default_note = None
     if check_in is None or check_out is None:
-        weekend = next_weekend(local_today())
-        check_in, check_out = weekend.check_in, weekend.check_out
+        latest = (
+            await session.execute(
+                select(PriceSeries.check_in, PriceSeries.check_out)
+                .where(PriceSeries.adults == adults)
+                .order_by(PriceSeries.check_in.desc())
+                .limit(1)
+            )
+        ).first()
+        if latest is not None:
+            check_in, check_out = latest
+            default_note = "Showing the most recent night collected."
+        else:
+            # Nothing has ever been collected, so there is no evidence to
+            # prefer. The weekend is as good a first guess as any, and the
+            # empty state below explains itself.
+            weekend = next_weekend(local_today())
+            check_in, check_out = weekend.check_in, weekend.check_out
+            default_note = "Defaults to the coming weekend."
 
     rows = (
         await session.execute(
@@ -522,12 +548,30 @@ async def matrix(
         prices = [c["price"] for c in entry["cells"] if c["is_available"] and c["price"]]
         entry["cheapest"] = min(prices) if prices else None
 
+    # Which nights DO have prices, for the empty state. "Nothing here" is a
+    # dead end; "nothing here, and these are the nights that have something"
+    # is the answer to the question the empty page provokes -- and on a
+    # deployment whose targets all run at zero lead time, it is also the
+    # explanation for why every other date is blank.
+    collected: list = []
+    if not grouped:
+        collected = (
+            await session.execute(
+                select(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
+                .group_by(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
+                .order_by(PriceSeries.check_in.desc())
+                .limit(6)
+            )
+        ).all()
+
     return await _render(
         request, user, session, "matrix.html",
         rows=sorted(grouped.values(), key=lambda e: e["hotel"].name),
         check_in=check_in,
         check_out=check_out,
         adults=adults,
+        default_note=default_note,
+        collected=collected,
     )
 
 
