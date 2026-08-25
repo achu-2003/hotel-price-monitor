@@ -308,6 +308,8 @@ def compare_across_stay_dates(
     *,
     max_gap_days: int = _MAX_CARRY_OVER_GAP_DAYS,
     this_check_in: date | None = None,
+    previous_lead_days: int | None = None,
+    this_lead_days: int | None = None,
 ) -> CarryOverChange | None:
     """Did tonight's rate move against the last night we priced?
 
@@ -360,6 +362,31 @@ def compare_across_stay_dates(
         gap = (this_check_in - previous.check_in).days
         if gap < 1 or gap > max_gap_days:
             return None
+
+    # LIKE FOR LIKE, OR NOT AT ALL.
+    #
+    # The lead distance is how far ahead of the reading the night sits: 0 for
+    # a target watching tonight, 7 for one watching a week out. A same-day
+    # rate and a week-ahead rate are answers to different questions, and the
+    # difference between them is not a repricing.
+    #
+    # This only became reachable when a second window was added. Roys Kozee
+    # Kaves had been watched at lead 0 for weeks; the moment a lead-7 target
+    # ran, its first sighting of 1 Sep found 25 Aug -- exactly seven days back,
+    # inside the gap window, the most recent night priced -- and published five
+    # rows reading "+₹130 vs last night" about a night that was not last night
+    # and a hotel that had not moved its price. Five alerts, all sent.
+    #
+    # Steady state is unaffected: tomorrow the lead-7 target sees 2 Sep and
+    # finds 1 Sep, both at distance 7. An outage is unaffected too -- a monitor
+    # off over a weekend still compares two nights it watched on the day, both
+    # at distance 0 -- which is the case the gap window exists for.
+    if (
+        previous_lead_days is not None
+        and this_lead_days is not None
+        and previous_lead_days != this_lead_days
+    ):
+        return None
 
     old_price = previous.last_price
     if new_price == old_price:

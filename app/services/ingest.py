@@ -33,8 +33,9 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -63,6 +64,7 @@ from app.services.comparison import (
     compare,
     compare_across_stay_dates,
 )
+from app.config import get_settings
 from app.services.dates import StayWindow
 from app.services.offer_key import compute_offer_key
 
@@ -785,6 +787,18 @@ def _previous_stay_series(
     ).scalar_one_or_none()
 
 
+def _lead_days(check_in: date, priced_at: datetime) -> int:
+    """How far ahead of the reading the night sat, in local days.
+
+    Local, not UTC: between 18:30 and 24:00 UTC the two dates differ, and a
+    lead distance off by one would make a window look like a different window
+    for a third of every day. Same reasoning as :func:`local_today`.
+    """
+    settings = get_settings()
+    local = priced_at.astimezone(ZoneInfo(settings.timezone)).date()
+    return (check_in - local).days
+
+
 def _carry_over_change(
     session: Session,
     *,
@@ -835,6 +849,13 @@ def _carry_over_change(
         observation,
         ctx.thresholds,
         this_check_in=ctx.stay.check_in,
+        # How far ahead of the reading each night sat. Both are derived the
+        # same way -- the night, minus the local date it was first priced on --
+        # so a target's lead time is recovered without threading it through the
+        # payload, and a series first seen before lead windows existed still
+        # reports the distance it was actually watched at.
+        previous_lead_days=_lead_days(previous.check_in, previous.first_seen_at),
+        this_lead_days=_lead_days(ctx.stay.check_in, ctx.checked_at),
     )
     if change is None:
         return
