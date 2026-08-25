@@ -29,11 +29,42 @@ from app.core.errors import SchemaDriftError
 MISSING = object()
 
 
-def dig(payload: Any, path: str | None, default: Any = MISSING) -> Any:
+#: One path segment that picks a list element by a field of its own, e.g.
+#: ``pricing[adultCount={adults}]``. The value may be a literal or one of the
+#: booking conditions -- see :func:`dig`.
+_SELECTOR_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<field>[^=\[\]]+)=(?P<value>[^\[\]]*)\]$")
+
+
+def dig(
+    payload: Any,
+    path: str | None,
+    default: Any = MISSING,
+    *,
+    params: dict[str, Any] | None = None,
+) -> Any:
     """Follow a dotted path into nested dicts and lists.
 
     An empty path returns the payload itself, which is what lets a config say
     "the room list IS the response body".
+
+    A segment may also SELECT from a list by one of its fields:
+
+        pricing[adultCount={adults}].priceForPax.0.priceBeforeTax
+
+    which is the smallest addition that covers a shape the index language
+    could not reach at all. Hotelzify -- Sterling Yelagiri's engine -- returns
+    seventy-two pricing entries per room, one per rate plan x occupancy x date,
+    and the nightly rate for two adults is inside the one whose adultCount is
+    2. ``pricing.0`` is the SINGLE-occupancy rate: a real number, off by
+    thousands, and impossible to notice in a stored series.
+
+    Without this the only reachable price on that payload was ``defaultPrice``,
+    a placeholder the engine leaves at 100.00 on rooms whose rate is 12,000 --
+    which is what the monitor recorded, unchanged, for as long as it watched.
+
+    ``{name}`` in the value is filled from ``params``: the booking conditions
+    of the fetch, so one configuration serves every occupancy rather than
+    hard-coding the one it was discovered at.
     """
     if path is None or path == "":
         return payload
@@ -42,6 +73,13 @@ def dig(payload: Any, path: str | None, default: Any = MISSING) -> Any:
     for part in path.split("."):
         if current is None:
             return _or_default(default, path)
+
+        if (selector := _SELECTOR_RE.match(part)) is not None:
+            current = _select(current, selector, params, default, path)
+            if current is _MISS:
+                return _or_default(default, path)
+            continue
+
         if isinstance(current, list):
             try:
                 current = current[int(part)]
@@ -55,6 +93,66 @@ def dig(payload: Any, path: str | None, default: Any = MISSING) -> Any:
             continue
         return _or_default(default, path)
     return current
+
+
+#: Distinct from ``None``, which a payload may legitimately hold.
+_MISS = object()
+
+
+def _select(current: Any, selector: re.Match, params, default, path: str) -> Any:
+    """The ``key[field=value]`` step of a path. See :func:`dig`."""
+    key, field, wanted = selector["key"], selector["field"], selector["value"]
+
+    if isinstance(current, dict):
+        if key not in current:
+            return _MISS
+        current = current[key]
+    else:
+        return _MISS
+
+    if not isinstance(current, list):
+        return _MISS
+
+    if wanted.startswith("{") and wanted.endswith("}"):
+        name = wanted[1:-1]
+        if not params or name not in params:
+            # A config asking for a condition this fetch does not carry is a
+            # configuration error, not a missing price, and guessing at it
+            # would file one occupancy's rate under another's.
+            raise SchemaDriftError(
+                f"Field path {path!r} selects on {wanted}, which this fetch "
+                f"does not provide. Known conditions: "
+                f"{', '.join(sorted(params or {})) or 'none'}.",
+                context={"path": path},
+            )
+        wanted = params[name]
+
+    for item in current:
+        if not isinstance(item, dict) or field not in item:
+            continue
+        # Compared as text: JSON carries 2 and a config carries "2", and a
+        # mapping that worked until someone quoted a number is not a mapping.
+        if str(item[field]) == str(wanted):
+            return item
+    return _MISS
+
+
+def booking_conditions(context: Any) -> dict[str, Any]:
+    """The values a ``key[field={name}]`` selector may be filled from.
+
+    Deliberately only the conditions the fetch was made UNDER. A selector that
+    could reach anything else would be choosing a price by something other than
+    what was asked for, which is the failure this whole path language exists to
+    avoid.
+    """
+    return {
+        "adults": context.adults,
+        "children": context.children,
+        "rooms": context.rooms,
+        "check_in": context.check_in.isoformat(),
+        "check_out": context.check_out.isoformat(),
+        "currency": context.currency,
+    }
 
 
 def _or_default(default: Any, path: str) -> Any:
@@ -112,6 +210,7 @@ def _money_field(
     key: str,
     *,
     allow_zero: bool = False,
+    params: dict[str, Any] | None = None,
 ) -> Decimal | None:
     """Read one money field, distinguishing *absent* from *nonsense*.
 
@@ -132,7 +231,7 @@ def _money_field(
     if not path:
         return None
 
-    value = dig(node, path, None)
+    value = dig(node, path, None, params=params)
     if value is None:
         return None
 
@@ -148,6 +247,7 @@ def offer_from_mapping(
     mapping: dict[str, Any],
     *,
     default_currency: str = "INR",
+    params: dict[str, Any] | None = None,
 ) -> NormalizedOffer:
     """Build one offer from one room node, per the configured field mapping.
 
@@ -166,7 +266,7 @@ def offer_from_mapping(
     ``rooms_left``      urgency counter, informational only
     ==================  =============================================
     """
-    raw_name = dig(node, mapping.get("room_name"), None)
+    raw_name = dig(node, mapping.get("room_name"), None, params=params)
     if not raw_name or not str(raw_name).strip():
         raise SchemaDriftError(
             "A room node carried no name. Without a name the offer cannot be "
@@ -175,14 +275,16 @@ def offer_from_mapping(
         )
 
     available = _truthy(
-        dig(node, mapping["available"], True) if mapping.get("available") else True
+        dig(node, mapping["available"], True, params=params)
+        if mapping.get("available")
+        else True
     )
 
-    inclusive = _money_field(node, mapping, "price_inclusive")
-    exclusive = _money_field(node, mapping, "price_exclusive")
+    inclusive = _money_field(node, mapping, "price_inclusive", params=params)
+    exclusive = _money_field(node, mapping, "price_exclusive", params=params)
     # Taxes may legitimately be zero, and are frequently smaller than the
     # minimum plausible ROOM price, so they get their own floor.
-    taxes = _money_field(node, mapping, "taxes_fees", allow_zero=True)
+    taxes = _money_field(node, mapping, "taxes_fees", allow_zero=True, params=params)
 
     if available and inclusive is None and exclusive is None:
         # The room is offered but we found no price. That is drift, not a
@@ -203,14 +305,18 @@ def offer_from_mapping(
     if exclusive is None and inclusive is not None and taxes is not None:
         exclusive = inclusive - taxes
 
-    rooms_left = dig(node, mapping["rooms_left"], None) if mapping.get("rooms_left") else None
+    rooms_left = (
+        dig(node, mapping["rooms_left"], None, params=params)
+        if mapping.get("rooms_left") else None
+    )
     try:
         rooms_left = int(rooms_left) if rooms_left is not None else None
     except (TypeError, ValueError):
         rooms_left = None
 
     refundable_raw = (
-        dig(node, mapping["refundable"], None) if mapping.get("refundable") else None
+        dig(node, mapping["refundable"], None, params=params)
+        if mapping.get("refundable") else None
     )
 
     return NormalizedOffer(
@@ -219,11 +325,13 @@ def offer_from_mapping(
         price_exclusive=exclusive,
         taxes_fees=taxes,
         currency=str(
-            (dig(node, mapping["currency"], default_currency) if mapping.get("currency")
+            (dig(node, mapping["currency"], default_currency, params=params)
+             if mapping.get("currency")
              else default_currency) or default_currency
         )[:3].upper(),
         meal_plan=_clean(
-            dig(node, mapping["meal_plan"], None) if mapping.get("meal_plan") else None
+            dig(node, mapping["meal_plan"], None, params=params)
+            if mapping.get("meal_plan") else None
         ),
         refundable=None if refundable_raw is None else _truthy(refundable_raw),
         is_available=available,

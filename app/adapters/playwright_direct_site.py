@@ -38,7 +38,12 @@ import time
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout
 
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
-from app.adapters.mapping import dig, offer_from_mapping, render_template
+from app.adapters.mapping import (
+    booking_conditions,
+    dig,
+    offer_from_mapping,
+    render_template,
+)
 from app.adapters.parsing import (
     card_looks_sold_out,
     declared_tax_basis,
@@ -253,7 +258,8 @@ class PlaywrightDirectSiteAdapter:
             return ([], True) if config.get("sold_out_when_empty") else (None, False)
 
         offers = [
-            offer_from_mapping(node, mapping, default_currency=context.currency)
+            offer_from_mapping(node, mapping, default_currency=context.currency,
+                               params=booking_conditions(context))
             for node in nodes
         ]
         log.info("offers_from_json", count=len(offers), hotel=context.hotel_name)

@@ -34,7 +34,12 @@ from typing import Any
 import httpx
 
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
-from app.adapters.mapping import dig, offer_from_mapping, render_template
+from app.adapters.mapping import (
+    booking_conditions,
+    dig,
+    offer_from_mapping,
+    render_template,
+)
 from app.adapters.playwright_base import build_user_agent
 from app.adapters.robots import RobotsChecker
 from app.config import get_settings
@@ -228,7 +233,8 @@ class HttpJsonAdapter:
 
         offers: list[NormalizedOffer] = []
         for node in nodes:
-            offer = offer_from_mapping(node, mapping, default_currency=context.currency)
+            offer = offer_from_mapping(node, mapping, default_currency=context.currency,
+                                       params=booking_conditions(context))
             offers.append(offer)
 
         sold_out = bool(offers) and not any(o.is_available for o in offers)
