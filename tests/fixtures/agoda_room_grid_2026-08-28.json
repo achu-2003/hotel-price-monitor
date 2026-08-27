@@ -1,0 +1,152 @@
+{
+ "roomGridData": {
+  "masterRooms": [
+   {
+    "name": "Superior",
+    "rooms": [
+     {
+      "name": "Superior",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "uid": "d71b4a49-c31f-2123-f33b-a12abbbda69e",
+      "pricePopupViewModel": {
+       "agodaPrice": 7650.0,
+       "formattedRoomPerNightAmount": "7,650.00"
+      },
+      "price": {
+       "display": 7650.0,
+       "crossedOut": 9799.55,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      },
+      "redirectRoomKeyWithPrice": "990199304|False|True|False|2|7650"
+     }
+    ]
+   },
+   {
+    "name": "Villa with Garden View",
+    "rooms": [
+     {
+      "name": "Villa with Garden View",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "uid": "44c4db61-3ceb-d9e7-88b8-05f04c33a604",
+      "pricePopupViewModel": {
+       "agodaPrice": 9900.0,
+       "formattedRoomPerNightAmount": "9,900.00"
+      },
+      "price": {
+       "display": 9900.0,
+       "crossedOut": 10651.81,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      },
+      "redirectRoomKeyWithPrice": "896263149|False|True|False|2|9900"
+     }
+    ]
+   },
+   {
+    "name": "Family Room",
+    "rooms": [
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 4,
+      "uid": "eab66edf-bba8-65ec-5d6e-6fb5099bde8a",
+      "pricePopupViewModel": {
+       "agodaPrice": 13500.0,
+       "formattedRoomPerNightAmount": "13,500.00"
+      },
+      "price": {
+       "display": 13500.0,
+       "crossedOut": 16659.27,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      },
+      "redirectRoomKeyWithPrice": "990199597|False|True|False|2|13500"
+     },
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": false,
+      "maxOccupancy": 4,
+      "uid": "01785083-1cc8-3048-dc46-c1cbffd8cd1a",
+      "pricePopupViewModel": {
+       "agodaPrice": 14400.0,
+       "formattedRoomPerNightAmount": "14,400.00"
+      },
+      "price": {
+       "display": 14400.0,
+       "crossedOut": 16659.27,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 4 adults"
+      },
+      "redirectRoomKeyWithPrice": "990199597|False|True|False|4|14400"
+     }
+    ]
+   },
+   {
+    "name": "Suite",
+    "rooms": [
+     {
+      "name": "Suite",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 4,
+      "uid": "d288fb6c-e683-95a1-12ee-871b15571ce6",
+      "pricePopupViewModel": {
+       "agodaPrice": 15750.0,
+       "formattedRoomPerNightAmount": "15,750.00"
+      },
+      "price": {
+       "display": 15750.0,
+       "crossedOut": 20747.85,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      },
+      "redirectRoomKeyWithPrice": "992978841|False|True|False|2|15750"
+     },
+     {
+      "name": "Suite",
+      "quantity": 1,
+      "isFit": false,
+      "maxOccupancy": 4,
+      "uid": "62f48459-f9ef-9d7e-d86b-8a9276264144",
+      "pricePopupViewModel": {
+       "agodaPrice": 16650.0,
+       "formattedRoomPerNightAmount": "16,650.00"
+      },
+      "price": {
+       "display": 16650.0,
+       "crossedOut": 20747.85,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 4 adults"
+      },
+      "redirectRoomKeyWithPrice": "992978841|False|True|False|4|16650"
+     }
+    ]
+   }
+  ]
+ }
+}

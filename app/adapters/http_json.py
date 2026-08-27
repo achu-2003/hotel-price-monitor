@@ -36,6 +36,7 @@ import httpx
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import (
     booking_conditions,
+    filter_rooms,
     dig,
     offer_from_mapping,
     render_template,
@@ -231,12 +232,17 @@ class HttpJsonAdapter:
                 "sold_out_when_empty once the behaviour is confirmed.",
             )
 
+        # Rows for an occupancy nobody asked for are dropped BEFORE they are
+        # mapped, so they cannot collide with the row that was asked for.
+        nodes = filter_rooms(nodes, config.get("rooms_filter"))
+
         offers: list[NormalizedOffer] = []
         for node in nodes:
             offer = offer_from_mapping(node, mapping, default_currency=context.currency,
                                        params=booking_conditions(context))
             offers.append(offer)
 
+        offers = dedupe_offers(offers, config.get("rooms_dedupe"))
         sold_out = bool(offers) and not any(o.is_available for o in offers)
         return offers, sold_out
 

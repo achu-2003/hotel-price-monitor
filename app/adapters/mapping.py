@@ -34,6 +34,10 @@ MISSING = object()
 #: booking conditions -- see :func:`dig`.
 _SELECTOR_RE = re.compile(r"^(?P<key>[^\[\]]+)\[(?P<field>[^=\[\]]+)=(?P<value>[^\[\]]*)\]$")
 
+#: One path segment that fans out over every element of a list, e.g.
+#: ``masterRooms[*].rooms``. See :func:`dig`.
+_WILDCARD_RE = re.compile(r"^(?P<key>[^\[\]]+)\[\*\]$")
+
 
 def dig(
     payload: Any,
@@ -70,9 +74,34 @@ def dig(
         return payload
 
     current = payload
+    # Once a [*] segment has fanned out, ``current`` is a list of nodes and
+    # every remaining segment is applied to each of them.
+    fanned = False
+
     for part in path.split("."):
         if current is None:
             return _or_default(default, path)
+
+        if (wildcard := _WILDCARD_RE.match(part)) is not None:
+            branches = _fan_out(current, wildcard["key"], fanned)
+            if branches is _MISS:
+                return _or_default(default, path)
+            current, fanned = branches, True
+            continue
+
+        if fanned:
+            gathered = []
+            for node in current:
+                value = _step(node, part, params, path)
+                if value is _MISS:
+                    continue
+                # Flattened rather than nested: "every room under every group"
+                # is a list of rooms, not a list of lists, and a caller asking
+                # for rooms_path should not have to know how deep the grouping
+                # went.
+                gathered.extend(value) if isinstance(value, list) else gathered.append(value)
+            current = gathered
+            continue
 
         if (selector := _SELECTOR_RE.match(part)) is not None:
             current = _select(current, selector, params, default, path)
@@ -80,19 +109,43 @@ def dig(
                 return _or_default(default, path)
             continue
 
-        if isinstance(current, list):
-            try:
-                current = current[int(part)]
-                continue
-            except (ValueError, IndexError):
-                return _or_default(default, path)
-        if isinstance(current, dict):
-            if part not in current:
-                return _or_default(default, path)
-            current = current[part]
-            continue
-        return _or_default(default, path)
+        current = _step(current, part, params, path)
+        if current is _MISS:
+            return _or_default(default, path)
     return current
+
+
+def _step(current: Any, part: str, params, path: str) -> Any:
+    """One ordinary path segment: a list index or a dict key."""
+    if (selector := _SELECTOR_RE.match(part)) is not None:
+        return _select(current, selector, params, _MISS, path)
+    if isinstance(current, list):
+        try:
+            return current[int(part)]
+        except (ValueError, IndexError):
+            return _MISS
+    if isinstance(current, dict):
+        return current.get(part, _MISS)
+    return _MISS
+
+
+def _fan_out(current: Any, key: str, already_fanned: bool) -> Any:
+    """Resolve ``key`` to a list and hand back its elements to walk in parallel.
+
+    A second ``[*]`` flattens into the first rather than nesting, so
+    ``a[*].b[*].c`` reads as "every c under every b under every a".
+    """
+    sources = current if already_fanned else [current]
+    out = []
+    for node in sources:
+        if not isinstance(node, dict):
+            continue
+        value = node.get(key)
+        if isinstance(value, list):
+            out.extend(value)
+        elif value is not None:
+            out.append(value)
+    return out if out or already_fanned else _MISS
 
 
 #: Distinct from ``None``, which a payload may legitimately hold.
@@ -135,6 +188,127 @@ def _select(current: Any, selector: re.Match, params, default, path: str) -> Any
         if str(item[field]) == str(wanted):
             return item
     return _MISS
+
+
+def filter_rooms(nodes: list, spec: dict | None) -> list:
+    """Drop rows a source returns that are not the row we asked for.
+
+    WHY A SOURCE RETURNS ROWS YOU DID NOT ASK FOR
+    =============================================
+    Agoda answers a 2-adult search with one row per occupancy variant of each
+    room, and both carry the same room name::
+
+        Family Room   Max 2 adults   13,500   isFit=true    <- the 2-adult rate
+        Family Room   Max 4 adults   14,400   isFit=false
+
+    Both are real prices for a real room. Only the first is the answer to the
+    question that was asked. Without this the pair reaches the pipeline with
+    one identity, the second is dropped as a collision, and the hotel is
+    monitored as however many rooms happened to survive -- which is what the
+    "shared an identity with another offer" alert is reporting.
+
+    Filtering here rather than teaching the offer key about occupancy is
+    deliberate: the 4-adult rate is not a different PRODUCT to be tracked
+    separately, it is an answer to a different question, and storing it would
+    put a price nobody searched for into a series someone reads.
+
+    ``{"field": "isFit", "equals": true}`` keeps rows whose field matches;
+    ``not_equals`` inverts it. Compared as text, for the same reason
+    :func:`_select` is: JSON carries ``true`` and a config carries ``"true"``,
+    and a filter that stopped working because someone quoted a boolean is not
+    a filter.
+    """
+    if not spec or not isinstance(spec, dict):
+        return nodes
+    field = spec.get("field")
+    if not field:
+        return nodes
+
+    if "equals" in spec:
+        wanted, keep_when_equal = spec["equals"], True
+    elif "not_equals" in spec:
+        wanted, keep_when_equal = spec["not_equals"], False
+    else:
+        return nodes
+
+    target = str(wanted).strip().lower()
+    kept = [
+        node for node in nodes
+        if isinstance(node, dict)
+        and (str(node.get(field)).strip().lower() == target) is keep_when_equal
+    ]
+
+    # A filter that removes everything is a filter that has gone stale -- the
+    # field was renamed, or the source stopped publishing it. Keeping the
+    # unfiltered rows lets the collision alert fire and name the problem,
+    # which beats reporting a sell-out the site never declared.
+    return kept or nodes
+
+
+def dedupe_offers(offers: list, keep: str | None) -> list:
+    """One offer per room when a source sells the same room several times over.
+
+    WHY A SOURCE SELLS THE SAME ROOM TWICE
+    ======================================
+    An OTA is a marketplace. Agoda returns one row per SUPPLIER, so the same
+    room at the same occupancy arrives more than once at different prices::
+
+        Deluxe   supplierId 332    breakfast included    4,950
+        Deluxe   supplierId 3038   room only             5,500
+
+    Room name, occupancy and board together still do not identify one of
+    these, so no selector can tell them apart -- which is why the "add a
+    meal_plan or refundable selector" advice cannot fix this shape. And note
+    the cheaper row is the one WITH breakfast: whatever these differ by, it is
+    not something a guest is choosing between on price.
+
+    Left alone, the pair reaches the pipeline with one identity and one is
+    dropped as a collision -- silently, and not always the same one, so the
+    stored series can step between suppliers and show a price change nobody
+    made.
+
+    ``keep="cheapest"`` records the lowest, which is the figure the listing
+    leads with and the one a competitor comparison rests on. ``"dearest"``
+    exists for symmetry. The choice is deliberate and recorded here rather
+    than left to whichever row happened to arrive first.
+
+    Grouped on the full offer identity, not just the name, so a source that
+    DOES sell genuinely different products -- a room-only and a breakfast rate
+    it labels properly -- keeps both.
+    """
+    if keep not in ("cheapest", "dearest"):
+        return offers
+
+    best: dict[tuple, Any] = {}
+    order: list[tuple] = []
+    for offer in offers:
+        identity = (
+            _norm(offer.raw_room_name),
+            _norm(offer.meal_plan),
+            offer.refundable,
+        )
+        price = offer.price_inclusive if offer.price_inclusive is not None else offer.price_exclusive
+        incumbent = best.get(identity)
+        if incumbent is None:
+            best[identity] = offer
+            order.append(identity)
+            continue
+
+        held = incumbent.price_inclusive if incumbent.price_inclusive is not None else incumbent.price_exclusive
+        # An offer with no price never displaces one that has a price: a
+        # sold-out row and a priced row for the same room are not competing
+        # quotes, and preferring the empty one would record a sell-out the
+        # site never declared.
+        if price is None:
+            continue
+        if held is None or (price < held if keep == "cheapest" else price > held):
+            best[identity] = offer
+
+    return [best[identity] for identity in order]
+
+
+def _norm(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 def booking_conditions(context: Any) -> dict[str, Any]:

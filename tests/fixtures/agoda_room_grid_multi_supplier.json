@@ -1,0 +1,161 @@
+{
+ "roomGridData": {
+  "masterRooms": [
+   {
+    "name": "Deluxe",
+    "rooms": [
+     {
+      "name": "Deluxe",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
+      "pricePopupViewModel": {
+       "agodaPrice": 4950.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     },
+     {
+      "name": "Deluxe",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "isBreakfastIncluded": false,
+      "supplierId": 3038,
+      "ratePlanId": 0,
+      "pricePopupViewModel": {
+       "agodaPrice": 5500.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Superior",
+    "rooms": [
+     {
+      "name": "Superior",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
+      "pricePopupViewModel": {
+       "agodaPrice": 6750.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     },
+     {
+      "name": "Superior",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "isBreakfastIncluded": false,
+      "supplierId": 3038,
+      "ratePlanId": 0,
+      "pricePopupViewModel": {
+       "agodaPrice": 7500.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Villa with Garden View",
+    "rooms": [
+     {
+      "name": "Villa with Garden View",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 2,
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
+      "pricePopupViewModel": {
+       "agodaPrice": 7650.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     }
+    ]
+   },
+   {
+    "name": "Family Room",
+    "rooms": [
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 4,
+      "isBreakfastIncluded": false,
+      "supplierId": 3038,
+      "ratePlanId": 0,
+      "pricePopupViewModel": {
+       "agodaPrice": 7650.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     },
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": true,
+      "maxOccupancy": 4,
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
+      "pricePopupViewModel": {
+       "agodaPrice": 11700.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 2 adults"
+      }
+     },
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": false,
+      "maxOccupancy": 4,
+      "isBreakfastIncluded": false,
+      "supplierId": 3038,
+      "ratePlanId": 0,
+      "pricePopupViewModel": {
+       "agodaPrice": 8550.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 3 adults"
+      }
+     },
+     {
+      "name": "Family Room",
+      "quantity": 1,
+      "isFit": false,
+      "maxOccupancy": 4,
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
+      "pricePopupViewModel": {
+       "agodaPrice": 12600.0
+      },
+      "roomChildAndExtraBedPolicyViewModel": {
+       "capacityText": "Max 4 adults"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

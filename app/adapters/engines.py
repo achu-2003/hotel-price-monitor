@@ -258,6 +258,66 @@ ENGINES: tuple[EngineProfile, ...] = (
         notes="Storefront for eZee; prices arrive via the getAvailability XHR.",
     ),
     EngineProfile(
+        key="agoda",
+        display_name="Agoda (OTA listing)",
+        adapter_key="playwright_ota",
+        domains=("agoda.com", "www.agoda.com"),
+        # AN OTA, SO playwright_ota RATHER THAN playwright_direct_site
+        # ==========================================================
+        # Mechanically identical; the separate key is the governance. A
+        # hotel's own site being ToS-cleared says nothing about Agoda's, and
+        # every fetch here is logged as a reliance on a third-party listing.
+        # Prefer a hotel's own booking engine; use this for properties that
+        # have none.
+        adapter_config={
+            "json_url_contains": ["/BelowFoldParams/GetSecondaryData"],
+            # [*] rather than .0 -- ROOMS ARE GROUPED BY ROOM TYPE.
+            #
+            # masterRooms is one entry per room type, each holding its own
+            # rates. Auto-discovery wrote `masterRooms.0.rooms`, which is the
+            # first group and nothing else: a four-room property was monitored
+            # as one room, and the three that were never read looked exactly
+            # like three rooms that do not exist.
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            # WHY A FILTER IS NEEDED AT ALL
+            # =============================
+            # Agoda answers a 2-adult search with one row per occupancy
+            # variant, both carrying the same room name:
+            #
+            #     Family Room   Max 2 adults   13,500   isFit=true
+            #     Family Room   Max 4 adults   14,400   isFit=false
+            #
+            # Both are real prices. Only the first answers the question that
+            # was asked, and isFit is Agoda's own word for that. Without it the
+            # pair arrives with one identity and one of them is dropped as a
+            # collision -- which is the "shared an identity with another offer
+            # AT A DIFFERENT PRICE" alert.
+            "rooms_filter": {"field": "isFit", "equals": True},
+            # isFit settles occupancy. It does NOT settle supply: Agoda is a
+            # marketplace and lists the same room once per supplier, at
+            # different prices, with nothing in the offer identity to tell
+            # them apart. The cheapest is the figure the listing leads with.
+            "rooms_dedupe": "cheapest",
+            "fields": {
+                "room_name": "name",
+                "rooms_left": "quantity",
+                # agodaPrice is the sell price, matching the headline on the
+                # card. price.crossedOut beside it is the rack rate -- the same
+                # trap aiosell and hotelzify document, in a third dialect.
+                "price_inclusive": "pricePopupViewModel.agodaPrice",
+            },
+            "wait_timeout_ms": 45000,
+        },
+        # The locale prefix is optional and common: Agoda's own search results
+        # hand out /en-in/<slug>/hotel/ as readily as /<slug>/hotel/, and a
+        # pattern that only matched the bare form silently produced no
+        # external_id for half the URLs an operator would paste.
+        external_id_pattern=r"agoda\.com/(?:[a-z]{2}-[a-z]{2}/)?([^/]+)/hotel/",
+        notes="OTA fallback, ToS review required. Room names are marketing "
+              "copy and meal plans are usually absent, so anything sourced "
+              "here is second-class -- prefer the hotel's own engine.",
+    ),
+    EngineProfile(
         key="treebo",
         display_name="Treebo (brand site)",
         adapter_key="playwright_direct_site",

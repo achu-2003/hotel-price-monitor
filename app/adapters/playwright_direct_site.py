@@ -40,7 +40,9 @@ from playwright.sync_api import Error as PlaywrightError, TimeoutError as Playwr
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import (
     booking_conditions,
+    dedupe_offers,
     dig,
+    filter_rooms,
     offer_from_mapping,
     render_template,
 )
@@ -257,11 +259,19 @@ class PlaywrightDirectSiteAdapter:
         if not nodes:
             return ([], True) if config.get("sold_out_when_empty") else (None, False)
 
+        # Rows for an occupancy nobody asked for are dropped BEFORE they are
+        # mapped, so they cannot collide with the row that was asked for.
+        nodes = filter_rooms(nodes, config.get("rooms_filter"))
+
         offers = [
             offer_from_mapping(node, mapping, default_currency=context.currency,
                                params=booking_conditions(context))
             for node in nodes
         ]
+        # A marketplace lists the same room once per supplier. Collapsing those
+        # here, on a stated rule, keeps the pipeline from collapsing them on an
+        # accident of ordering.
+        offers = dedupe_offers(offers, config.get("rooms_dedupe"))
         log.info("offers_from_json", count=len(offers), hotel=context.hotel_name)
         return offers, bool(offers) and not any(o.is_available for o in offers)
 
