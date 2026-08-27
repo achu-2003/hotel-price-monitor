@@ -7,6 +7,25 @@ to the target page.
 
 Deliberate design choices:
 
+* **Rule matching follows RFC 9309 section 2.2.2**: the LONGEST matching
+  path wins, and ``Allow`` wins a tie. This is implemented here rather than
+  delegated to :class:`urllib.robotparser.RobotFileParser`, whose
+  ``can_fetch`` returns the FIRST matching rule in file order. The difference
+  is not academic. Two of this project's hotels sit behind Hotelzify, whose
+  robots.txt opens with a blanket ``Allow: /`` and closes the booking paths
+  underneath it::
+
+      User-agent: *
+      Allow: /
+      Disallow: /rooms/
+
+  ``/rooms/5171/...`` is what the monitor fetches. Under the RFC the
+  seven-character ``Disallow: /rooms/`` beats the one-character ``Allow: /``
+  and the answer is no. Under first-match the ``Allow: /`` on the line above
+  wins and the answer is yes -- so the check ran, passed, and the fetch went
+  ahead against a path the site had closed, for as long as those hotels were
+  monitored. A robots check that cannot say no is not a check.
+
 * **Status handling follows RFC 9309 section 2.3.1**, rather than intuition.
   4xx means "unavailable" and permits access; 5xx means "unreachable" and
   disallows everything. Reading a 403 as a refusal seems safer and is not:
@@ -25,6 +44,7 @@ times per cycle.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -51,6 +71,124 @@ _FETCH_TIMEOUT = 10.0
 #: hotel's own rates off-limits and strand it with no configuration at all.
 _UNREADABLE = "# robots.txt unreadable\nUser-agent: *\nDisallow: /"
 UNREADABLE_REASON = "robots.txt unreadable (server error), treated as disallow"
+
+
+#: A ``user-agent`` line, or a rule line. Comments run to end of line and a
+#: malformed line is skipped rather than fatal: robots.txt is written by hand
+#: far more often than it is generated, and one stray line must not decide that
+#: a site has no rules at all.
+_RULE_KEYS = ("allow", "disallow")
+
+
+def _groups(text: str) -> dict[str, list[tuple[str, str]]]:
+    """Parse robots.txt into ``{user-agent: [(key, value), ...]}``.
+
+    Consecutive ``User-agent`` lines share the group that follows them, which
+    is how a single block addresses several crawlers (RFC 9309 s2.2.1). A
+    ``User-agent`` line appearing AFTER a rule starts a new group.
+    """
+    groups: dict[str, list[tuple[str, str]]] = {}
+    agents: list[str] = []
+    starting_new_group = True
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key, value = key.strip().lower(), value.strip()
+
+        if key == "user-agent":
+            if not starting_new_group:
+                agents = []
+                starting_new_group = True
+            agents.append(value.lower())
+            groups.setdefault(value.lower(), [])
+            continue
+
+        starting_new_group = False
+        for agent in agents:
+            groups.setdefault(agent, []).append((key, value))
+
+    return groups
+
+
+def _rules_for(text: str, user_agent: str) -> list[tuple[str, str]]:
+    """The one group that applies to us (RFC 9309 s2.2.1).
+
+    Groups are NOT merged: the most specific matching user-agent wins outright,
+    and ``*`` is the fallback used only when no named group matches. Merging
+    them would let a permissive global group loosen a strict named one, which
+    is the failure the Hotelzify robots.txt calls out in its own comments.
+    """
+    groups = _groups(text)
+    product_token = user_agent.split("/", 1)[0].strip().lower()
+
+    best: str | None = None
+    for agent in groups:
+        if agent == "*":
+            continue
+        # Substring either way: a robots.txt naming "hotelpricemonitor"
+        # addresses "HotelPriceMonitor/1.0 (+https://...)", and a robots.txt
+        # naming the full string addresses a bare token.
+        if agent and (agent in product_token or product_token in agent):
+            if best is None or len(agent) > len(best):
+                best = agent
+
+    return groups.get(best if best is not None else "*", [])
+
+
+def _path_of(url: str) -> str:
+    """The part a rule is matched against: path plus query (RFC 9309 s2.2.2)."""
+    parts = urlparse(url)
+    path = parts.path or "/"
+    return f"{path}?{parts.query}" if parts.query else path
+
+
+def _matches(pattern: str, path: str) -> bool:
+    """RFC 9309 s2.2.3 path matching: ``*`` is any run, ``$`` anchors the end.
+
+    Everything else is a literal prefix, so ``/rooms/`` matches
+    ``/rooms/5171/2026-08-26`` and does not match ``/room-view/``.
+    """
+    anchored = pattern.endswith("$")
+    if anchored:
+        pattern = pattern[:-1]
+
+    expression = ".*".join(re.escape(chunk) for chunk in pattern.split("*"))
+    if anchored:
+        expression += "$"
+    return re.match(expression, path) is not None
+
+
+def rule_allows(text: str, user_agent: str, url: str) -> bool:
+    """Does ``text`` permit ``user_agent`` to fetch ``url``?
+
+    RFC 9309 s2.2.2: of every rule whose path matches, the one with the
+    LONGEST path wins; ``Allow`` wins a tie. With no matching rule the answer
+    is yes -- robots.txt is a list of exceptions to permission, not a grant.
+
+    An empty ``Disallow:`` is the documented way to say "nothing is
+    forbidden", so it is skipped rather than treated as a zero-length rule
+    that would match, and lose, every path.
+    """
+    path = _path_of(url)
+
+    winner: tuple[int, str] | None = None
+    for key, value in _rules_for(text, user_agent):
+        if key not in _RULE_KEYS or not value:
+            continue
+        if not _matches(value, path):
+            continue
+        # On equal length Allow wins, and it is reached by comparing STRICTLY
+        # greater so that an Allow already recorded is not displaced by a
+        # Disallow of the same length.
+        if winner is None or len(value) > winner[0]:
+            winner = (len(value), key)
+        elif len(value) == winner[0] and key == "allow":
+            winner = (len(value), key)
+
+    return True if winner is None else winner[1] == "allow"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +310,10 @@ class RobotsChecker:
         parser = RobotFileParser()
         parser.parse(text.splitlines())
 
-        allowed = parser.can_fetch(self.user_agent, url)
+        # Rule matching is ours (see the module docstring); the stdlib parser
+        # is kept only for Crawl-delay, which is an extension it already reads
+        # and which has no matching semantics to get wrong.
+        allowed = rule_allows(text, self.user_agent, url)
         try:
             delay = parser.crawl_delay(self.user_agent)
         except Exception:  # noqa: BLE001 - malformed robots.txt

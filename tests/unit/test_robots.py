@@ -112,3 +112,120 @@ class TestRuleEvaluation:
         verdict = checker.check(URL)
         assert verdict.allowed is True
         assert "disabled" in verdict.reason
+
+
+#: The shape that made this necessary. Hotelzify serves two of the project's
+#: hotels and opens its robots.txt with a blanket Allow, then closes the
+#: booking paths underneath it. Reproduced from the live file.
+HOTELZIFY = (
+    "User-agent: *\n"
+    "Allow: /\n"
+    "Allow: /static/\n"
+    "Disallow: /rooms/\n"
+    "Disallow: /room-view/\n"
+    "Disallow: /checkout\n"
+    "Disallow: /api/\n"
+)
+
+
+class TestLongestMatchWins:
+    """RFC 9309 s2.2.2. The stdlib parser returns the FIRST matching rule in
+    file order, which reads this file as wide open and let the monitor fetch
+    /rooms/ for as long as those two hotels were watched."""
+
+    @pytest.mark.parametrize(
+        "path,allowed",
+        [
+            ("/rooms/5171/2026-08-26/2026-08-27/2/0", False),  # the real URL
+            ("/room-view/9", False),
+            ("/checkout", False),
+            ("/api/v1/availability", False),
+            ("/", True),
+            ("/static/app.css", True),
+            ("/offers", True),
+        ],
+    )
+    def test_a_specific_disallow_beats_a_blanket_allow_above_it(
+        self, monkeypatch, path, allowed
+    ):
+        checker = _checker(monkeypatch, status=200, body=HOTELZIFY)
+        assert checker.check(f"https://example.test{path}").allowed is allowed
+
+    def test_order_does_not_change_the_answer(self, monkeypatch):
+        """The same rules written the other way round must decide the same."""
+        reversed_file = (
+            "User-agent: *\n"
+            "Disallow: /rooms/\n"
+            "Allow: /\n"
+        )
+        url = "https://example.test/rooms/5171"
+        assert _checker(monkeypatch, status=200, body=HOTELZIFY).check(url).allowed is False
+        assert _checker(monkeypatch, status=200, body=reversed_file).check(url).allowed is False
+
+    def test_allow_wins_a_tie_of_equal_length(self, monkeypatch):
+        body = "User-agent: *\nDisallow: /book\nAllow: /book\n"
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/book").allowed is True
+
+    def test_a_longer_allow_reopens_a_disallowed_subtree(self, monkeypatch):
+        body = "User-agent: *\nDisallow: /rooms/\nAllow: /rooms/public/\n"
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/rooms/5171").allowed is False
+        assert checker.check("https://example.test/rooms/public/1").allowed is True
+
+    def test_empty_disallow_forbids_nothing(self, monkeypatch):
+        """'Disallow:' with no value is the documented way to say 'everything
+        is permitted'. Treated as a zero-length rule it would match every path
+        and lose every comparison, which is right by accident -- but it would
+        also be the winner on a file that has no other rule, which is not."""
+        checker = _checker(monkeypatch, status=200, body="User-agent: *\nDisallow:\n")
+        assert checker.check("https://example.test/anything").allowed is True
+
+    def test_wildcard_and_end_anchor(self, monkeypatch):
+        body = "User-agent: *\nDisallow: /*.pdf$\n"
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/docs/rates.pdf").allowed is False
+        assert checker.check("https://example.test/docs/rates.pdf.html").allowed is True
+
+    def test_the_query_string_is_matched_too(self, monkeypatch):
+        body = "User-agent: *\nDisallow: /search?sort=price\n"
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/search?sort=price").allowed is False
+        assert checker.check("https://example.test/search?sort=name").allowed is True
+
+
+class TestGroupSelection:
+    """RFC 9309 s2.2.1: the most specific user-agent group applies, and groups
+    are never merged."""
+
+    def test_a_named_group_replaces_the_wildcard_group(self, monkeypatch):
+        body = (
+            "User-agent: *\n"
+            "Disallow: /\n"
+            "\n"
+            "User-agent: TestBot\n"
+            "Allow: /\n"
+        )
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/rooms/1").allowed is True
+
+    def test_a_named_group_is_not_loosened_by_the_wildcard_group(self, monkeypatch):
+        body = (
+            "User-agent: *\n"
+            "Allow: /\n"
+            "\n"
+            "User-agent: TestBot\n"
+            "Disallow: /\n"
+        )
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/anything").allowed is False
+
+    def test_consecutive_user_agent_lines_share_one_group(self, monkeypatch):
+        body = (
+            "User-agent: SomeoneElse\n"
+            "User-agent: TestBot\n"
+            "Disallow: /rooms/\n"
+        )
+        checker = _checker(monkeypatch, status=200, body=body)
+        assert checker.check("https://example.test/rooms/1").allowed is False
+        assert checker.check("https://example.test/other").allowed is True
