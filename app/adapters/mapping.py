@@ -183,9 +183,16 @@ def _select(current: Any, selector: re.Match, params, default, path: str) -> Any
     for item in current:
         if not isinstance(item, dict) or field not in item:
             continue
-        # Compared as text: JSON carries 2 and a config carries "2", and a
-        # mapping that worked until someone quoted a number is not a mapping.
-        if str(item[field]) == str(wanted):
+        # Compared as text, and case-folded: JSON carries 2 and a config
+        # carries "2", and a mapping that worked until someone quoted a number
+        # is not a mapping.
+        #
+        # Folding case is what makes BOOLEANS work. Python renders True as
+        # "True" and every JSON payload and config spells it "true", so a
+        # selector like priceBreakDownItems[isTotal=true] matched nothing and
+        # returned the path's default -- silently, because a default is
+        # indistinguishable from a field that was legitimately absent.
+        if str(item[field]).strip().lower() == str(wanted).strip().lower():
             return item
     return _MISS
 

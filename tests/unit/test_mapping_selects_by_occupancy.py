@@ -151,3 +151,39 @@ class TestTheProfileRoutesToTheDedicatedAdapter:
             "https://booking.sterlingholidays.com/rooms/5171/2026-09-12/2026-09-13/2/0"
         )
         assert found.external_id == "5171"
+
+
+class TestSelectingOnABoolean:
+    """``str(True)`` is "True"; every payload and config spells it "true".
+
+    The selector compared them raw, so ``[isTotal=true]`` matched nothing and
+    returned the path's default -- indistinguishable from a field that was
+    legitimately absent, which is the worst way for a mapping to fail. Found
+    on Agoda's price breakdown, where every row came back None.
+    """
+
+    ROWS = {"items": [
+        {"rateType": "Property price:", "price": 8331.98, "isTotal": False},
+        {"rateType": "Total", "price": 4950.0, "isTotal": True},
+    ]}
+
+    def test_a_lowercase_true_matches_a_python_bool(self):
+        assert dig(self.ROWS, "items[isTotal=true].price", None) == 4950.0
+
+    def test_a_capitalised_true_matches_too(self):
+        assert dig(self.ROWS, "items[isTotal=True].price", None) == 4950.0
+
+    def test_false_selects_the_other_row(self):
+        assert dig(self.ROWS, "items[isTotal=false].price", None) == 8331.98
+
+    def test_a_genuinely_absent_field_still_returns_the_default(self):
+        """Case folding must not turn a miss into a match."""
+        assert dig(self.ROWS, "items[noSuchField=true].price", "DEFAULT") == "DEFAULT"
+
+    def test_numbers_are_unaffected(self):
+        rows = {"p": [{"adultCount": 2, "v": "two"}, {"adultCount": 3, "v": "three"}]}
+        assert dig(rows, "p[adultCount=2].v", None) == "two"
+
+    def test_case_is_folded_for_strings_as_well(self):
+        rows = {"p": [{"board": "Room Only", "v": 1}]}
+        assert dig(rows, "p[board=room only].v", None) == 1
