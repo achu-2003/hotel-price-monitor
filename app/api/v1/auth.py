@@ -9,7 +9,7 @@ deploy.
 
 The response is deliberately identical for "no such account" and "wrong
 password". Distinguishing them turns the login form into a tool for
-discovering which addresses are registered.
+discovering which accounts are registered.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ async def login(payload: LoginIn, request: Request, response: Response, session:
     settings = get_settings()
     now = datetime.now(UTC)
 
-    user = await session.scalar(select(User).where(User.email == payload.email.lower()))
+    user = await session.scalar(select(User).where(User.username == payload.username))
 
     if user is not None and user.locked_until and user.locked_until > now:
         raise HTTPException(
@@ -57,10 +57,14 @@ async def login(payload: LoginIn, request: Request, response: Response, session:
                 user.locked_until = now + LOCKOUT
                 log.warning("account_locked", user_id=user.id)
             await session.commit()
-        log.info("login_failed", email_domain=payload.email.split("@")[-1])
+        # The attempted name is NOT logged. It used to log the domain of the
+        # address, which was safe when accounts were addresses; a username is
+        # the whole credential, and half a credential in a log file that ships
+        # to wherever logs ship is a worse trade than a less useful log line.
+        log.info("login_failed", account_exists=user is not None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
+            detail="Incorrect username or password.",
         )
 
     # Argon2 parameters get raised over time; rehash on a successful login so

@@ -7,15 +7,35 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import EmailStr, Field
+from pydantic import Field, field_validator
 
 from app.db.models.enums import UserRole
 from app.schemas.common import ORMModel
 
 
 class LoginIn(ORMModel):
-    email: EmailStr
+    """A sign-in name and a password.
+
+    ``username`` is deliberately a plain string. It was ``EmailStr``, which
+    rejected any account name that was not a deliverable address -- including
+    the ones an operator is most likely to choose. Nothing is ever sent to
+    this value, so validating it as mail was a constraint with no benefit
+    behind it.
+
+    Lower-cased on the way in so that the same account is reachable however
+    it was typed. The password is NOT length-checked here: this is the
+    verification path, and a minimum applies to setting a password, never to
+    offering one. Enforcing it here would only tell an attacker that short
+    guesses are not worth making.
+    """
+
+    username: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def _normalise(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class TokenOut(ORMModel):
@@ -27,7 +47,7 @@ class TokenOut(ORMModel):
 
 class UserOut(ORMModel):
     id: int
-    email: str
+    username: str
     full_name: str | None
     role: UserRole
     is_active: bool
@@ -36,7 +56,7 @@ class UserOut(ORMModel):
 
 
 class UserCreate(ORMModel):
-    email: EmailStr
+    username: str = Field(min_length=1, max_length=255)
     full_name: str | None = None
     password: str = Field(
         min_length=12,

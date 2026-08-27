@@ -4,9 +4,14 @@ Run once after the first migration:
 
     docker compose run --rm api python scripts/create_admin.py
 
-With no arguments it uses ``ADMIN_EMAIL`` and ``ADMIN_PASSWORD`` from the
+With no arguments it uses ``ADMIN_USERNAME`` and ``ADMIN_PASSWORD`` from the
 environment, which ``scripts/bootstrap_env.py`` generated. Both can be
 overridden on the command line.
+
+For any account after the first, use ``scripts/create_account.py``: it takes a
+role, and it can leave a deliberately chosen password in place instead of
+forcing a change at first login -- which is right for a chosen password and
+wrong for the generated one this script exists to install.
 
 Deliberately a script rather than something the API does at start-up:
 
@@ -40,7 +45,9 @@ MIN_PASSWORD_LENGTH = 12
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--email", help="Defaults to ADMIN_EMAIL from the environment")
+    parser.add_argument(
+        "--username", help="Defaults to ADMIN_USERNAME from the environment"
+    )
     parser.add_argument("--name", default="Administrator")
     parser.add_argument(
         "--reset-password",
@@ -50,9 +57,9 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
-    email = (args.email or settings.admin_email or "").strip().lower()
-    if not email or "@" not in email:
-        print("No usable email. Pass --email or set ADMIN_EMAIL.", file=sys.stderr)
+    username = (args.username or settings.admin_username or "").strip().lower()
+    if not username:
+        print("No username. Pass --username or set ADMIN_USERNAME.", file=sys.stderr)
         return 2
 
     password = _resolve_password(settings)
@@ -69,12 +76,12 @@ def main() -> int:
     from sqlalchemy import select
 
     with sync_session() as session:
-        existing = session.scalar(select(User).where(User.email == email))
+        existing = session.scalar(select(User).where(User.username == username))
 
         if existing is not None:
             if not args.reset_password:
                 print(
-                    f"{email} already exists. Re-run with --reset-password to set a "
+                    f"{username} already exists. Re-run with --reset-password to set a "
                     f"new password for it."
                 )
                 return 0
@@ -86,12 +93,12 @@ def main() -> int:
             # Forces a change at next login when the password came from the
             # environment, since that value is also sitting in a .env file.
             existing.must_change_password = True
-            print(f"Password reset for {email}.")
+            print(f"Password reset for {username}.")
             return 0
 
         session.add(
             User(
-                email=email,
+                username=username,
                 full_name=args.name,
                 password_hash=hash_password(password),
                 role=UserRole.ADMIN,
@@ -100,7 +107,7 @@ def main() -> int:
                 created_at=datetime.now(UTC),
             )
         )
-        print(f"Created administrator {email}.")
+        print(f"Created administrator {username}.")
         print("You will be asked to change this password at first login.")
     return 0
 

@@ -49,7 +49,7 @@ not running or its CLI was not added to `PATH` — restart the app.
 `.env` **already exists** and already contains real generated secrets.
 
 ```powershell
-Select-String -Path .env -Pattern "^ADMIN_EMAIL=|^ADMIN_PASSWORD="
+Select-String -Path .env -Pattern "^ADMIN_USERNAME=|^ADMIN_PASSWORD="
 ```
 
 Note both values — they are your first login.
@@ -119,7 +119,7 @@ correct). Health returns `{"status":"ok",...}`.
 docker compose run --rm api python scripts/create_admin.py
 ```
 
-It reads `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env` and prints
+It reads `ADMIN_USERNAME` / `ADMIN_PASSWORD` from `.env` and prints
 `Created administrator ...`.
 
 This is a deliberate one-off step rather than something the API does at

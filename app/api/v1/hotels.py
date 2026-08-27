@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import delete, func, select
 
 from app.adapters.engines import Detection, detect, known_engines
-from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
+from app.api.deps import (
+    AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
+)
 from app.db.models import (
     Hotel,
     HotelRecipient,
@@ -47,6 +49,7 @@ from app.schemas.hotels import (
     ReplaceUrlResult,
 )
 from app.core.logging import get_logger
+from app.services.ownership import scope_hotels
 from app.services.room_matching import normalize_room_name
 
 router = APIRouter(tags=["hotels"])
@@ -58,10 +61,44 @@ def _slugify(name: str) -> str:
     return "".join(c for c in cleaned if c.isalnum() or c == "-")[:200] or "hotel"
 
 
+async def _free_slug(session, slug: str, user) -> str:
+    """A slug that is free globally, without saying who took it.
+
+    ``hotels.slug`` is unique across the whole table, but hotels are not
+    visible across the whole table. A plain 409 naming the slug would let one
+    account discover another's competitor set one guess at a time -- and it
+    would also block a perfectly reasonable addition for a reason the person
+    could neither see nor fix.
+
+    So a clash with a hotel this account CAN see is still a 409, because that
+    one is real and actionable: they already track it. A clash with anything
+    else silently takes the next free suffix. The slug is an internal key, not
+    something anyone types.
+    """
+    clash = await session.scalar(select(Hotel).where(Hotel.slug == slug))
+    if clash is None:
+        return slug
+    if clash.owner_user_id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You are already tracking a hotel with slug {slug!r}.",
+        )
+
+    stem = slug[:196]
+    for suffix in range(2, 1000):
+        candidate = f"{stem}-{suffix}"
+        if await session.scalar(select(Hotel).where(Hotel.slug == candidate)) is None:
+            return candidate
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"Could not derive a free slug from {slug!r}. Pass an explicit one.",
+    )
+
+
 @router.get("/hotels", response_model=Page[HotelOut])
 async def list_hotels(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     active: bool | None = None,
     q: str | None = Query(default=None, description="Case-insensitive name search"),
     limit: int = Query(default=50, ge=1, le=200),
@@ -73,7 +110,7 @@ async def list_hotels(
     stable page 2. The price endpoints use cursors because those tables grow
     without limit.
     """
-    statement = select(Hotel)
+    statement = scope_hotels(select(Hotel), user)
     if active is not None:
         statement = statement.where(Hotel.is_active.is_(active))
     if q:
@@ -94,14 +131,13 @@ async def list_hotels(
 async def create_hotel(
     payload: HotelCreate, request: Request, session: DbSession, admin: AdminUser
 ):
-    slug = payload.slug or _slugify(payload.name)
-    if await session.scalar(select(Hotel).where(Hotel.slug == slug)):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"A hotel with slug {slug!r} already exists.",
-        )
+    slug = await _free_slug(session, payload.slug or _slugify(payload.name), admin)
 
-    hotel = Hotel(**payload.model_dump(exclude={"slug"}), slug=slug)
+    # The creator owns it, and ownership is what every listing filters on.
+    # Taken from the authenticated caller rather than the payload: an
+    # owner_user_id a client could set is an owner_user_id a client could set
+    # to somebody else.
+    hotel = Hotel(**payload.model_dump(exclude={"slug"}), slug=slug, owner_user_id=admin.id)
     session.add(hotel)
     await session.flush()
     await record_audit(
@@ -113,8 +149,8 @@ async def create_hotel(
 
 
 @router.get("/hotels/{hotel_id}", response_model=HotelDetail)
-async def get_hotel(hotel_id: int, session: DbSession, _user: CurrentUser):
-    hotel = await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+async def get_hotel(hotel_id: int, session: DbSession, user: CurrentUser):
+    hotel = await owned_hotel_or_404(session, hotel_id, user)
 
     sources = (
         await session.execute(
@@ -205,7 +241,7 @@ async def _hotel_health(session, hotel_id: int) -> HotelHealth:
 async def update_hotel(
     hotel_id: int, payload: HotelUpdate, request: Request, session: DbSession, admin: AdminUser
 ):
-    hotel = await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    hotel = await owned_hotel_or_404(session, hotel_id, admin)
     before = {c.name: getattr(hotel, c.name) for c in hotel.__table__.columns}
 
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -235,7 +271,7 @@ async def deactivate_hotel(
     history with it. History is the product; deactivating stops the checks and
     keeps everything that was already learned.
     """
-    hotel = await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    hotel = await owned_hotel_or_404(session, hotel_id, admin)
     hotel.is_active = False
 
     targets = (
@@ -268,7 +304,7 @@ async def attach_source(
     session: DbSession,
     admin: AdminUser,
 ):
-    await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    await owned_hotel_or_404(session, hotel_id, admin)
     source = await get_object_or_404(session, Source, payload.source_id, "Source")
 
     existing = await session.scalar(
@@ -363,7 +399,7 @@ async def attach_source_from_url(
     scripts/probe_site.py, add a profile to app/adapters/engines.py, and every
     hotel on that engine becomes a paste from then on.
     """
-    await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    await owned_hotel_or_404(session, hotel_id, admin)
 
     detection = detect(str(payload.url))
 
@@ -534,6 +570,10 @@ async def update_hotel_source(
     hotel_source = await get_object_or_404(
         session, HotelSource, hotel_source_id, "Hotel source"
     )
+    # Keyed on the child id, so ownership has to be reached through the
+    # parent. Without this, a hotel scoped out of every listing is still
+    # reconfigurable by anyone who can guess one of its hotel_source ids.
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
     before = {"adapter_config": hotel_source.adapter_config, "url": hotel_source.url}
 
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -613,6 +653,10 @@ async def replace_hotel_source_url(
     hotel_source = await get_object_or_404(
         session, HotelSource, hotel_source_id, "Hotel source"
     )
+    # Keyed on the child id, so ownership has to be reached through the
+    # parent. Without this, a hotel scoped out of every listing is still
+    # reconfigurable by anyone who can guess one of its hotel_source ids.
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
 
     current_source = await session.get(Source, hotel_source.source_id)
 
@@ -829,7 +873,7 @@ async def purge_hotel(
     it, and skipping this step would leave rows that no query can ever return
     and no retention policy will ever prune.
     """
-    hotel = await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    hotel = await owned_hotel_or_404(session, hotel_id, admin)
 
     if payload.confirm_name.strip() != hotel.name:
         raise HTTPException(
@@ -913,7 +957,7 @@ async def create_room(
     session: DbSession,
     admin: AdminUser,
 ):
-    await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    await owned_hotel_or_404(session, hotel_id, admin)
     canonical = normalize_room_name(payload.name)
     if not canonical:
         raise HTTPException(
@@ -950,6 +994,7 @@ async def update_room(
     room_id: int, payload: RoomTypeUpdate, request: Request, session: DbSession, admin: AdminUser
 ):
     room = await get_object_or_404(session, RoomType, room_id, "Room type")
+    await owned_hotel_or_404(session, room.hotel_id, admin)
     data = payload.model_dump(exclude_unset=True)
 
     for field, value in data.items():
@@ -981,6 +1026,7 @@ async def create_alias(
     the same unmatched room reappearing every thirty minutes.
     """
     room = await get_object_or_404(session, RoomType, room_id, "Room type")
+    await owned_hotel_or_404(session, room.hotel_id, admin)
     normalized = normalize_room_name(payload.raw_name)
     if not normalized:
         raise HTTPException(

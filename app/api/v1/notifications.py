@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, select
 
-from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
+from app.api.deps import (
+    AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
+)
+from app.services.ownership import owned_hotel_ids
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import (
@@ -112,7 +115,7 @@ async def assign_recipient(
     like it worked and fail silently at the first price move — which is the
     worst possible moment to discover it.
     """
-    await get_object_or_404(session, Hotel, hotel_id, "Hotel")
+    await owned_hotel_or_404(session, hotel_id, admin)
     recipient = await get_object_or_404(
         session, Recipient, payload.recipient_id, "Recipient"
     )
@@ -181,6 +184,7 @@ async def assign_recipient(
 async def unassign_recipient(
     hotel_id: int, recipient_id: int, request: Request, session: DbSession, admin: AdminUser
 ):
+    await owned_hotel_or_404(session, hotel_id, admin)
     link = await session.scalar(
         select(HotelRecipient).where(
             HotelRecipient.hotel_id == hotel_id, HotelRecipient.recipient_id == recipient_id
@@ -201,7 +205,7 @@ async def unassign_recipient(
 @router.get("/notifications", response_model=Page[NotificationOut])
 async def list_notifications(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     status_filter: NotificationStatus | None = Query(default=None, alias="status"),
     recipient_id: int | None = None,
     hotel_id: int | None = None,
@@ -209,10 +213,15 @@ async def list_notifications(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
+    # Scoped on Notification.hotel_id, which also drops the hotel-less rows:
+    # a digest is sent with a NULL hotel_id and its body summarises whichever
+    # hotels moved, so there is no owner to check it against and showing it to
+    # everybody would leak by way of the summary.
     statement = (
         select(Notification, Recipient.name, Hotel.name)
         .join(Recipient, Notification.recipient_id == Recipient.id)
         .outerjoin(Hotel, Notification.hotel_id == Hotel.id)
+        .where(Notification.hotel_id.in_(owned_hotel_ids(user)))
     )
     if status_filter is not None:
         statement = statement.where(Notification.status == status_filter)

@@ -49,7 +49,7 @@
       error.hidden = true;
 
       const result = await api("/api/v1/auth/login", "POST", {
-        email: loginForm.email.value,
+        username: loginForm.username.value,
         password: loginForm.password.value,
       });
 

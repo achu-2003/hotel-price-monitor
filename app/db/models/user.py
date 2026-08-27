@@ -19,12 +19,21 @@ class User(Base, TimestampMixin):
     ``password_hash`` holds an argon2id hash. There is deliberately no
     plaintext column and no reversible encryption: we never need to read a
     password back, only to verify one.
+
+    ``username`` is a free-form identifier, not an address. It was an email
+    column until accounts stopped being addresses -- a sign-in name like
+    ``ags@123`` is not deliverable mail, and validating it as though it were
+    rejected the credential the operator actually wanted. Nothing is sent
+    here; alerts go to ``recipients``, which is a separate table precisely
+    because who signs in and who gets told are different questions.
+
+    Stored lower-cased so that signing in is not case-sensitive.
     """
 
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     full_name: Mapped[str | None] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
@@ -45,7 +54,7 @@ class User(Base, TimestampMixin):
         return self.role == UserRole.ADMIN
 
     def __repr__(self) -> str:
-        return f"<User {self.email} ({self.role})>"
+        return f"<User {self.username} ({self.role})>"
 
 
 class AuditLog(Base):

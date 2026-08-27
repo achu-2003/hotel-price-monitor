@@ -31,6 +31,17 @@ class Hotel(Base, TimestampMixin):
     latitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
     longitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
 
+    # Who added this hotel. Every listing is filtered by it, so a hotel is
+    # visible to the account that created it and to nobody else.
+    #
+    # Nullable because the column arrived after the first hotels did, and
+    # RESTRICT rather than SET NULL because an owner-less hotel is invisible
+    # everywhere: deleting an account must fail loudly and force a
+    # reassignment rather than quietly stranding its properties.
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+
     # Your own property is sourced from your PMS, never scraped.
     is_own_property: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)

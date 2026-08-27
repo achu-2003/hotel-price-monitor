@@ -204,11 +204,48 @@ the same user, and a "create an admin if none exists" path in a running web
 app is a privilege-escalation hole waiting for the day someone truncates the
 table.
 
+### A fixed account for dev and production
+
+`create_admin.py` installs the bootstrap administrator and forces a password
+change at first login, because that password came from `.env`. For an account
+whose credential was chosen on purpose and is meant to stay put — the same
+login in development and in production — use `create_account.py` instead:
+
+```bash
+ACCOUNT_PASSWORD='...' python scripts/create_account.py \
+    --username 'AGS@123' --name 'AGS' --admin --keep-password
+```
+
+`--keep-password` is what skips the forced change. The password comes from the
+environment or a prompt, never from an argument, so it stays out of shell
+history and `ps`. A sign-in name is a plain identifier, not an email address:
+`AGS@123` is a valid username and nothing is ever sent to it.
+
+### Hotels belong to the account that added them
+
+Every screen and endpoint filters on `hotels.owner_user_id`. Sign in as an
+account and you see the hotels you added, and no others — **admins included**.
+Role decides what you may change; ownership decides what you may see.
+
+Hotels that predate this column have no owner and are visible to nobody. Two
+scripts settle that, whichever way you want it:
+
+```bash
+python scripts/assign_hotel_owner.py --username 'AGS@123' --list
+python scripts/assign_hotel_owner.py --username 'AGS@123' --all-unowned
+python scripts/purge_unowned_hotels.py          # show what would be deleted
+python scripts/purge_unowned_hotels.py --yes    # delete it, permanently
+```
+
+The workers deliberately do **not** filter on owner: an unowned hotel keeps
+being checked and keeps collecting. Hiding it from the dashboard is not the
+same as stopping it, which is why the purge exists.
+
 Then, in order:
 
-1. Sign in at http://localhost:8000 with `ADMIN_EMAIL` / `ADMIN_PASSWORD`. You
-   are forced to change it immediately — that password is also sitting in your
-   `.env` file.
+1. Sign in at http://localhost:8000. With the bootstrap administrator that is
+   `ADMIN_USERNAME` / `ADMIN_PASSWORD`, and you are forced to change it
+   immediately — that password is also sitting in your `.env` file.
 2. Create a **source** and record its ToS review — nothing is ever fetched
    from a source with no review on file.
 3. Add a **hotel**, attach the source with its `adapter_config`, add its

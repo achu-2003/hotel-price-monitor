@@ -15,7 +15,10 @@ from datetime import UTC, date, datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 
-from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
+from app.api.deps import (
+    AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
+)
+from app.services.ownership import owns, scope_hotels
 from app.db.models import (
     ChangeDirection,
     Hotel,
@@ -51,7 +54,7 @@ _STALE_AFTER = timedelta(hours=3)
 @router.get("/current", response_model=Page[CurrentPriceOut])
 async def current_prices(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     hotel_id: int | None = None,
     check_in: date | None = None,
     check_out: date | None = None,
@@ -59,10 +62,11 @@ async def current_prices(
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    statement = (
+    statement = scope_hotels(
         select(PriceSeries, Hotel.name, RoomType.name)
         .join(Hotel, PriceSeries.hotel_id == Hotel.id)
-        .join(RoomType, PriceSeries.room_type_id == RoomType.id)
+        .join(RoomType, PriceSeries.room_type_id == RoomType.id),
+        user,
     )
     if hotel_id is not None:
         statement = statement.where(PriceSeries.hotel_id == hotel_id)
@@ -95,7 +99,7 @@ async def current_prices(
 @router.get("/history", response_model=HistoryOut)
 async def price_history(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     offer_key: str = Query(min_length=64, max_length=64),
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
@@ -113,6 +117,16 @@ async def price_history(
     """
     series = await session.get(PriceSeries, offer_key)
     if series is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No price series with that offer key.",
+        )
+
+    # An offer key is a hash, not a guessable id — but "hard to guess" is not
+    # an access rule, and one leaked key from a shared screenshot should not
+    # hand over a competitor's whole price history.
+    hotel = await session.get(Hotel, series.hotel_id)
+    if not owns(hotel, user):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No price series with that offer key.",
@@ -184,7 +198,6 @@ async def price_history(
             for bucket_at, inclusive, exclusive, available in rows
         ]
 
-    hotel = await session.get(Hotel, series.hotel_id)
     room = await session.get(RoomType, series.room_type_id)
     return HistoryOut(
         offer_key=offer_key,
@@ -201,7 +214,7 @@ async def price_history(
 @router.get("/changes", response_model=Page[PriceChangeOut])
 async def list_changes(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     hotel_id: int | None = None,
     direction: ChangeDirection | None = None,
     from_: datetime | None = Query(default=None, alias="from"),
@@ -210,12 +223,13 @@ async def list_changes(
     offset: int = Query(default=0, ge=0),
 ):
     """The changes feed — the answer to "what happened today?"."""
-    statement = (
+    statement = scope_hotels(
         select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
                PriceSeries.check_out)
         .join(Hotel, PriceChange.hotel_id == Hotel.id)
         .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
-        .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
+        .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id),
+        user,
     )
     if hotel_id is not None:
         statement = statement.where(PriceChange.hotel_id == hotel_id)
@@ -246,7 +260,7 @@ async def list_changes(
 @router.get("/matrix", response_model=MatrixOut)
 async def price_matrix(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     check_in: date,
     check_out: date,
     adults: int = Query(default=2, ge=1, le=20),
@@ -260,17 +274,19 @@ async def price_matrix(
     """
     rows = (
         await session.execute(
-            select(PriceSeries, Hotel, RoomType.name)
-            .join(Hotel, PriceSeries.hotel_id == Hotel.id)
-            .join(RoomType, PriceSeries.room_type_id == RoomType.id)
-            .where(
-                PriceSeries.check_in == check_in,
-                PriceSeries.check_out == check_out,
-                PriceSeries.adults == adults,
-                PriceSeries.children == children,
-                Hotel.is_active.is_(True),
-            )
-            .order_by(Hotel.name, RoomType.sort_order)
+            scope_hotels(
+                select(PriceSeries, Hotel, RoomType.name)
+                .join(Hotel, PriceSeries.hotel_id == Hotel.id)
+                .join(RoomType, PriceSeries.room_type_id == RoomType.id)
+                .where(
+                    PriceSeries.check_in == check_in,
+                    PriceSeries.check_out == check_out,
+                    PriceSeries.adults == adults,
+                    PriceSeries.children == children,
+                    Hotel.is_active.is_(True),
+                ),
+                user,
+            ).order_by(Hotel.name, RoomType.sort_order)
         )
     ).all()
 
@@ -322,7 +338,7 @@ async def price_matrix(
 @router.get("/unmatched", response_model=Page[UnmatchedOfferOut])
 async def list_unmatched(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     hotel_id: int | None = None,
     include_resolved: bool = False,
     limit: int = Query(default=100, ge=1, le=500),
@@ -333,11 +349,12 @@ async def list_unmatched(
     price we chose not to record rather than a series we might have corrupted,
     and clearing one costs a click and fixes it permanently.
     """
-    statement = (
+    statement = scope_hotels(
         select(UnmatchedOffer, HotelSource.hotel_id, Hotel.name, RoomType.name)
         .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
         .join(Hotel, HotelSource.hotel_id == Hotel.id)
-        .outerjoin(RoomType, UnmatchedOffer.suggested_room_type_id == RoomType.id)
+        .outerjoin(RoomType, UnmatchedOffer.suggested_room_type_id == RoomType.id),
+        user,
     )
     if not include_resolved:
         statement = statement.where(UnmatchedOffer.resolved_at.is_(None))
@@ -399,6 +416,11 @@ async def dismiss_unmatched(
     unmatched = await get_object_or_404(
         session, UnmatchedOffer, unmatched_id, "Unmatched offer"
     )
+    hotel_source = await get_object_or_404(
+        session, HotelSource, unmatched.hotel_source_id, "Hotel source"
+    )
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
+
     unmatched.resolved_at = datetime.now(UTC)
     await record_audit(
         session, user=admin, action="dismiss_unmatched", entity="unmatched_offer",
@@ -432,6 +454,7 @@ async def resolve_unmatched(
     hotel_source = await get_object_or_404(
         session, HotelSource, unmatched.hotel_source_id, "Hotel source"
     )
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
 
     if room.hotel_id != hotel_source.hotel_id:
         raise HTTPException(

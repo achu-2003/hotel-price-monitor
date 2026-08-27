@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     session_max_age_seconds: int = 43_200
 
-    admin_email: str = "admin@example.com"
+    # The bootstrap account scripts/create_account.py creates. A username,
+    # not an address — nothing is ever sent to it.
+    admin_username: str = "admin"
     admin_password: SecretStr | None = None
 
     # ── monitoring defaults ──────────────────────────────────────────

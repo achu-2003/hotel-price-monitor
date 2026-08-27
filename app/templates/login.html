@@ -20,8 +20,12 @@
     <h1>Hotel Price Monitor</h1>
     <p class="muted">Sign in to view prices and manage monitoring.</p>
 
-    <label for="email">Email</label>
-    <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+    {# type="text", not type="email": a sign-in name here is an identifier,
+       and the browser's own email validation would refuse to submit the form
+       for a perfectly valid account name before the request was ever made. #}
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
 
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>

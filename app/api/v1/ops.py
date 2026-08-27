@@ -12,9 +12,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
-from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
+from app.api.deps import (
+    AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
+)
 from app.core.errors import ErrorClass
 from app.core.logging import get_logger
 from app.db.models import (
@@ -32,6 +34,7 @@ from app.db.models import (
 from app.schemas.common import HealthStatus, Page, ReadinessStatus
 from app.schemas.monitoring import MonitoringErrorOut
 from app.schemas.prices import DashboardSummary
+from app.services.ownership import owned_hotel_ids, scope_hotels
 from app.services.rediscovery import REPAIRABLE, RepairState
 
 router = APIRouter(tags=["ops"])
@@ -86,7 +89,7 @@ async def readiness(session: DbSession, response: Response):
 @router.get("/errors", response_model=Page[MonitoringErrorOut])
 async def list_errors(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     hotel_id: int | None = None,
     error_class: ErrorClass | None = Query(default=None, alias="class"),
     unresolved: bool = True,
@@ -94,8 +97,17 @@ async def list_errors(
     offset: int = Query(default=0, ge=0),
 ):
     """The Health tab's error list, grouped by hotel and class in the UI."""
+    # An error can predate knowing which hotel it belongs to, so hotel_id is
+    # nullable and the join is an outer one. Those unattributed rows stay
+    # visible: they are how a source that breaks before it resolves to a hotel
+    # gets noticed at all, and they name no property.
     statement = select(MonitoringError, Hotel.name).outerjoin(
         Hotel, MonitoringError.hotel_id == Hotel.id
+    ).where(
+        or_(
+            MonitoringError.hotel_id.is_(None),
+            MonitoringError.hotel_id.in_(owned_hotel_ids(user)),
+        )
     )
     if hotel_id is not None:
         statement = statement.where(MonitoringError.hotel_id == hotel_id)
@@ -120,6 +132,20 @@ async def list_errors(
     return Page[MonitoringErrorOut](items=items)
 
 
+async def _visible_error_or_404(session, error_id: int, user):
+    """An error this account may see: one of its hotels', or unattributed.
+
+    The artifact route in particular serves a screenshot of a booking page.
+    Handing that to an account that cannot see the hotel would leak the very
+    thing the scoping exists to protect -- a competitor's live rates, in
+    picture form.
+    """
+    error = await get_object_or_404(session, MonitoringError, error_id, "Error")
+    if error.hotel_id is not None:
+        await owned_hotel_or_404(session, error.hotel_id, user)
+    return error
+
+
 @router.post("/errors/{error_id}/resolve", response_model=MonitoringErrorOut)
 async def resolve_error(
     error_id: int, request: Request, session: DbSession, admin: AdminUser
@@ -140,7 +166,7 @@ async def resolve_error(
     blocked source or an expired certificate says nothing about whether the
     selectors deserve another try.
     """
-    error = await get_object_or_404(session, MonitoringError, error_id, "Error")
+    error = await _visible_error_or_404(session, error_id, admin)
     error.resolved_at = datetime.now(UTC)
 
     restored = await _restore_repair_budget(session, error)
@@ -189,7 +215,7 @@ async def _restore_repair_budget(session, error: MonitoringError) -> bool:
 async def get_error_artifact(
     error_id: int,
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     kind: str = Query(default="screenshot", pattern="^(screenshot|html)$"),
 ):
     """Serve the saved screenshot or HTML for a failed fetch.
@@ -203,7 +229,7 @@ async def get_error_artifact(
 
     from app.config import get_settings
 
-    error = await get_object_or_404(session, MonitoringError, error_id, "Error")
+    error = await _visible_error_or_404(session, error_id, user)
     stored = error.screenshot_path if kind == "screenshot" else error.html_path
     if not stored:
         raise HTTPException(
@@ -228,34 +254,62 @@ async def get_error_artifact(
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummary)
-async def dashboard_summary(session: DbSession, _user: CurrentUser):
+async def dashboard_summary(session: DbSession, user: CurrentUser):
     """One query per counter, for the dashboard's header row."""
     now = datetime.now(UTC)
     hour_ago = now - timedelta(hours=1)
     day_ago = now - timedelta(hours=24)
 
+    # Every counter is scoped. A header row that totals the whole deployment
+    # while the tables under it show one account's hotels is worse than no
+    # header: the numbers disagree with the page and the page is the one
+    # telling the truth.
+    mine = owned_hotel_ids(user)
+
     hotels_active = await session.scalar(
-        select(func.count(Hotel.id)).where(Hotel.is_active.is_(True))
+        scope_hotels(select(func.count(Hotel.id)).where(Hotel.is_active.is_(True)), user)
     )
     targets = (
-        await session.scalars(select(MonitorTarget).where(MonitorTarget.is_enabled.is_(True)))
+        await session.scalars(
+            select(MonitorTarget)
+            .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+            .where(MonitorTarget.is_enabled.is_(True), HotelSource.hotel_id.in_(mine))
+        )
     ).all()
     checks_last_hour = await session.scalar(
-        select(func.count(CheckRun.id)).where(CheckRun.started_at >= hour_ago)
+        select(func.count(CheckRun.id)).where(
+            CheckRun.started_at >= hour_ago,
+            CheckRun.monitor_target_id.in_(
+                select(MonitorTarget.id)
+                .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+                .where(HotelSource.hotel_id.in_(mine))
+            ),
+        )
     )
     changes_last_24h = await session.scalar(
-        select(func.count(PriceChange.id)).where(PriceChange.changed_at >= day_ago)
+        select(func.count(PriceChange.id)).where(
+            PriceChange.changed_at >= day_ago, PriceChange.hotel_id.in_(mine)
+        )
     )
     unmatched = await session.scalar(
-        select(func.count(UnmatchedOffer.id)).where(UnmatchedOffer.resolved_at.is_(None))
+        select(func.count(UnmatchedOffer.id))
+        .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
+        .where(UnmatchedOffer.resolved_at.is_(None), HotelSource.hotel_id.in_(mine))
     )
     errors = await session.scalar(
-        select(func.count(MonitoringError.id)).where(MonitoringError.resolved_at.is_(None))
+        select(func.count(MonitoringError.id)).where(
+            MonitoringError.resolved_at.is_(None),
+            or_(
+                MonitoringError.hotel_id.is_(None),
+                MonitoringError.hotel_id.in_(mine),
+            ),
+        )
     )
     failed_notifications = await session.scalar(
         select(func.count(Notification.id)).where(
             Notification.status == NotificationStatus.FAILED,
             Notification.created_at >= day_ago,
+            Notification.hotel_id.in_(mine),
         )
     )
 
@@ -277,14 +331,20 @@ async def dashboard_summary(session: DbSession, _user: CurrentUser):
 
 
 @router.get("/dashboard/failures", response_model=Page[MonitoringErrorOut])
-async def recent_failures(session: DbSession, _user: CurrentUser, hours: int = 24):
+async def recent_failures(session: DbSession, user: CurrentUser, hours: int = 24):
     """Everything that broke recently, newest first."""
     since = datetime.now(UTC) - timedelta(hours=hours)
     rows = (
         await session.execute(
             select(MonitoringError, Hotel.name)
             .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
-            .where(MonitoringError.occurred_at >= since)
+            .where(
+                MonitoringError.occurred_at >= since,
+                or_(
+                    MonitoringError.hotel_id.is_(None),
+                    MonitoringError.hotel_id.in_(owned_hotel_ids(user)),
+                ),
+            )
             .order_by(MonitoringError.occurred_at.desc())
             .limit(200)
         )

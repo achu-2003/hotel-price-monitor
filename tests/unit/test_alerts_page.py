@@ -56,7 +56,7 @@ def _link(**overrides):
 def render(**overrides) -> str:
     context = {
         "request": _Request(),
-        "user": SimpleNamespace(email="ops@example.com", full_name="Ops"),
+        "user": SimpleNamespace(username="ops", full_name="Ops"),
         "is_admin": True,
         "attention": {"total": 0},
         "recipients": [_recipient()],

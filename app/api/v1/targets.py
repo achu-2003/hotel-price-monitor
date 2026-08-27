@@ -14,10 +14,12 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.adapters import registry
-from app.api.deps import AdminUser, CurrentUser, DbSession, get_object_or_404, record_audit
+from app.api.deps import (
+    AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
+)
 from app.core.logging import get_logger
 from app.db.models import (
     CheckRun,
@@ -38,9 +40,23 @@ from app.schemas.monitoring import (
     MonitorTargetUpdate,
 )
 from app.services.dates import local_today, resolve_stay_window
+from app.services.ownership import scope_hotels
 
 router = APIRouter(tags=["monitoring"])
 log = get_logger("api.targets")
+
+
+async def _assert_owns_target(session, target: MonitorTarget, user) -> None:
+    """A target is reachable by its own id, so ownership comes from its hotel.
+
+    Two hops: target -> hotel_source -> hotel. Skipping it would leave a
+    schedule editable and deletable by anyone who can guess a small integer,
+    on a hotel that is filtered out of every list they can see.
+    """
+    hotel_source = await get_object_or_404(
+        session, HotelSource, target.hotel_source_id, "Hotel source"
+    )
+    await owned_hotel_or_404(session, hotel_source.hotel_id, user)
 
 
 def _to_out(
@@ -76,17 +92,18 @@ def _to_out(
 @router.get("/monitor-targets", response_model=Page[MonitorTargetOut])
 async def list_targets(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     hotel_id: int | None = None,
     enabled: bool | None = None,
     circuit_state: CircuitState | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    statement = (
+    statement = scope_hotels(
         select(MonitorTarget, Hotel)
         .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
-        .join(Hotel, HotelSource.hotel_id == Hotel.id)
+        .join(Hotel, HotelSource.hotel_id == Hotel.id),
+        user,
     )
     if hotel_id is not None:
         statement = statement.where(Hotel.id == hotel_id)
@@ -115,6 +132,7 @@ async def create_target(
     hotel_source = await get_object_or_404(
         session, HotelSource, payload.hotel_source_id, "Hotel source"
     )
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
 
     # A standing-rate source publishes one price with no notion of a night.
     # Watching it "7 days out" would store today's rate under next week's date:
@@ -164,6 +182,7 @@ async def update_target(
     it, otherwise the next single failure would re-open the circuit at once.
     """
     target = await get_object_or_404(session, MonitorTarget, target_id, "Monitor target")
+    await _assert_owns_target(session, target, admin)
     data = payload.model_dump(exclude_unset=True)
 
     for field, value in data.items():
@@ -193,6 +212,7 @@ async def delete_target(
     never destroy history.
     """
     target = await get_object_or_404(session, MonitorTarget, target_id, "Monitor target")
+    await _assert_owns_target(session, target, admin)
     await session.delete(target)
     await record_audit(
         session, user=admin, action="delete", entity="monitor_target",
@@ -216,7 +236,7 @@ async def run_target_now(
             .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
             .join(Source, HotelSource.source_id == Source.id)
             .join(Hotel, HotelSource.hotel_id == Hotel.id)
-            .where(MonitorTarget.id == target_id)
+            .where(MonitorTarget.id == target_id, Hotel.owner_user_id == admin.id)
         )
     ).first()
     if row is None:
@@ -335,22 +355,53 @@ async def run_target_now(
     )
 
 
+def _visible_check_runs(user):
+    """Check runs for this account's targets, plus the hotel-less ones.
+
+    A run with no ``monitor_target_id`` came from manual entry and carries no
+    hotel of its own -- only an id, a status and a pair of dates. It stays
+    visible because the dashboard polls it by id straight after creating it,
+    and because there is nothing in it to keep.
+    """
+    return or_(
+        CheckRun.monitor_target_id.is_(None),
+        CheckRun.monitor_target_id.in_(
+            select(MonitorTarget.id)
+            .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+            .join(Hotel, HotelSource.hotel_id == Hotel.id)
+            .where(Hotel.owner_user_id == user.id)
+        ),
+    )
+
+
 @router.get("/check-runs/{check_run_id}", response_model=CheckRunOut)
-async def get_check_run(check_run_id: str, session: DbSession, _user: CurrentUser):
+async def get_check_run(check_run_id: str, session: DbSession, user: CurrentUser):
     """What the dashboard polls after a manual run."""
-    run = await get_object_or_404(session, CheckRun, check_run_id, "Check run")
+    run = await session.scalar(
+        select(CheckRun).where(CheckRun.id == check_run_id, _visible_check_runs(user))
+    )
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Check run {check_run_id} does not exist.",
+        )
     return CheckRunOut.model_validate(run)
 
 
 @router.get("/check-runs", response_model=Page[CheckRunOut])
 async def list_check_runs(
     session: DbSession,
-    _user: CurrentUser,
+    user: CurrentUser,
     monitor_target_id: int | None = None,
     status_filter: CheckRunStatus | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=200),
 ):
-    statement = select(CheckRun).order_by(CheckRun.started_at.desc()).limit(limit)
+    statement = (
+        select(CheckRun)
+        .where(_visible_check_runs(user))
+        .order_by(CheckRun.started_at.desc())
+        .limit(limit)
+    )
     if monitor_target_id is not None:
         statement = statement.where(CheckRun.monitor_target_id == monitor_target_id)
     if status_filter is not None:
@@ -374,6 +425,7 @@ async def manual_entry(
     hotel_source = await get_object_or_404(
         session, HotelSource, payload.hotel_source_id, "Hotel source"
     )
+    await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
     check_run_id = str(uuid.uuid4())
 
     session.add(

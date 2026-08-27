@@ -141,7 +141,7 @@ class TestAuthEnforcement:
         """
         response = client.post(
             "/api/v1/auth/login",
-            json={"email": "nobody@example.com", "password": "wrong-password"},
+            json={"username": "nobody", "password": "wrong-password"},
         )
         assert response.status_code in (401, 500)
         if response.status_code == 401:
@@ -170,11 +170,13 @@ class TestDashboardAuth:
 
 class TestValidationContract:
     def test_validation_errors_name_the_field(self, client):
-        response = client.post("/api/v1/auth/login", json={"email": "not-an-email"})
+        # Both fields missing: the username is no longer format-checked, so an
+        # absent field is the only way left to fail this schema's validation.
+        response = client.post("/api/v1/auth/login", json={})
         assert response.status_code == 422
         body = response.json()
         assert body["title"] == "Validation failed"
-        assert {e["field"] for e in body["errors"]} >= {"email", "password"}
+        assert {e["field"] for e in body["errors"]} >= {"username", "password"}
 
     def test_rolling_target_requires_its_offsets(self):
         with pytest.raises(ValueError, match="lead_time_days"):

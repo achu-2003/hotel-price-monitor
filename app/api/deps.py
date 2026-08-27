@@ -193,6 +193,25 @@ async def get_object_or_404(session: AsyncSession, model, object_id, label: str)
     return obj
 
 
+async def owned_hotel_or_404(session: AsyncSession, hotel_id: int, user: User):
+    """Fetch a hotel this account owns, or 404.
+
+    404 rather than 403 when the hotel exists but belongs to someone else.
+    A 403 would confirm that hotel 41 is a real property somebody is watching,
+    which is the same enumeration leak the login endpoint goes out of its way
+    to avoid — and here the thing being enumerated is a competitor set.
+    """
+    from app.db.models import Hotel  # local: app.db.models imports nothing here
+
+    hotel = await session.get(Hotel, hotel_id)
+    if hotel is None or hotel.owner_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Hotel {hotel_id} does not exist.",
+        )
+    return hotel
+
+
 async def unique_or_409(session: AsyncSession, model, label: str, **filters):
     """Reject a duplicate before the database does.
 

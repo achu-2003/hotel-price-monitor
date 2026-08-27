@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from annotated_types import Ge, Le
 from pydantic import BeforeValidator
-from sqlalchemy import ARRAY, BigInteger, func, select
+from sqlalchemy import ARRAY, BigInteger, func, or_, select
 from sqlalchemy import cast as sa_cast
 
 from app.adapters.engines import known_engines
@@ -61,6 +61,7 @@ from app.db.models.price import SUPPRESSION_LABELS
 from app.notifications import registry
 from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
+from app.services.ownership import owned_hotel_ids, owns, scope_hotels
 
 router = APIRouter(include_in_schema=False)
 
@@ -210,15 +211,31 @@ async def _render(
     Four cheap counts, and they are the only things that ever require a human.
     """
     now = datetime.now(UTC)
+    # Scoped like every page it appears on. A badge counting the whole
+    # deployment would send someone to an Attention page that then showed
+    # them nothing -- a permanent unread marker they have no way to clear.
+    mine = owned_hotel_ids(user)
     targets = (
-        await session.scalars(select(MonitorTarget).where(MonitorTarget.is_enabled.is_(True)))
+        await session.scalars(
+            select(MonitorTarget)
+            .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+            .where(MonitorTarget.is_enabled.is_(True), HotelSource.hotel_id.in_(mine))
+        )
     ).all()
     attention = {
         "errors": await session.scalar(
-            select(func.count(MonitoringError.id)).where(MonitoringError.resolved_at.is_(None))
+            select(func.count(MonitoringError.id)).where(
+                MonitoringError.resolved_at.is_(None),
+                or_(
+                    MonitoringError.hotel_id.is_(None),
+                    MonitoringError.hotel_id.in_(mine),
+                ),
+            )
         ) or 0,
         "unmatched": await session.scalar(
-            select(func.count(UnmatchedOffer.id)).where(UnmatchedOffer.resolved_at.is_(None))
+            select(func.count(UnmatchedOffer.id))
+            .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
+            .where(UnmatchedOffer.resolved_at.is_(None), HotelSource.hotel_id.in_(mine))
         ) or 0,
         "stale": sum(1 for t in targets if t.is_stale(now)),
         "paused": sum(1 for t in targets if t.circuit_state != CircuitState.CLOSED),
@@ -288,22 +305,30 @@ async def overview(request: Request, user: DashUser, session: DbSession):
             .join(Hotel, PriceChange.hotel_id == Hotel.id)
             .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
             .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
-            .where(PriceChange.changed_at >= day_ago)
+            .where(PriceChange.changed_at >= day_ago, Hotel.owner_user_id == user.id)
             .order_by(PriceChange.changed_at.desc())
             .limit(20)
         )
     ).all()
 
 
+    mine = owned_hotel_ids(user)
+
     last_success = await session.scalar(
         select(func.max(MonitorTarget.last_success_at))
+        .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+        .where(HotelSource.hotel_id.in_(mine))
     )
     summary = {
         "hotels_active": await session.scalar(
-            select(func.count(Hotel.id)).where(Hotel.is_active.is_(True))
+            select(func.count(Hotel.id)).where(
+                Hotel.is_active.is_(True), Hotel.owner_user_id == user.id
+            )
         ),
         "changes_24h": await session.scalar(
-            select(func.count(PriceChange.id)).where(PriceChange.changed_at >= day_ago)
+            select(func.count(PriceChange.id)).where(
+                PriceChange.changed_at >= day_ago, PriceChange.hotel_id.in_(mine)
+            )
         ),
         # Rendered here rather than in the template so it uses the same
         # timezone conversion as every other timestamp on the page.
@@ -317,10 +342,11 @@ async def overview(request: Request, user: DashUser, session: DbSession):
         select(func.count(PriceChange.id)).where(
             PriceChange.changed_at >= day_ago,
             PriceChange.direction == ChangeDirection.INCREASE,
+            PriceChange.hotel_id.in_(mine),
         )
     )
 
-    hotels = await _tonight_by_hotel(session, now)
+    hotels = await _tonight_by_hotel(session, now, user)
     summary["rooms_today"] = sum(h["rooms"] for h in hotels)
 
     return await _render(
@@ -372,7 +398,7 @@ def _flat_move(changes) -> dict | None:
     return {"delta": priced[0].delta, "currency": priced[0].currency, "rooms": len(priced)}
 
 
-async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
+async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
     """One card per hotel: how many rooms, how cheap, how fresh, and whether
     the freshness can be trusted.
 
@@ -397,7 +423,7 @@ async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
                 (PriceSeries.hotel_id == Hotel.id) & (PriceSeries.check_in == today),
                 isouter=True,
             )
-            .where(Hotel.is_active.is_(True))
+            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
             .group_by(Hotel.id, Hotel.name)
             .order_by(Hotel.name)
         )
@@ -409,7 +435,10 @@ async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
     standing = {
         hotel_id
         for hotel_id, config in (
-            await session.execute(select(HotelSource.hotel_id, HotelSource.adapter_config))
+            await session.execute(
+                select(HotelSource.hotel_id, HotelSource.adapter_config)
+                .where(HotelSource.hotel_id.in_(owned_hotel_ids(user)))
+            )
         ).all()
         if (config or {}).get("standing_rate")
     }
@@ -424,7 +453,10 @@ async def _tonight_by_hotel(session, now: datetime) -> list[dict]:
             await session.execute(
                 select(HotelSource.hotel_id, MonitorTarget).join(
                     MonitorTarget, MonitorTarget.hotel_source_id == HotelSource.id
-                ).where(MonitorTarget.is_enabled.is_(True))
+                ).where(
+                    MonitorTarget.is_enabled.is_(True),
+                    HotelSource.hotel_id.in_(owned_hotel_ids(user)),
+                )
             )
         ).all()
         if target.is_stale(now)
@@ -491,7 +523,10 @@ async def matrix(
         latest = (
             await session.execute(
                 select(PriceSeries.check_in, PriceSeries.check_out)
-                .where(PriceSeries.adults == adults)
+                .where(
+                    PriceSeries.adults == adults,
+                    PriceSeries.hotel_id.in_(owned_hotel_ids(user)),
+                )
                 .order_by(PriceSeries.check_in.desc())
                 .limit(1)
             )
@@ -517,6 +552,7 @@ async def matrix(
                 PriceSeries.check_out == check_out,
                 PriceSeries.adults == adults,
                 Hotel.is_active.is_(True),
+                Hotel.owner_user_id == user.id,
             )
             .order_by(Hotel.name, RoomType.sort_order)
         )
@@ -558,6 +594,7 @@ async def matrix(
         collected = (
             await session.execute(
                 select(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
+                .where(PriceSeries.hotel_id.in_(owned_hotel_ids(user)))
                 .group_by(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
                 .order_by(PriceSeries.check_in.desc())
                 .limit(6)
@@ -583,7 +620,7 @@ async def hotels_page(
     if user is None:
         return _redirect_to_login(request)
 
-    statement = select(Hotel).order_by(Hotel.name)
+    statement = scope_hotels(select(Hotel), user).order_by(Hotel.name)
     if q:
         statement = statement.where(Hotel.name.ilike(f"%{q}%"))
     hotels = (await session.scalars(statement)).all()
@@ -593,6 +630,7 @@ async def hotels_page(
             await session.execute(
                 select(HotelSource.hotel_id, func.count(MonitorTarget.id))
                 .join(MonitorTarget, MonitorTarget.hotel_source_id == HotelSource.id)
+                .where(HotelSource.hotel_id.in_(owned_hotel_ids(user)))
                 .group_by(HotelSource.hotel_id)
             )
         ).all()
@@ -610,7 +648,10 @@ async def hotel_detail(
         return _redirect_to_login(request)
 
     hotel = await session.get(Hotel, hotel_id)
-    if hotel is None:
+    if not owns(hotel, user):
+        # Same redirect for "no such hotel" and "not yours". A distinct
+        # "forbidden" page would confirm the id belongs to a real property
+        # somebody is watching.
         return RedirectResponse(url="/hotels", status_code=303)
 
     sources = (
@@ -770,12 +811,13 @@ async def changes_page(
     from_date = _parse_date(date_from)
     to_date = _parse_date(date_to)
 
-    statement = (
+    statement = scope_hotels(
         select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
                PriceSeries.check_out)
         .join(Hotel, PriceChange.hotel_id == Hotel.id)
         .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
-        .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
+        .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id),
+        user,
     )
 
     if from_date or to_date:
@@ -803,7 +845,11 @@ async def changes_page(
         )
     ).all()
     hotels = (
-        await session.scalars(select(Hotel).where(Hotel.is_active.is_(True)).order_by(Hotel.name))
+        await session.scalars(
+            select(Hotel)
+            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
+            .order_by(Hotel.name)
+        )
     ).all()
 
     return await _render(
@@ -918,7 +964,10 @@ async def changes_recent(
         # to, and an HTML login form parsed as JSON is a confusing dead end.
         return JSONResponse({"detail": "not authenticated"}, status_code=401)
 
-    head = await session.scalar(select(func.max(PriceChange.id))) or 0
+    mine = owned_hotel_ids(user)
+    head = await session.scalar(
+        select(func.max(PriceChange.id)).where(PriceChange.hotel_id.in_(mine))
+    ) or 0
     if since_id is None or since_id >= head:
         return JSONResponse({"cursor": head, "alerts": [], "more": 0})
 
@@ -929,14 +978,20 @@ async def changes_recent(
             .join(Hotel, PriceChange.hotel_id == Hotel.id)
             .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
             .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id)
-            .where(PriceChange.id > since_id, PriceChange.id <= head)
+            .where(
+                PriceChange.id > since_id,
+                PriceChange.id <= head,
+                PriceChange.hotel_id.in_(mine),
+            )
             .order_by(PriceChange.id.desc())
             .limit(limit)
         )
     ).all()
     total = await session.scalar(
         select(func.count(PriceChange.id)).where(
-            PriceChange.id > since_id, PriceChange.id <= head
+            PriceChange.id > since_id,
+            PriceChange.id <= head,
+            PriceChange.hotel_id.in_(mine),
         )
     ) or 0
 
@@ -1020,7 +1075,7 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
             select(MonitorTarget, Hotel.id, Hotel.name)
             .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
             .join(Hotel, HotelSource.hotel_id == Hotel.id)
-            .where(MonitorTarget.is_enabled.is_(True))
+            .where(MonitorTarget.is_enabled.is_(True), Hotel.owner_user_id == user.id)
         )
     ).all()
     stale = [(t, hid, name) for t, hid, name in target_rows if t.is_stale(now)]
@@ -1035,7 +1090,7 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
             .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
             .join(Hotel, HotelSource.hotel_id == Hotel.id)
             .outerjoin(RoomType, UnmatchedOffer.suggested_room_type_id == RoomType.id)
-            .where(UnmatchedOffer.resolved_at.is_(None))
+            .where(UnmatchedOffer.resolved_at.is_(None), Hotel.owner_user_id == user.id)
             .order_by(UnmatchedOffer.occurrence_count.desc())
             .limit(100)
         )
@@ -1057,7 +1112,16 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
         await session.execute(
             select(MonitoringError, Hotel.name)
             .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
-            .where(MonitoringError.resolved_at.is_(None))
+            .where(
+                MonitoringError.resolved_at.is_(None),
+                # Unattributed errors stay: they name no property, and they
+                # are how a source that breaks before it resolves to a hotel
+                # gets noticed at all.
+                or_(
+                    MonitoringError.hotel_id.is_(None),
+                    MonitoringError.hotel_id.in_(owned_hotel_ids(user)),
+                ),
+            )
             .order_by(MonitoringError.occurred_at.desc())
             .limit(100)
         )
@@ -1088,7 +1152,10 @@ async def notifications_page(
             select(Notification, Recipient.name, Hotel.name)
             .join(Recipient, Notification.recipient_id == Recipient.id)
             .outerjoin(Hotel, Notification.hotel_id == Hotel.id)
-            .where(Notification.created_at >= since)
+            .where(
+                Notification.created_at >= since,
+                Notification.hotel_id.in_(owned_hotel_ids(user)),
+            )
             .order_by(Notification.created_at.desc())
             .limit(300)
         )
@@ -1103,6 +1170,7 @@ async def notifications_page(
         await session.execute(
             select(HotelRecipient, Hotel.name)
             .join(Hotel, HotelRecipient.hotel_id == Hotel.id)
+            .where(Hotel.owner_user_id == user.id)
             .order_by(Hotel.name)
         )
     ).all():
@@ -1110,7 +1178,9 @@ async def notifications_page(
 
     hotels = (
         await session.scalars(
-            select(Hotel).where(Hotel.is_active.is_(True)).order_by(Hotel.name)
+            select(Hotel)
+            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
+            .order_by(Hotel.name)
         )
     ).all()
 
@@ -1140,7 +1210,24 @@ async def check_run_partial(
     """
     if user is None:
         return _redirect_to_login(request)
-    run = await session.get(CheckRun, check_run_id)
+
+    # Scoped through the target's hotel. A run id is a uuid rather than a
+    # small integer, but "hard to guess" is not an access rule, and the
+    # fragment reports what a competitor's check found. A run with no target
+    # came from manual entry and carries no hotel to check it against.
+    run = await session.scalar(
+        select(CheckRun).where(
+            CheckRun.id == check_run_id,
+            or_(
+                CheckRun.monitor_target_id.is_(None),
+                CheckRun.monitor_target_id.in_(
+                    select(MonitorTarget.id)
+                    .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
+                    .where(HotelSource.hotel_id.in_(owned_hotel_ids(user)))
+                ),
+            ),
+        )
+    )
     return templates.TemplateResponse(
         request=request, name="partials/check_run.html", context={"run": run}
     )
