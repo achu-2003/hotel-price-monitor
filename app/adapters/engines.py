@@ -301,10 +301,30 @@ ENGINES: tuple[EngineProfile, ...] = (
             "fields": {
                 "room_name": "name",
                 "rooms_left": "quantity",
-                # agodaPrice is the sell price, matching the headline on the
-                # card. price.crossedOut beside it is the rack rate -- the same
-                # trap aiosell and hotelzify document, in a third dialect.
-                "price_inclusive": "pricePopupViewModel.agodaPrice",
+                # BOTH SIDES OF THE TAX, AND EACH IN ITS OWN SLOT.
+                #
+                # agodaPrice is the sell price -- the "from Rs. 4,950" headline
+                # on the card, and NOT the crossed-out rack rate beside it, the
+                # same trap aiosell and hotelzify document in other dialects.
+                #
+                # It is also PRE-TAX, and it was mapped to price_inclusive.
+                # That read correctly on a deployment comparing on "exclusive"
+                # -- price_on falls back to the other component when its own is
+                # empty -- and would have been silently wrong the day anyone
+                # compared on "inclusive", by an amount that differs per room:
+                #
+                #     Deluxe             4,950 + 5%   = 5,197.50
+                #     Villa Garden View  7,650 + 18%  = 9,027.00
+                #
+                # One hotel, two tax rates. A single fudge factor could not
+                # have rescued it, and nothing on screen would have looked odd.
+                #
+                # Both are PER NIGHT. totalPrice.display is the whole stay
+                # inclusive, and is deliberately not used: these two agree with
+                # each other, and a mix of per-night and per-stay numbers in
+                # one series is worse than either.
+                "price_exclusive": "perNightPrice.display",
+                "price_inclusive": "inclusivePriceWithoutExtraBed.display",
             },
             "wait_timeout_ms": 45000,
         },

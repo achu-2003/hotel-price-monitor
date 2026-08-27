@@ -9,21 +9,27 @@
       "quantity": 1,
       "isFit": true,
       "maxOccupancy": 2,
-      "uid": "d71b4a49-c31f-2123-f33b-a12abbbda69e",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 7650.0,
-       "formattedRoomPerNightAmount": "7,650.00"
+       "agodaPrice": 7650.0
       },
-      "price": {
-       "display": 7650.0,
-       "crossedOut": 9799.55,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 7650.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 9027.0
+      },
+      "totalPrice": {
+       "display": 9027.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
       },
-      "redirectRoomKeyWithPrice": "990199304|False|True|False|2|7650"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    },
@@ -35,21 +41,27 @@
       "quantity": 1,
       "isFit": true,
       "maxOccupancy": 2,
-      "uid": "44c4db61-3ceb-d9e7-88b8-05f04c33a604",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 9900.0,
-       "formattedRoomPerNightAmount": "9,900.00"
+       "agodaPrice": 9900.0
       },
-      "price": {
-       "display": 9900.0,
-       "crossedOut": 10651.81,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 9900.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 11682.0
+      },
+      "totalPrice": {
+       "display": 11682.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
       },
-      "redirectRoomKeyWithPrice": "896263149|False|True|False|2|9900"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    },
@@ -61,42 +73,54 @@
       "quantity": 1,
       "isFit": true,
       "maxOccupancy": 4,
-      "uid": "eab66edf-bba8-65ec-5d6e-6fb5099bde8a",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 13500.0,
-       "formattedRoomPerNightAmount": "13,500.00"
+       "agodaPrice": 13500.0
       },
-      "price": {
-       "display": 13500.0,
-       "crossedOut": 16659.27,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 13500.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 15930.0
+      },
+      "totalPrice": {
+       "display": 15930.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
       },
-      "redirectRoomKeyWithPrice": "990199597|False|True|False|2|13500"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      },
      {
       "name": "Family Room",
       "quantity": 1,
       "isFit": false,
       "maxOccupancy": 4,
-      "uid": "01785083-1cc8-3048-dc46-c1cbffd8cd1a",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 14400.0,
-       "formattedRoomPerNightAmount": "14,400.00"
+       "agodaPrice": 14400.0
       },
-      "price": {
-       "display": 14400.0,
-       "crossedOut": 16659.27,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 14400.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 16992.0
+      },
+      "totalPrice": {
+       "display": 16992.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 4 adults"
       },
-      "redirectRoomKeyWithPrice": "990199597|False|True|False|4|14400"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    },
@@ -108,42 +132,54 @@
       "quantity": 1,
       "isFit": true,
       "maxOccupancy": 4,
-      "uid": "d288fb6c-e683-95a1-12ee-871b15571ce6",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 15750.0,
-       "formattedRoomPerNightAmount": "15,750.00"
+       "agodaPrice": 15750.0
       },
-      "price": {
-       "display": 15750.0,
-       "crossedOut": 20747.85,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 15750.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 18585.0
+      },
+      "totalPrice": {
+       "display": 18585.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
       },
-      "redirectRoomKeyWithPrice": "992978841|False|True|False|2|15750"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      },
      {
       "name": "Suite",
       "quantity": 1,
       "isFit": false,
       "maxOccupancy": 4,
-      "uid": "62f48459-f9ef-9d7e-d86b-8a9276264144",
+      "isBreakfastIncluded": true,
+      "supplierId": 332,
+      "ratePlanId": 19401175,
       "pricePopupViewModel": {
-       "agodaPrice": 16650.0,
-       "formattedRoomPerNightAmount": "16,650.00"
+       "agodaPrice": 16650.0
       },
-      "price": {
-       "display": 16650.0,
-       "crossedOut": 20747.85,
-       "extraBed": 0.0,
-       "couponCrossedOut": 0.0
+      "perNightPrice": {
+       "display": 16650.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 19647.0
+      },
+      "totalPrice": {
+       "display": 19647.0
       },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 4 adults"
       },
-      "redirectRoomKeyWithPrice": "992978841|False|True|False|4|16650"
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    }

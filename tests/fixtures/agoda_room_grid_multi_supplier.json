@@ -15,9 +15,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 4950.0
       },
+      "perNightPrice": {
+       "display": 4950.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5197.5
+      },
+      "totalPrice": {
+       "display": 5197.5
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Tax 5%"
+      ]
      },
      {
       "name": "Deluxe",
@@ -30,9 +42,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 5500.0
       },
+      "perNightPrice": {
+       "display": 5500.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5775.0
+      },
+      "totalPrice": {
+       "display": 5775.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Goods & Services Tax \u20b9 275.00"
+      ]
      }
     ]
    },
@@ -50,9 +74,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 6750.0
       },
+      "perNightPrice": {
+       "display": 6750.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 7087.5
+      },
+      "totalPrice": {
+       "display": 7087.5
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Tax 5%"
+      ]
      },
      {
       "name": "Superior",
@@ -65,9 +101,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 7500.0
       },
+      "perNightPrice": {
+       "display": 7500.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 7875.0
+      },
+      "totalPrice": {
+       "display": 7875.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Goods & Services Tax \u20b9 375.00"
+      ]
      }
     ]
    },
@@ -85,9 +133,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 7650.0
       },
+      "perNightPrice": {
+       "display": 7650.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 9027.0
+      },
+      "totalPrice": {
+       "display": 9027.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    },
@@ -105,9 +165,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 7650.0
       },
+      "perNightPrice": {
+       "display": 7650.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 9027.0
+      },
+      "totalPrice": {
+       "display": 9027.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Goods & Services Tax \u20b9 1,377.00"
+      ]
      },
      {
       "name": "Family Room",
@@ -120,9 +192,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 11700.0
       },
+      "perNightPrice": {
+       "display": 11700.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 13806.0
+      },
+      "totalPrice": {
+       "display": 13806.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 2 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      },
      {
       "name": "Family Room",
@@ -135,9 +219,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 8550.0
       },
+      "perNightPrice": {
+       "display": 8550.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 10089.0
+      },
+      "totalPrice": {
+       "display": 10089.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 3 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Goods & Services Tax \u20b9 1,539.00"
+      ]
      },
      {
       "name": "Family Room",
@@ -150,9 +246,21 @@
       "pricePopupViewModel": {
        "agodaPrice": 12600.0
       },
+      "perNightPrice": {
+       "display": 12600.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 14868.0
+      },
+      "totalPrice": {
+       "display": 14868.0
+      },
       "roomChildAndExtraBedPolicyViewModel": {
        "capacityText": "Max 4 adults"
-      }
+      },
+      "taxesAndSurchargesList": [
+       "Tax 18%"
+      ]
      }
     ]
    }

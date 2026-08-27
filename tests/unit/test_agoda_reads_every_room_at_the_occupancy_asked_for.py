@@ -80,7 +80,7 @@ MULTI_SUPPLIER = json.loads(
 LISTING = "https://www.agoda.com/ananthyam-resort-by-anukulas/hotel/yelagiri-in.html"
 
 #: Read off the live grid for a 2-adult search: the "Max 2 adults" row of each
-#: room type, and nothing else.
+#: room type, and nothing else. Pre-tax, which is the figure Agoda leads with.
 EXPECTED = {
     "Superior": 7650,
     "Villa with Garden View": 9900,
@@ -145,12 +145,12 @@ class TestOnlyTheOccupancyAskedForIsRecorded:
         assert len(names) == len(set(names))
 
     def test_each_room_carries_its_two_adult_rate(self):
-        got = {o.raw_room_name: int(o.price_inclusive) for o in _offers()}
+        got = {o.raw_room_name: int(o.price_exclusive) for o in _offers()}
         assert got == EXPECTED
 
     def test_the_four_adult_rate_is_not_recorded_anywhere(self):
         """13,500 is the answer; 14,400 is the answer to a different question."""
-        prices = {int(o.price_inclusive) for o in _offers()}
+        prices = {int(o.price_exclusive) for o in _offers()}
         assert 14400 not in prices
         assert 16650 not in prices
 
@@ -232,7 +232,7 @@ class TestOneRoomSoldBySeveralSuppliers:
         assert len(names) == len(set(names)) == 4
 
     def test_the_cheapest_supplier_wins(self):
-        got = {o.raw_room_name: int(o.price_inclusive) for o in _offers(MULTI_SUPPLIER)}
+        got = {o.raw_room_name: int(o.price_exclusive) for o in _offers(MULTI_SUPPLIER)}
         assert got == {
             "Deluxe": 4950,              # not the 5,500 second supplier
             "Superior": 6750,            # not 7,500
@@ -277,3 +277,40 @@ class TestDedupeItself:
         sold_out = NormalizedOffer(raw_room_name="A", is_available=False, currency="INR")
         kept = dedupe_offers([self._offer("A", 100), sold_out], "cheapest")
         assert len(kept) == 1 and kept[0].price_inclusive is not None
+
+
+class TestBothSidesOfTheTaxAreRecorded:
+    """agodaPrice is PRE-TAX and used to be filed as price_inclusive.
+
+    That read correctly while this deployment compares on "exclusive" -- the
+    offer falls back to the other component when its own is empty -- and would
+    have been silently wrong the day anyone compared on "inclusive". Not by a
+    constant, either: Agoda applies a different rate per room.
+    """
+
+    def test_the_pre_tax_figure_lands_in_the_exclusive_slot(self):
+        deluxe = [o for o in _offers(MULTI_SUPPLIER) if o.raw_room_name == "Deluxe"][0]
+        assert int(deluxe.price_exclusive) == 4950
+
+    def test_the_tax_inclusive_figure_lands_in_the_inclusive_slot(self):
+        deluxe = [o for o in _offers(MULTI_SUPPLIER) if o.raw_room_name == "Deluxe"][0]
+        assert float(deluxe.price_inclusive) == 5197.5
+
+    def test_the_two_are_not_the_same_number(self):
+        """The whole shape of the old bug: one value serving both slots."""
+        for offer in _offers(MULTI_SUPPLIER):
+            assert offer.price_exclusive != offer.price_inclusive
+
+    def test_the_tax_rate_differs_between_rooms_of_one_hotel(self):
+        """Why no single correction factor could have patched this."""
+        rates = {
+            o.raw_room_name: round(float(o.price_inclusive) / float(o.price_exclusive), 2)
+            for o in _offers(MULTI_SUPPLIER)
+        }
+        assert rates["Deluxe"] == 1.05
+        assert rates["Villa with Garden View"] == 1.18
+
+    def test_either_basis_now_reads_its_own_number(self):
+        deluxe = [o for o in _offers(MULTI_SUPPLIER) if o.raw_room_name == "Deluxe"][0]
+        assert int(deluxe.price_on("exclusive")) == 4950
+        assert float(deluxe.price_on("inclusive")) == 5197.5
