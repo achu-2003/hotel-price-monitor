@@ -1,0 +1,3717 @@
+{
+ "status": 200,
+ "message": "success",
+ "data": [
+  {
+   "HotelRooms": [
+    {
+     "roomName": "Classic Room",
+     "availableRooms": 15,
+     "defaultPrice": "100.00",
+     "baseAdultCount": 3,
+     "baseChildCount": 0,
+     "maxGuestCount": 4,
+     "maxAdultCount": 3,
+     "maxChildCount": 3,
+     "maxInfantCount": 1,
+     "currency": "INR",
+     "roomCount": 10,
+     "ratePlans": {
+      "48f1b411-9c5a-48f1-ab5b-e81b9d822681": {
+       "id": 42217,
+       "ratePlanId": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanConfig": "{\"id\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"name\":\"Room with Breakfast, Lunch & Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "5d20dabe-268e-48a7-89c4-4cec3ea98d59": {
+       "id": 42211,
+       "ratePlanId": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanConfig": "{\"id\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"name\":\"Room with Breakfast\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "99110672-237d-4d3b-86a6-325b27981663": {
+       "id": 42220,
+       "ratePlanId": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanConfig": "{\"id\":\"99110672-237d-4d3b-86a6-325b27981663\",\"name\":\"Room with Dinner only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"99110672-237d-4d3b-86a6-325b27981663\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false,\"advanceBookingWindow\":365}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "c5908de2-9642-4d15-84bd-295c58bcd0bc": {
+       "id": 42214,
+       "ratePlanId": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanConfig": "{\"id\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"name\":\"Room with Breakfast, Lunch or Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "fcfd4dbb-df47-427c-a9f3-77b12b1803b7": {
+       "id": 42208,
+       "ratePlanId": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanConfig": "{\"id\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"name\":\"Room Only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      }
+     },
+     "pricing": [
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12443
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 14693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 17343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9843
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 4824.019047619047
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 4824.019047619047
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5218.379893531089
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5612.74073944313
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6007.101585355172
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10193
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 13593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      }
+     ]
+    },
+    {
+     "roomName": "Classic room with Balcony",
+     "availableRooms": 30,
+     "defaultPrice": "8200.00",
+     "baseAdultCount": 2,
+     "baseChildCount": 0,
+     "maxGuestCount": 4,
+     "maxAdultCount": 3,
+     "maxChildCount": 3,
+     "maxInfantCount": 1,
+     "currency": "INR",
+     "roomCount": 10,
+     "ratePlans": {
+      "48f1b411-9c5a-48f1-ab5b-e81b9d822681": {
+       "id": 42218,
+       "ratePlanId": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanConfig": "{\"id\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"name\":\"Room with Breakfast, Lunch & Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "5d20dabe-268e-48a7-89c4-4cec3ea98d59": {
+       "id": 42212,
+       "ratePlanId": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanConfig": "{\"id\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"name\":\"Room with Breakfast\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "99110672-237d-4d3b-86a6-325b27981663": {
+       "id": 42221,
+       "ratePlanId": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanConfig": "{\"id\":\"99110672-237d-4d3b-86a6-325b27981663\",\"name\":\"Room with Dinner only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"99110672-237d-4d3b-86a6-325b27981663\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false,\"advanceBookingWindow\":365}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "c5908de2-9642-4d15-84bd-295c58bcd0bc": {
+       "id": 42215,
+       "ratePlanId": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanConfig": "{\"id\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"name\":\"Room with Breakfast, Lunch or Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "fcfd4dbb-df47-427c-a9f3-77b12b1803b7": {
+       "id": 42209,
+       "ratePlanId": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanConfig": "{\"id\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"name\":\"Room Only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      }
+     },
+     "pricing": [
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 14943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 17593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12693
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 14943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 17593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8193
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8193
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10443
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 13843
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10443
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11943
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 13843
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      }
+     ]
+    },
+    {
+     "roomName": "Mountain View Classic Room",
+     "availableRooms": 10,
+     "defaultPrice": "8500.00",
+     "baseAdultCount": 3,
+     "baseChildCount": 0,
+     "maxGuestCount": 4,
+     "maxAdultCount": 3,
+     "maxChildCount": 3,
+     "maxInfantCount": 1,
+     "currency": "INR",
+     "roomCount": 0,
+     "ratePlans": {
+      "48f1b411-9c5a-48f1-ab5b-e81b9d822681": {
+       "id": 42219,
+       "ratePlanId": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "ratePlanConfig": "{\"id\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"name\":\"Room with Breakfast, Lunch & Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"48f1b411-9c5a-48f1-ab5b-e81b9d822681\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "5d20dabe-268e-48a7-89c4-4cec3ea98d59": {
+       "id": 42213,
+       "ratePlanId": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "ratePlanConfig": "{\"id\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"name\":\"Room with Breakfast\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"5d20dabe-268e-48a7-89c4-4cec3ea98d59\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "99110672-237d-4d3b-86a6-325b27981663": {
+       "id": 42222,
+       "ratePlanId": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "ratePlanConfig": "{\"id\":\"99110672-237d-4d3b-86a6-325b27981663\",\"name\":\"Room with Dinner only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"99110672-237d-4d3b-86a6-325b27981663\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false,\"advanceBookingWindow\":365}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "c5908de2-9642-4d15-84bd-295c58bcd0bc": {
+       "id": 42216,
+       "ratePlanId": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "ratePlanConfig": "{\"id\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"name\":\"Room with Breakfast, Lunch or Dinner\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"c5908de2-9642-4d15-84bd-295c58bcd0bc\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"cancellations\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"conditoin_value\":\"condition_key\"},\"result\":[{\"Days_Before\":7,\"Penalty_Type\":\"percent\",\"Penalty_Value\":\"100\",\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":true,\"advanceBookingWindow\":0,\"stopSell\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      },
+      "fcfd4dbb-df47-427c-a9f3-77b12b1803b7": {
+       "id": 42210,
+       "ratePlanId": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "ratePlanConfig": "{\"id\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"name\":\"Room Only\",\"description\":\"\",\"isPrivate\":false,\"pmsCode\":\"fcfd4dbb-df47-427c-a9f3-77b12b1803b7\",\"isPushable\":false,\"type\":\"source\",\"baseRateplanId\":0,\"baseRatePlanPmsCode\":\"\",\"isBar\":false,\"settings\":{\"priceType\":\"gross\",\"charge\":\"agent\",\"board\":{\"code\":\"RO\",\"description\":\"\"},\"status\":\"enabled\"},\"tags\":[],\"policies\":[{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"9e138d80-fe6a-4e11-ae09-dede691f5e44\",\"condition\":{\"policyType\":\"date_range\",\"dateRange\":{\"from\":\"2026-12-19\",\"to\":\"2027-01-03\"}},\"result\":[{\"Days_Before\":7,\"daysBeforeCheckIn\":7,\"hoursBeforeCheckIn\":168,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":7,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":\"2026-12-19\",\"end\":\"2027-01-03\"},\"priority\":1},{\"type\":\"cancellation\",\"name\":\"Cancellation\",\"id\":\"1e58e07a-429a-494f-aaae-dc95cf3e18a1\",\"condition\":{\"policyType\":\"default\"},\"result\":[{\"Days_Before\":1,\"daysBeforeCheckIn\":1,\"hoursBeforeCheckIn\":24,\"Penalty_Type\":\"percent\",\"penaltyType\":\"percentage\",\"Penalty_Value\":\"100\",\"penaltyValue\":100,\"Time_Before_Check_In\":1,\"Time_Before_Check_In_Type\":\"days\"}],\"dates\":{\"start\":null,\"end\":null},\"priority\":1}],\"packages\":{},\"minLengthOfStay\":0,\"nameManuellyChanged\":false}",
+       "corporateAgentId": null,
+       "isNonRefundable": true
+      }
+     },
+     "pricing": [
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7843
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 13143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12743
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 18043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7843
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 13143
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12743
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 15393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "48f1b411-9c5a-48f1-ab5b-e81b9d822681",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 18043
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "99110672-237d-4d3b-86a6-325b27981663",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 11793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8243
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6343
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8643
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8243
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 9393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "5d20dabe-268e-48a7-89c4-4cec3ea98d59",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10543
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 5993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "fcfd4dbb-df47-427c-a9f3-77b12b1803b7",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 6793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 0,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 14293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 7093
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 0,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8593
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 8993
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10893
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 1,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12793
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 1,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 10493
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 2,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 12393
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      },
+      {
+       "adultCount": 2,
+       "childCount": 3,
+       "infantCount": 1,
+       "ratePlanCode": "c5908de2-9642-4d15-84bd-295c58bcd0bc",
+       "isOpen": true,
+       "priceForPax": [
+        {
+         "checkInDate": "2026-08-27",
+         "priceBeforeTax": 14293
+        }
+       ],
+       "price": 1,
+       "roomCount": 1,
+       "minLOS": 1,
+       "meetsMLOS": true
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

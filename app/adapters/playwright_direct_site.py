@@ -372,7 +372,7 @@ class PlaywrightDirectSiteAdapter:
             or looks_sold_out(card_text)
         )
 
-        price_text = _text_in(card, selectors["price"])
+        price_text = _price_text_in(card, selectors["price"])
         price = None
         if not sold_out:
             # A room with no readable price is one of two things, and the
@@ -407,8 +407,8 @@ class PlaywrightDirectSiteAdapter:
 
         is_available = not sold_out
 
-        exclusive_text = _text_in(card, selectors.get("price_exclusive"))
-        taxes_text = _text_in(card, selectors.get("taxes_fees"))
+        exclusive_text = _price_text_in(card, selectors.get("price_exclusive"))
+        taxes_text = _price_text_in(card, selectors.get("taxes_fees"))
         exclusive = parse_price_or_none(exclusive_text, field_name="price_exclusive")
         taxes = parse_price_or_none(taxes_text, field_name="taxes_fees")
 
@@ -526,6 +526,72 @@ def _refundable(card, selectors: dict) -> bool | None:
     if "refundable" in lowered or "free cancel" in lowered:
         return True
     return None
+
+
+#: Walks up a few levels because the decoration is frequently set on a wrapper
+#: and merely painted through the leaf holding the digits. Mirrors the isStruck
+#: used by dom_discovery when it SCORES candidates -- the same rule has to apply
+#: when the chosen selector is READ, or the scoring was for nothing.
+_IS_STRUCK_JS = """el => {
+  let node = el;
+  for (let i = 0; i < 4 && node && node.nodeType === 1; i++) {
+    const tag = node.tagName.toLowerCase();
+    if (tag === "s" || tag === "del" || tag === "strike") return true;
+    try {
+      const d = getComputedStyle(node).textDecorationLine
+             || getComputedStyle(node).textDecoration || "";
+      if (d.indexOf("line-through") !== -1) return true;
+    } catch (e) { /* detached node: nothing to read */ }
+    node = node.parentElement;
+  }
+  return false;
+}"""
+
+
+def _price_text_in(element, selector: str | None) -> str | None:
+    """The first price under ``selector`` that is NOT crossed out.
+
+    WHY THIS IS NOT JUST query_selector
+    ===================================
+    A discounted room renders both numbers, and the struck one comes first::
+
+        <span class="discountpirce">INR 3,000.00</span>   <- rack, line-through
+        <span id="price">INR 2,550.00</span>              <- what a guest pays
+
+    ``query_selector`` returns the first match, so MGM Whispering Meadows was
+    recorded at 3,000 on a night it was selling at 2,550 -- every room, every
+    reading, 15% high.
+
+    Discovery already scores struck candidates down hard when it CHOOSES a
+    selector. That intelligence was applied once, at discovery time, and then
+    thrown away: a selector broad enough to match both numbers -- which the
+    generic ``text=/.../`` price pattern always is -- reintroduces the whole
+    problem at read time. Excluding it here means it cannot come back, whatever
+    the selector says, and repairs configurations already written.
+
+    Falls back to the first match when every candidate is struck: a page that
+    crosses out its only price is doing something we do not understand, and a
+    price is still better evidence than silence.
+    """
+    if not selector:
+        return None
+    try:
+        matches = element.query_selector_all(selector)
+    except PlaywrightError:
+        return None
+    if not matches:
+        return None
+
+    for match in matches:
+        try:
+            if match.evaluate(_IS_STRUCK_JS):
+                continue
+        except PlaywrightError:
+            pass  # unreadable style is not evidence of being struck
+        if text := _element_text(match):
+            return text
+
+    return _element_text(matches[0]) or None
 
 
 def _text_in(element, selector: str | None) -> str | None:

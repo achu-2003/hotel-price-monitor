@@ -22,17 +22,29 @@ SELECTORS = {"room_name": ".name", "price": ".price"}
 
 
 class _Node:
-    """The two methods the adapter actually calls on a DOM element."""
+    """The methods the adapter actually calls on a DOM element."""
 
-    def __init__(self, text: str, children: dict | None = None):
+    def __init__(self, text: str, children: dict | None = None, struck: bool = False):
         self._text = text
         self._children = children or {}
+        self._struck = struck
 
     def inner_text(self) -> str:
         return self._text
 
     def query_selector(self, selector: str):
         return self._children.get(selector)
+
+    def query_selector_all(self, selector: str):
+        """Money fields are read through every match, not just the first, so
+        that a struck-through rack rate can be skipped. See
+        ``_price_text_in``."""
+        match = self._children.get(selector)
+        return [match] if match is not None else []
+
+    def evaluate(self, _js: str) -> bool:
+        """Stands in for the is-this-struck-through probe."""
+        return self._struck
 
 
 def _card(full_text: str, **parts: str) -> _Node:

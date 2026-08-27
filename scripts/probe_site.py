@@ -39,6 +39,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.adapters.parsing import looks_sold_out  # noqa: E402
 
+# Windows consoles default to cp1252, which cannot encode the rupee sign. This
+# script's whole job is to print prices, and every price it finds on an Indian
+# booking site starts with one -- so on Windows it crashed in the report
+# writer, AFTER the probe had succeeded, and took the findings with it.
+#
+# Reconfiguring the stream beats stripping the symbol: the currency is part of
+# what a probe is meant to tell you, and a report that silently renders "3,081"
+# for a page quoting rupees is the kind of small lie this tool exists to catch.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # a redirected or closed stream
+            pass
+
 PRICE_TEXT_RE = re.compile(r"(₹|Rs\.?|INR)\s?[\d,]{3,}", re.IGNORECASE)
 ROOM_WORD_RE = re.compile(
     r"\b(deluxe|standard|superior|premium|executive|suite|cottage|villa|"

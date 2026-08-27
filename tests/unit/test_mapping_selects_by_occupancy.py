@@ -30,6 +30,19 @@ once stored. So the selector had to exist before the profile could be written.
 ``{adults}`` rather than a literal, because a configuration that hard-codes the
 occupancy it was discovered at files one occupancy's rate under another's the
 first time someone watches a different party size.
+
+WHERE HOTELZIFY WENT AFTERWARDS
+===============================
+The selector fixed the occupancy and was still not enough for this engine: it
+cannot reach the rate plan (a uuid on the entry, its name in a sibling dict),
+cannot compare children and infants at the same time, and cannot call the
+second endpoint the discount lives behind. Selecting on ``adultCount`` alone
+recorded 10,093 for a room the page was selling at 3,859. Hotelzify now has a
+dedicated adapter -- see ``app/adapters/hotelzify.py`` and its tests.
+
+The selector itself stays, tested here on the payload shape that motivated it,
+because the other engines configured through the mapping language still use
+it. ``ROOM`` below is a recorded Hotelzify room, kept as a realistic fixture.
 """
 from __future__ import annotations
 
@@ -109,9 +122,14 @@ class TestTheSelector:
         assert "pets" in str(caught.value)
 
 
-class TestTheWholeOfferThroughTheProfile:
-    """End to end on the profile as shipped, so a change to either half that
-    breaks the pair is caught here."""
+class TestTheProfileRoutesToTheDedicatedAdapter:
+    """The profile and the adapter must not drift apart.
+
+    Hotelzify used to be driven by ``adapter_config["fields"]`` through the
+    generic mapping. It is not any more, and a profile that quietly regrew a
+    field mapping would be dead configuration that looks authoritative -- the
+    next person to debug a wrong price would read it and believe it.
+    """
 
     def _profile(self):
         found = detect("https://booking.sterlingholidays.com/rooms/5171/2026-09-12/2026-09-13/2/0")
@@ -121,27 +139,15 @@ class TestTheWholeOfferThroughTheProfile:
     def test_the_engine_is_recognised(self):
         assert self._profile().key == "hotelzify"
 
-    def test_the_offer_carries_the_real_rate(self):
-        offer = offer_from_mapping(
-            ROOM, self._profile().adapter_config["fields"],
-            default_currency="INR", params=conditions(2),
+    def test_it_is_served_by_its_own_adapter(self):
+        assert self._profile().adapter_key == "hotelzify"
+
+    def test_it_carries_no_field_mapping(self):
+        """Whatever this engine needs, a dotted path cannot express it."""
+        assert not self._profile().adapter_config.get("fields")
+
+    def test_the_property_id_still_comes_out_of_the_url(self):
+        found = detect(
+            "https://booking.sterlingholidays.com/rooms/5171/2026-09-12/2026-09-13/2/0"
         )
-
-        assert offer.price_exclusive == 12000
-
-    def test_the_placeholder_is_not_what_gets_stored(self):
-        offer = offer_from_mapping(
-            ROOM, self._profile().adapter_config["fields"],
-            default_currency="INR", params=conditions(2),
-        )
-
-        assert offer.price_exclusive != 100
-        assert offer.price_inclusive is None  # priceBeforeTax is not the all-in
-
-    def test_a_room_with_no_rooms_left_reads_as_unavailable(self):
-        offer = offer_from_mapping(
-            {**ROOM, "availableRooms": 0}, self._profile().adapter_config["fields"],
-            default_currency="INR", params=conditions(2),
-        )
-
-        assert offer.is_available is False
+        assert found.external_id == "5171"

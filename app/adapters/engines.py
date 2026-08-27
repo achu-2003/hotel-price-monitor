@@ -186,45 +186,37 @@ ENGINES: tuple[EngineProfile, ...] = (
     EngineProfile(
         key="hotelzify",
         display_name="Hotelzify booking engine",
-        adapter_key="playwright_direct_site",
-        domains=("booking.sterlingholidays.com", "hotelzify.com"),
-        adapter_config={
-            "json_url_contains": ["/hotel/availability"],
-            "rooms_path": "data.0.HotelRooms",
-            "fields": {
-                "room_name": "roomName",
-                "available": "availableRooms",
-                "rooms_left": "availableRooms",
-                # THE FIELD THIS PROFILE EXISTS FOR.
-                #
-                # Discovery reached exactly one price on this payload:
-                # defaultPrice, a top-level number whose name matches every
-                # price hint there is. It is a placeholder. Measured against
-                # the live endpoint on the same night:
-                #
-                #     Classic Room                 defaultPrice   100   real 12000
-                #     Classic room with Balcony    defaultPrice  8200   real 12300
-                #     Mountain View Classic Room   defaultPrice  8500   real 12600
-                #
-                # All three wrong, one of them by two orders of magnitude, and
-                # every one of them CONSTANT -- which is why Sterling recorded
-                # thirty-nine readings across seven days without a single price
-                # change. It was not that the hotel held its rates. It was that
-                # we were reading a field that does not move.
-                #
-                # The real rate is per rate-plan, per occupancy, per date:
-                # seventy-two pricing entries per room. pricing.0 is the
-                # SINGLE-adult rate, which is why an index cannot express this
-                # and the selector had to exist.
-                "price_exclusive": "pricing[adultCount={adults}].priceForPax.0.priceBeforeTax",
-            },
-            "sold_out_markers": ["sold out", "no rooms available", "not available"],
-        },
+        adapter_key="hotelzify",
+        domains=("booking.sterlingholidays.com", "hotelzify.com", "api.hotelzify.com"),
+        # No field mapping: the payload cannot be expressed as dotted paths
+        # and the price is not the one the API publishes.
+        #
+        # WHAT THE CONFIGURATION USED TO SAY, AND WHY IT WAS WRONG
+        # =======================================================
+        # This profile drove playwright_direct_site with:
+        #
+        #     price_exclusive: pricing[adultCount={adults}].priceForPax.0.priceBeforeTax
+        #
+        # which recorded Sterling Yelagiri at 10,093 on a night the page was
+        # selling the same room for 3,859 -- 2.6x too high, every reading,
+        # for as long as it watched. Three faults, none of them fixable in a
+        # dotted path:
+        #
+        #   * the rate plan is a uuid on the entry and a name in a sibling
+        #     dict, so matching on occupancy alone took the DEAREST plan
+        #     (full board) rather than the Room Only rate the page leads with
+        #   * childCount and infantCount went uncompared, so the right row
+        #     was reached by list order rather than by logic
+        #   * priceBeforeTax is the RACK rate. The discount a guest receives
+        #     comes from a second endpoint the config could not call
+        #
+        # app/adapters/hotelzify.py does all three, and is testable against a
+        # recorded payload. Same reasoning as aiosell above.
+        adapter_config={},
         external_id_pattern=r"/rooms/(\d+)",
-        notes="Rates are nested per rate-plan x occupancy x date; the "
-              "occupancy is chosen by the {adults} selector rather than by "
-              "index. defaultPrice on the room object is a placeholder, not a "
-              "rate -- see the field comment.",
+        notes="Direct JSON API, no browser: ~0.5s per fetch. Records the "
+              "Room Only rate after live promotions -- the number printed on "
+              "the page. Override the board with adapter_config.board.",
     ),
     EngineProfile(
         key="gotoyelagiri",
