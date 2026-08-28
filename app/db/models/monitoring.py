@@ -148,6 +148,20 @@ class CheckRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     error_summary: Mapped[str | None] = mapped_column(Text)
 
+    # The source said, in so many words, that it had no rooms for the window
+    # in check_in/check_out. A SUCCESSFUL run: the page loaded and was read,
+    # and what it said was "sold out". Without this the row is indistinguishable
+    # from a run that found nothing and could not say why, and the dashboard
+    # showed "0 offers, 0 changes" for a hotel that was simply full.
+    sold_out: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    # One sentence for a person, on a run that needs explaining: which night
+    # was full, and which night was priced instead. ``error_summary`` is for
+    # runs that failed; this is for runs that succeeded and still have
+    # something to say.
+    notes: Mapped[str | None] = mapped_column(Text)
+
     def __repr__(self) -> str:
         return f"<CheckRun {self.id[:8]} {self.status}>"
 

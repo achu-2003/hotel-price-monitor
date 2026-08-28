@@ -370,6 +370,27 @@ touching the database — a process that is alive with a dead database must not
 report itself healthy. The watchdog alerts when the pings stop, which is the
 only alarm that still works when this box is the thing that failed.
 
+### A hotel that is full is not a hotel that is broken
+
+A check whose page says "No available rooms on the selected dates" is a
+**success**, and shows on the run log as a grey `sold out` pill rather than
+`0 offers`. Hover it for the sentence: which night was full, and which night
+was priced instead.
+
+Because a last-minute window that comes back full also gets checked one night
+later — tonight rolls to tomorrow, tomorrow rolls to the night after, nothing
+further out moves. The prices found there are recorded against **that** night,
+never against the night that was asked for. Set `SOLD_OUT_ROLLOVER_DAYS=0` to
+turn the extra read off.
+
+If a run like this shows as `failed` with `parse_schema_drift` instead, the
+page is announcing its unavailability in wording the marker list has not seen.
+Add the phrase to `_SOLD_OUT_MARKERS` in `app/adapters/parsing.py` — one line,
+and every hotel on that engine benefits — rather than to one hotel's
+`sold_out_markers`. Keep it a phrase that *announces* unavailability: a marker
+that can appear in ordinary interface copy will report a hotel with rooms for
+sale as sold out, which is much the worse mistake.
+
 ---
 
 ## Development workflow

@@ -465,7 +465,11 @@
         {% for run in runs %}
         <tr>
           <td class="nowrap muted">{{ run.started_at|localtime('%d %b %H:%M:%S') }}</td>
+          {% if run.status.value == 'success' and run.sold_out %}
+          <td><span class="pill pill-soldout" title="{{ run.notes }}">sold out</span></td>
+          {% else %}
           <td><span class="pill pill-{{ 'ok' if run.status.value == 'success' else ('stop' if run.status.value == 'failed' else 'warn') }}">{{ run.status.value }}</span></td>
+          {% endif %}
           <td class="num">{{ run.offers_found }}</td>
           <td class="num">{{ run.offers_unmatched }}</td>
           <td class="num">{{ run.changes_detected }}</td>

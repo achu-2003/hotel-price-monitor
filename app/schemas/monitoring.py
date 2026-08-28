@@ -128,6 +128,12 @@ class CheckRunOut(ORMModel):
     changes_detected: int
     duration_ms: int | None
     error_summary: str | None
+    #: The source announced no rooms for check_in/check_out. Defaulted rather
+    #: than required so a client reading an older row does not break.
+    sold_out: bool = False
+    #: Why a successful run still needs explaining — which night was full, and
+    #: which night was priced instead.
+    notes: str | None = None
 
 
 class MonitoringErrorOut(ORMModel):

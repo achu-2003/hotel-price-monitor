@@ -93,6 +93,51 @@ def resolve_stay_window(
     raise ValueError(f"Unknown date strategy: {strategy}")
 
 
+#: How far ahead a sold-out window is still worth rolling past. One day, so a
+#: check for tonight rolls to tomorrow night and a check for tomorrow rolls to
+#: the night after -- and nothing further out moves at all. See
+#: :func:`rollover_window` for why the horizon exists.
+DEFAULT_ROLLOVER_HORIZON_DAYS = 1
+
+
+def rollover_window(
+    stay: StayWindow, *, today: date, horizon_days: int = DEFAULT_ROLLOVER_HORIZON_DAYS
+) -> StayWindow | None:
+    """The stay to try next when ``stay`` came back with no rooms at all.
+
+    A hotel that is full tonight still has a rate for tomorrow, and that rate
+    is the thing a revenue manager is actually watching. Checking tonight,
+    reading "No available rooms on the selected dates", and stopping there
+    leaves the screen empty on exactly the evenings the market is tightest.
+
+    The window is shifted whole, so a two-night stay stays two nights: the
+    comparable stay one day later, not a different length of trip.
+
+    THE HORIZON IS THE POINT
+    ------------------------
+    Rolling is only ever right for a window that was chosen for being *near*.
+    A target watching a fixed date in November is asking about that night --
+    if it is sold out, that IS the answer, and quietly pricing the 24th
+    instead would answer a question nobody asked and file it beside prices
+    that mean something else. So the roll applies to the last-minute end of
+    the book and nowhere else.
+
+    Returns ``None`` when the window starts beyond the horizon, which the
+    caller reads as "record the sold-out and stop".
+
+    Pure, and takes ``today`` as an argument, for the reason the rest of this
+    module does.
+    """
+    if horizon_days < 1:
+        return None  # rolling switched off
+    if stay.check_in > today + timedelta(days=horizon_days):
+        return None
+    return StayWindow(
+        check_in=stay.check_in + timedelta(days=1),
+        check_out=stay.check_out + timedelta(days=1),
+    )
+
+
 def next_weekend(today: date, nights: int = 1) -> StayWindow:
     """The upcoming Friday night.
 

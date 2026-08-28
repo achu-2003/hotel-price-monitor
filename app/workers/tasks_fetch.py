@@ -44,7 +44,7 @@ from app.core.ratelimit import (
 from app.db.models import CheckRun, CheckRunStatus, MonitorTarget, PriceBasis
 from app.db.session import sync_session
 from app.services import monitoring
-from app.services.dates import StayWindow
+from app.services.dates import StayWindow, local_today, rollover_window
 from app.services.ingest import IngestContext, ingest_fetch_result
 from app.services.monitoring import DueGroup
 
@@ -189,21 +189,7 @@ def _run_fetch(
     _write_check_run(check_run_id, payload, stay, started, CheckRunStatus.RUNNING,
                      triggered_by=triggered_by)
 
-    context = FetchContext(
-        hotel_source_id=payload["hotel_source_id"],
-        hotel_name=payload["hotel_name"],
-        url=payload["url"],
-        external_id=payload["external_id"],
-        stay=stay,
-        adults=payload["adults"],
-        children=payload["children"],
-        rooms=payload["rooms"],
-        currency=payload["currency"],
-        locale=settings.browser_locale,
-        timezone=settings.browser_timezone,
-        config=payload["adapter_config"],
-        check_run_id=check_run_id,
-    )
+    context = _context_for(payload, stay, settings, check_run_id)
 
     # No database session is held across this call. It is the slow part.
     try:
@@ -223,91 +209,268 @@ def _run_fetch(
             started, triggered_by, logger,
         )
 
-    return _ingest(result, payload, stay, target_ids, check_run_id, started,
+    readings = _with_rollover(
+        adapter, payload, stay, result,
+        settings=settings, check_run_id=check_run_id, logger=logger,
+    )
+    return _ingest(readings, payload, target_ids, check_run_id, started,
                    triggered_by, logger)
 
 
-def _ingest(
-    result: FetchResult,
+# -- a full hotel is not an empty page -------------------------------
+#: One reading: the window that was asked for, and what the source said about
+#: it. A run produces one of these normally, and two when a full night was
+#: rolled forward.
+Reading = tuple[StayWindow, FetchResult]
+
+
+def _context_for(
+    payload: dict[str, Any], stay: StayWindow, settings, check_run_id: str
+) -> FetchContext:
+    """Everything the adapter needs, for ONE stay window.
+
+    Lifted out of _run_fetch so the rolled-forward window is built the same
+    way as the requested one. Locale, timezone and currency are pinned for the
+    reason FetchContext documents: two readings taken under different
+    conditions are not comparable, and the second reading here is going to be
+    compared against the first hotel's rates like any other.
+    """
+    return FetchContext(
+        hotel_source_id=payload["hotel_source_id"],
+        hotel_name=payload["hotel_name"],
+        url=payload["url"],
+        external_id=payload["external_id"],
+        stay=stay,
+        adults=payload["adults"],
+        children=payload["children"],
+        rooms=payload["rooms"],
+        currency=payload["currency"],
+        locale=settings.browser_locale,
+        timezone=settings.browser_timezone,
+        config=payload["adapter_config"],
+        check_run_id=check_run_id,
+    )
+
+
+def _has_rooms(result: FetchResult) -> bool:
+    """Whether anything on this reading can actually be booked.
+
+    Not ``bool(result.offers)``: an eZee page that lists three room types and
+    prints "Not Available" under each has three offers and nothing for sale.
+    """
+    return any(offer.is_available for offer in result.offers)
+
+
+def _rollover_target(
+    result: FetchResult, stay: StayWindow, *, today, horizon_days: int
+) -> StayWindow | None:
+    """The window to check instead, when this one came back full.
+
+    ``sold_out_detected`` is required, not merely "no offers". An empty result
+    the adapter could not explain is drift and has already raised by the time
+    it gets here — but if one ever arrives quietly, rolling forward would hide
+    a broken selector behind a night of prices from a different date, which is
+    precisely the failure this system refuses to make.
+    """
+    if _has_rooms(result) or not result.sold_out_detected:
+        return None
+    return rollover_window(stay, today=today, horizon_days=horizon_days)
+
+
+def _with_rollover(
+    adapter,
     payload: dict[str, Any],
     stay: StayWindow,
+    result: FetchResult,
+    *,
+    settings,
+    check_run_id: str,
+    logger,
+) -> list[Reading]:
+    """Read the next night too, when the night asked for is sold out.
+
+    A hotel with no rooms tonight still publishes a rate for tomorrow, and on
+    a full evening that rate is the only live number in the market. Before
+    this, such an evening produced nothing at all: no prices, and — until the
+    phrase was added to the marker list — a redesign alert for a page that was
+    working exactly as designed.
+
+    Both readings are kept and both are ingested, each under ITS OWN absolute
+    dates. The sold-out for the requested night is a business fact and is
+    recorded as one; the rolled night's prices are filed against the rolled
+    night. Substituting one for the other would put tomorrow's rate in
+    tonight's series and report a price move that never happened — the trap
+    services/dates.py opens with.
+
+    The extra reading is strictly a bonus. It costs a rate-limit token, and if
+    the budget says no, or the second page fails for any reason at all, the
+    first reading is returned alone: a fetch that succeeded must never be
+    turned into a failure by the optional half. A drift on the rolled window
+    is logged rather than filed, because the requested window checks the same
+    page on its own schedule and will raise it there, against the dates an
+    operator was actually asking about.
+    """
+    readings: list[Reading] = [(stay, result)]
+
+    nxt = _rollover_target(
+        result, stay,
+        today=local_today(settings.browser_timezone),
+        horizon_days=settings.sold_out_rollover_days,
+    )
+    if nxt is None:
+        return readings
+
+    rate = effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
+    if not take_token(payload["source_id"], rate).allowed:
+        logger.info("rollover_skipped_rate_limited", rolled_to=str(nxt))
+        return readings
+
+    try:
+        rolled = adapter.fetch(_context_for(payload, nxt, settings, check_run_id))
+    except Exception as exc:  # noqa: BLE001 - never fails the reading we have
+        logger.info("rollover_fetch_failed", rolled_to=str(nxt), error=str(exc)[:200])
+        return readings
+
+    logger.info(
+        "rolled_past_a_sold_out_night",
+        sold_out=str(stay),
+        rolled_to=str(nxt),
+        offers=len(rolled.offers),
+    )
+    readings.append((nxt, rolled))
+    return readings
+
+
+def _nights(stay: StayWindow) -> str:
+    return f"{stay.check_in:%d %b} → {stay.check_out:%d %b}"
+
+
+def _sold_out_note(readings: list[Reading]) -> str | None:
+    """The sentence on the run, when the night asked for had no rooms.
+
+    ``None`` for an ordinary run: a note that appears on every row is one
+    nobody reads.
+    """
+    stay, result = readings[0]
+    if _has_rooms(result) or not result.sold_out_detected:
+        return None
+
+    asked = _nights(stay)
+    if len(readings) == 1:
+        return f"No available rooms for {asked}."
+
+    rolled_stay, rolled = readings[1]
+    rolled_nights = _nights(rolled_stay)
+    if not _has_rooms(rolled):
+        return (
+            f"No available rooms for {asked}, and none for {rolled_nights} "
+            f"either — this hotel is sold out on both nights."
+        )
+    on_sale = sum(1 for offer in rolled.offers if offer.is_available)
+    return (
+        f"No available rooms for {asked}, so the next night was checked "
+        f"instead: {on_sale} room(s) on sale for {rolled_nights}."
+    )
+
+
+def _ingest(
+    readings: list[Reading],
+    payload: dict[str, Any],
     target_ids: list[int],
     check_run_id: str,
     started: datetime,
     triggered_by: str,
     logger,
 ) -> dict[str, Any]:
-    """Persist the offers and hand any confirmed changes to the notify queue."""
+    """Persist the offers and hand any confirmed changes to the notify queue.
+
+    ``readings`` is normally one window. It is two when a sold-out night was
+    rolled forward, and each is ingested under its own absolute dates in the
+    SAME transaction: the sold-out and the substitute reading are one fact
+    about one moment, and committing half of them would leave a night marked
+    unavailable with nothing to show for the check that found it.
+    """
     now = datetime.now(UTC)
+    requested_stay = readings[0][0]
+    offers_found = offers_unmatched = 0
+    change_ids: list[int] = []
+    collapsed_names: list[str] = []
 
     with sync_session() as session:
         target = session.execute(
             select(MonitorTarget).where(MonitorTarget.id == target_ids[0])
         ).scalar_one_or_none()
 
-        ctx = IngestContext(
-            hotel_id=payload["hotel_id"],
-            source_id=payload["source_id"],
-            hotel_source_id=payload["hotel_source_id"],
-            stay=stay,
-            adults=payload["adults"],
-            children=payload["children"],
-            currency=payload["currency"],
-            # Configured, not assumed: see Settings.price_basis. A series
-            # recorded on the other basis is rebased by the ingest layer
-            # rather than reported as a price move.
-            price_basis=PriceBasis(get_settings().price_basis),
-            # The target can be deleted between dispatch and ingest. The
-            # observations are still worth keeping, so fall back to the global
-            # sensitivity rather than discarding the fetch.
-            thresholds=(
-                monitoring.build_thresholds(target)
-                if target is not None
-                else monitoring.default_thresholds()
-            ),
-            checked_at=now,
-            check_run_id=check_run_id,
-            meal_plan_filter=payload.get("meal_plan_filter"),
-        )
-        summary = ingest_fetch_result(session, result, ctx)
-
-        # A fetch that read several rooms and could only file one of them is a
-        # SUCCESS by every measure this task has -- the page loaded, the
-        # selectors matched, offers were found and none went unmatched -- and
-        # it is still wrong. It means the room_name selector has landed on
-        # something every card shares, so the hotel's rooms all arrive with one
-        # identity and the pipeline keeps the first.
-        #
-        # That happened to a six-room property whose name selector found an
-        # amenity chip reading "King Size Bed" on all six cards. Nothing
-        # failed, nothing was retried, and the dashboard showed one room for
-        # weeks. Recorded here so the next occurrence is a line on Attention
-        # rather than a discrepancy somebody happens to notice.
-        if summary.offers_collapsed:
-            monitoring.record_error(
-                session,
-                error=SchemaDriftError(
-                    f"{summary.offers_collapsed} of {summary.offers_seen} offers "
-                    f"shared an identity with another offer in the same fetch "
-                    f"AT A DIFFERENT PRICE, so the cheaper or dearer of each "
-                    f"pair was dropped and this hotel is being monitored as "
-                    f"{summary.offers_matched - summary.offers_collapsed} room(s). "
-                    f"Either the room_name selector is reading a label several "
-                    f"cards share, or the site sells these rooms under rate "
-                    f"plans the config does not capture — add a meal_plan or "
-                    f"refundable selector so the two can be told apart.",
-                    context={
-                        "names_seen": summary.collapsed_names[:8],
-                        "hotel_source_id": payload["hotel_source_id"],
-                        "selectors": (payload.get("adapter_config") or {}).get("selectors"),
-                    },
-                ),
+        for stay, result in readings:
+            ctx = IngestContext(
                 hotel_id=payload["hotel_id"],
                 source_id=payload["source_id"],
-                target_id=target_ids[0],
+                hotel_source_id=payload["hotel_source_id"],
+                stay=stay,
+                adults=payload["adults"],
+                children=payload["children"],
+                currency=payload["currency"],
+                # Configured, not assumed: see Settings.price_basis. A series
+                # recorded on the other basis is rebased by the ingest layer
+                # rather than reported as a price move.
+                price_basis=PriceBasis(get_settings().price_basis),
+                # The target can be deleted between dispatch and ingest. The
+                # observations are still worth keeping, so fall back to the
+                # global sensitivity rather than discarding the fetch.
+                thresholds=(
+                    monitoring.build_thresholds(target)
+                    if target is not None
+                    else monitoring.default_thresholds()
+                ),
+                checked_at=now,
                 check_run_id=check_run_id,
-                now=now,
+                meal_plan_filter=payload.get("meal_plan_filter"),
             )
+            summary = ingest_fetch_result(session, result, ctx)
+
+            offers_found += summary.offers_seen
+            offers_unmatched += summary.offers_unmatched
+            change_ids.extend(summary.change_ids)
+            collapsed_names.extend(summary.collapsed_names)
+
+            # A fetch that read several rooms and could only file one of them
+            # is a SUCCESS by every measure this task has -- the page loaded,
+            # the selectors matched, offers were found and none went unmatched
+            # -- and it is still wrong. It means the room_name selector has
+            # landed on something every card shares, so the hotel's rooms all
+            # arrive with one identity and the pipeline keeps the first.
+            #
+            # That happened to a six-room property whose name selector found an
+            # amenity chip reading "King Size Bed" on all six cards. Nothing
+            # failed, nothing was retried, and the dashboard showed one room for
+            # weeks. Recorded here so the next occurrence is a line on Attention
+            # rather than a discrepancy somebody happens to notice.
+            if summary.offers_collapsed:
+                monitoring.record_error(
+                    session,
+                    error=SchemaDriftError(
+                        f"{summary.offers_collapsed} of {summary.offers_seen} offers "
+                        f"shared an identity with another offer in the same fetch "
+                        f"AT A DIFFERENT PRICE, so the cheaper or dearer of each "
+                        f"pair was dropped and this hotel is being monitored as "
+                        f"{summary.offers_matched - summary.offers_collapsed} room(s). "
+                        f"Either the room_name selector is reading a label several "
+                        f"cards share, or the site sells these rooms under rate "
+                        f"plans the config does not capture — add a meal_plan or "
+                        f"refundable selector so the two can be told apart.",
+                        context={
+                            "names_seen": summary.collapsed_names[:8],
+                            "hotel_source_id": payload["hotel_source_id"],
+                            "stay": str(stay),
+                            "selectors": (payload.get("adapter_config") or {}).get("selectors"),
+                        },
+                    ),
+                    hotel_id=payload["hotel_id"],
+                    source_id=payload["source_id"],
+                    target_id=target_ids[0],
+                    check_run_id=check_run_id,
+                    now=now,
+                )
 
         monitoring.record_success(session, target_ids, now)
         _update_check_run(
@@ -316,29 +479,35 @@ def _ingest(
             status=CheckRunStatus.SUCCESS,
             finished_at=now,
             duration_ms=int((now - started).total_seconds() * 1000),
-            offers_found=summary.offers_seen,
-            offers_unmatched=summary.offers_unmatched,
-            changes_detected=summary.changes_detected,
+            offers_found=offers_found,
+            offers_unmatched=offers_unmatched,
+            changes_detected=len(change_ids),
+            # A run that read the page and found the hotel full is a success
+            # with something to say. Both fields are about the window that was
+            # ASKED for -- check_in/check_out on this row -- whatever the roll
+            # went on to read.
+            sold_out=not _has_rooms(readings[0][1]),
+            notes=_sold_out_note(readings),
         )
-        change_ids = list(summary.change_ids)
+        change_ids = list(change_ids)
 
     logger.info(
         "fetch_complete",
-        offers=summary.offers_seen,
-        matched=summary.offers_matched,
-        unmatched=summary.offers_unmatched,
+        offers=offers_found,
+        unmatched=offers_unmatched,
         changes=len(change_ids),
+        windows=len(readings),
     )
 
     # Enqueued after the transaction, for the same reason the notify hand-off
     # is: the repair reads this source's row, and must never race the write
     # that told it to run.
-    if summary.offers_collapsed:
+    if collapsed_names:
         _request_repair(
-            payload, stay, reason="offers_collapsed", logger=logger,
+            payload, requested_stay, reason="offers_collapsed", logger=logger,
             # The labels that collapsed. The repair needs them to tell the rooms
             # the broken config invented from the hotel's real ones.
-            collapsed_names=summary.collapsed_names,
+            collapsed_names=collapsed_names,
         )
 
     if change_ids:
@@ -354,7 +523,7 @@ def _ingest(
     return {
         "status": "success",
         "check_run_id": check_run_id,
-        "offers": summary.offers_seen,
+        "offers": offers_found,
         "changes": len(change_ids),
     }
 

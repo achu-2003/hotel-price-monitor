@@ -9,6 +9,17 @@
   <span class="pill pill-off">unknown run</span>
 {% elif run.status.value == 'running' %}
   <span class="pill pill-warn">running…</span>
+{% elif run.status.value == 'success' and run.sold_out %}
+  {#
+    A hotel that is full read perfectly. Showing it as "0 offers, 0 changes"
+    made a business fact look like a fetch that came back empty, which is the
+    one thing this codebase is careful never to conflate. The note says which
+    night was full and, when a last-minute window rolled forward, which night
+    was priced instead.
+  #}
+  <span class="pill pill-soldout" title="{{ run.notes }}">
+    sold out{% if run.offers_found %} — {{ run.offers_found }} offers on the next night{% endif %}
+  </span>
 {% elif run.status.value == 'success' %}
   <span class="pill pill-ok">
     {{ run.offers_found }} offers,

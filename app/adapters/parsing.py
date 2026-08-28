@@ -59,9 +59,20 @@ _NUMBER_RE = re.compile(r"[-+]?\d[\d,.   ]*\d|\d")
 # confident business fact, tells whoever watches that hotel, and looks
 # exactly like a correct answer. So these stay narrow on purpose: matching
 # fewer real sold-outs is the cheaper mistake.
+# Word ORDER is the other way these get missed. "no rooms available" was on
+# this list from the start; MGM Whispering Nest's engine prints
+#
+#     No available rooms on the selected dates, Please select new dates !
+#
+# which says the same thing with the adjective in front, and matched nothing.
+# The whole page was 424 characters long -- the notice was most of it -- and
+# it was filed every half hour as "almost certainly a redesign", against a
+# booking engine that had not changed at all. Both orders are now listed;
+# "no available room" is a prefix of the plural, so one entry covers both.
 _SOLD_OUT_MARKERS = (
     "sold out", "soldout",
     "no rooms available", "no rooms left", "no rooms found",
+    "no available room",
     "no room available", "rooms are not available", "not available for",
     "no availability", "not currently available", "no longer available",
     "fully booked", "houseful", "no vacancies",

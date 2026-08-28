@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     # keep showing their own headline number.
     price_basis: Literal["inclusive", "exclusive"] = "exclusive"
 
+    # ── sold-out rollover ────────────────────────────────────────────
+    # A last-minute window that comes back "no available rooms" is re-checked
+    # one night later, and the prices found there are recorded under THAT
+    # night. The sold-out is still recorded for the night that was asked for;
+    # the roll adds a reading, it never substitutes one.
+    #
+    # 1 = tonight and tomorrow roll, nothing else. 0 switches it off. Anything
+    # higher starts moving windows that were chosen for their date rather than
+    # their nearness -- see services/dates.rollover_window.
+    sold_out_rollover_days: int = 1
+
     # ── playwright ───────────────────────────────────────────────────
     browser_headless: bool = True
     browser_locale: str = "en-IN"
