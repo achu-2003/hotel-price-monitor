@@ -433,11 +433,14 @@ async def attach_source_from_url(
             if isinstance(exc, FetchError):
                 detail = f"Could not inspect that page. {exc}"
             else:
-                detail = (
-                    f"Could not inspect that page: {type(exc).__name__}. If it "
-                    f"showed a CAPTCHA or a bot wall, that is a refusal and this "
-                    f"hotel needs manual entry instead."
-                )
+                # Whatever escaped, quote it. The class name alone is a dead
+                # end for anyone trying to fix this -- Playwright names every
+                # navigation failure "Error", so this branch read
+                # "Could not inspect that page: Error." and then invented a
+                # CAPTCHA to explain it. The first line of the message is the
+                # reason; the rest is a call log nobody needs in a form field.
+                reason = str(exc).splitlines()[0].strip() or type(exc).__name__
+                detail = f"Could not inspect that page: {reason}"
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=detail,

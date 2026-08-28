@@ -744,6 +744,97 @@ def _open_booking_widget(page) -> None:
             continue
 
 
+# ── why a page never opened ──────────────────────────────────────────
+#
+# Chromium reports every navigation failure through one exception class named
+# ``Error``, with the actual reason in its message as a ``net::ERR_*`` code.
+# Anything that only looks at the class learns nothing, so the codes are read
+# here and turned into the two things the operator actually needs to know:
+# whether trying again could help, and whether the address is worth keeping.
+
+#: The connection was accepted and then torn down before any HTML arrived.
+#: This is what a bot defence at a CDN edge looks like from the client side --
+#: not a challenge page, not a 403, just a closed socket. It is a property of
+#: the SITE, so a different URL on the same domain will not behave differently,
+#: and no amount of retrying changes it.
+_REFUSED_BEFORE_ANY_PAGE = frozenset({
+    "ERR_HTTP2_PROTOCOL_ERROR",
+    "ERR_QUIC_PROTOCOL_ERROR",
+    "ERR_SSL_PROTOCOL_ERROR",
+    "ERR_SSL_VERSION_OR_CIPHER_MISMATCH",
+    "ERR_SSL_CLIENT_AUTH_CERT_NEEDED",
+})
+
+#: Ordinary connectivity failures. These say something about the network or
+#: the address, and nothing about whether the site would have us.
+_NET_ERROR_NOTES = {
+    "ERR_NAME_NOT_RESOLVED": "there is no such host, so check the address for a typo",
+    "ERR_CONNECTION_REFUSED": "nothing is listening at that address",
+    "ERR_CONNECTION_RESET": "the connection dropped part-way through",
+    "ERR_CONNECTION_CLOSED": "the connection dropped part-way through",
+    "ERR_CONNECTION_TIMED_OUT": "the site did not answer in time",
+    "ERR_ADDRESS_UNREACHABLE": "there is no route to that host from here",
+    "ERR_INTERNET_DISCONNECTED": "this machine has no network connection",
+    "ERR_TOO_MANY_REDIRECTS": "the page redirects in a loop, which is usually a "
+                              "login or consent wall",
+    "ERR_CERT_AUTHORITY_INVALID": "the site's HTTPS certificate is not trusted",
+    "ERR_CERT_DATE_INVALID": "the site's HTTPS certificate has expired",
+    "ERR_CERT_COMMON_NAME_INVALID": "the site's HTTPS certificate is for a "
+                                    "different host",
+    "ERR_EMPTY_RESPONSE": "the site answered with nothing at all",
+    "ERR_ABORTED": "the browser abandoned the navigation, which usually means "
+                   "the address serves a file download rather than a page",
+}
+
+_NET_ERROR_RE = re.compile(r"net::(ERR_[A-Z0-9_]+)")
+
+
+def _navigation_failure(target: str, exc: Exception):
+    """Turn a failed navigation into a sentence somebody can act on.
+
+    The message this replaces was "Could not inspect that page: Error. If it
+    showed a CAPTCHA or a bot wall...". Every part of that was wrong for the
+    case that produced it: the class name carried no information, and the page
+    had shown nothing at all -- there was no CAPTCHA to look for, because the
+    site closed the connection before serving a byte.
+    """
+    from app.core.errors import BlockedError, NetworkError
+
+    message = str(exc)
+    match = _NET_ERROR_RE.search(message)
+    code = match.group(1) if match else None
+    host = urlparse(target).netloc or target[:80]
+
+    if code in _REFUSED_BEFORE_ANY_PAGE:
+        # BlockedError, not NetworkError: it is permanent, it must not be
+        # retried, and it is the one outcome where the honest advice is to
+        # stop asking this site and use another source. Working around it
+        # would mean disguising the client, which this system does not do.
+        return BlockedError(
+            f"{host} closed the connection before sending a page ({code}). "
+            f"That is a refusal at the network edge rather than a page we "
+            f"could read, and every address on that site behaves the same "
+            f"way, so a different link will not help. Track this hotel from "
+            f"another site, or by manual entry.",
+            context={"url": target, "net_error": code},
+        )
+
+    if code and (note := _NET_ERROR_NOTES.get(code)):
+        return NetworkError(
+            f"Could not reach {host}: {note} ({code}).",
+            context={"url": target, "net_error": code},
+        )
+
+    # Unknown, so quote Chromium verbatim rather than paraphrasing a failure
+    # nobody here anticipated. The first line carries the reason; the rest is
+    # a call log that belongs in the artifacts, not in a form field.
+    first_line = message.splitlines()[0].strip() if message else type(exc).__name__
+    return NetworkError(
+        f"Could not open {host}: {first_line}",
+        context={"url": target, "net_error": code},
+    )
+
+
 # ── driving the page ─────────────────────────────────────────────────
 
 @contextmanager
@@ -978,6 +1069,7 @@ def inspect_url(
     block for why that distinction is the difference between supporting an
     OTA and reporting "TimeoutError" about a page that had rendered fine.
     """
+    from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
     from app.adapters.playwright_base import (
@@ -1092,6 +1184,14 @@ def inspect_url(
                     f"it as a hotel that needs manual entry.",
                     context={"url": target},
                 ) from exc
+            except PlaywrightError as exc:
+                # Navigation failed without ever producing a page. Translated
+                # here rather than left to the caller, which sees only the
+                # exception CLASS -- and Playwright calls every one of these
+                # "Error", so the dashboard reported the string "Error" and
+                # then guessed at a CAPTCHA, for a site that had closed the
+                # connection before sending a single byte of HTML.
+                raise _navigation_failure(target, exc) from exc
             # Never longer than the caller's whole budget: a probe given ten
             # seconds must not spend fifteen of them waiting for quiet.
             settle_ms = min(_SETTLE_MS, timeout_ms)
