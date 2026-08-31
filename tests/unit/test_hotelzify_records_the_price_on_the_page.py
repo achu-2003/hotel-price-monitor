@@ -21,13 +21,15 @@ Each of those has a test below, phrased as the wrong answer it would give.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from app.adapters.base import FetchContext, StayWindow
+from app.adapters import hotelzify as hotelzify_module
 from app.adapters.hotelzify import (
     HotelzifyAdapter,
     _best_promotion,
@@ -59,6 +61,45 @@ EXPECTED_RACK = {
     "Classic room with Balcony": Decimal("5143"),
     "Mountain View Classic Room": Decimal("5593"),
 }
+
+
+#: The moment these fixtures were captured, and the moment they describe.
+#:
+#: WITHOUT THIS THE FILE ROTS. Two separate clock reads decide whether a
+#: promotion applies, and both were being answered by the wall clock:
+#:
+#:   cutoffDays   "book at least 15 days ahead" is measured from TODAY, so a
+#:                hard-coded check-in date drifts closer every day. The early
+#:                bird cleared 15 days when this was written and did not a
+#:                fortnight later -- the suite went red on its own, with the
+#:                production logic entirely correct.
+#:   timeWindow   the Last Minute Deal is live 09:00-23:30, so the same tests
+#:                also failed when run overnight, or from a machine in a
+#:                timezone far enough west.
+#:
+#: Midday on the capture date sits inside the time window and puts the fixture
+#: check-in dates the right distance away, so every assertion below is about
+#: the promotion rules rather than about when the suite happened to run.
+FROZEN_NOW = datetime(2026, 8, 27, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+
+class _FrozenDatetime(datetime):
+    """``datetime`` with ``now()`` pinned; everything else behaves normally.
+
+    A subclass rather than a stub because the adapter uses the real class for
+    parsing and arithmetic as well, and a bare object with one method would
+    break those in ways that look unrelated to the clock.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW.astimezone(tz) if tz else FROZEN_NOW
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock(monkeypatch):
+    """Applied to every test here: any of them can reach a promotion rule."""
+    monkeypatch.setattr(hotelzify_module, "datetime", _FrozenDatetime)
 
 
 def _context(check_in=date(2026, 8, 27), check_out=date(2026, 8, 28), **kw) -> FetchContext:

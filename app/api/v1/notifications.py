@@ -401,6 +401,11 @@ async def verify_whatsapp_webhook(
     open endpoint, and it is compared in constant time.
     """
     settings = get_settings()
+    # Same reasoning as the POST below: only Meta performs this handshake, so
+    # on any other provider the endpoint is surface with no purpose.
+    if settings.whatsapp_provider != "meta_cloud":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
     expected = (
         settings.whatsapp_webhook_verify_token.get_secret_value()
         if settings.whatsapp_webhook_verify_token
@@ -431,6 +436,16 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
         if settings.whatsapp_app_secret
         else ""
     )
+    # Only Meta sends these. On any other provider the endpoint cannot receive
+    # a legitimate request at all -- the My Dreams reseller publishes no
+    # callback -- so it is nothing but reachable attack surface. 404 rather
+    # than 403: there is no point advertising that it exists.
+    if settings.whatsapp_provider != "meta_cloud":
+        log.warning(
+            "whatsapp_webhook_wrong_provider", provider=settings.whatsapp_provider
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
     if secret:
         expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(request.headers.get("X-Hub-Signature-256", ""), expected):
@@ -438,11 +453,24 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Bad signature."
             )
+    elif settings.whatsapp_webhook_allow_unsigned:
+        # An explicit, temporary choice for the minutes between subscribing the
+        # webhook at Meta and having the app secret. Warned about every single
+        # call, because "unsigned" must not become the permanent state by
+        # accident -- which is exactly what it had become.
+        log.warning("whatsapp_webhook_unverified", reason="allow_unsigned is on")
     else:
-        # Deliberately still accepted, so the webhook can be wired up before
-        # the app secret is to hand -- but warned about every single time,
-        # because "unsigned" must not become the permanent state by accident.
-        log.warning("whatsapp_webhook_unverified", reason="whatsapp_app_secret is not set")
+        # Refusing is the safe default. Accepting unsigned callbacks let
+        # anyone who could reach this endpoint mark a notification delivered,
+        # read, or failed by guessing a provider_message_id -- and failed is
+        # terminal, so a real callback afterwards could not put it right.
+        log.warning("whatsapp_webhook_unsigned_rejected")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This webhook is not accepting unsigned callbacks. Set "
+                   "WHATSAPP_APP_SECRET, or WHATSAPP_WEBHOOK_ALLOW_UNSIGNED=true "
+                   "while you finish wiring it up.",
+        )
 
     try:
         body = json.loads(raw)

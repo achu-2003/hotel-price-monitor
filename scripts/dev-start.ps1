@@ -51,8 +51,27 @@ Set-Location $proj
 if (Test-Port 5432) {
     Write-Host "postgres  : already listening on 5432" -ForegroundColor DarkGray
 } else {
-    & "$local\pgsql\bin\pg_ctl.exe" -D "$local\pgdata" -l "$local\pg.log" `
-        -o "-p 5432 -c listen_addresses=127.0.0.1" start | Out-Null
+    # NOT PIPED. `pg_ctl ... | Out-Null` hangs here forever, and it hangs in
+    # the one case that matters: a genuine cold start. pg_ctl exits promptly,
+    # but the postmaster it leaves running INHERITS the pipe's write handle,
+    # so PowerShell keeps waiting for a stream that only closes when Postgres
+    # itself does. The script blocks before Redis, the API and the workers,
+    # and nothing after this line ever starts -- while Postgres, confusingly,
+    # is up and healthy.
+    #
+    # Restarts where 5432 was already listening never reached this branch,
+    # which is why it stayed hidden.
+    #
+    # Start-Process gives the child its own handles, and Wait-Port below is
+    # what actually decides whether Postgres came up.
+    # ONE pre-quoted string, not an array. PowerShell 5.1 joins an
+    # -ArgumentList array with spaces and adds no quoting of its own, so the
+    # -o value split into separate tokens and pg_ctl read the port number as
+    # its operation: pg_ctl: unrecognized operation mode "5432".
+    $pgArgs = "-D `"$local\pgdata`" -l `"$local\pg.log`" " +
+              "-o `"-p 5432 -c listen_addresses=127.0.0.1`" start"
+    Start-Process -FilePath "$local\pgsql\bin\pg_ctl.exe" `
+        -ArgumentList $pgArgs -WindowStyle Hidden
     if (Wait-Port 5432 30) { Write-Host "postgres  : started" -ForegroundColor Green }
     else { Write-Host "postgres  : FAILED - see .local\pg.log" -ForegroundColor Red }
 }

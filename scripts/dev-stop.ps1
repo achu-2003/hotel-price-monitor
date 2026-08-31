@@ -34,20 +34,64 @@ $local = Join-Path $proj ".local"
 # The command line of that child contains this project's path, so it is used as
 # the second test. Both tests are anchored to $proj: nothing outside this
 # directory is ever matched.
+$all = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='uvicorn.exe' OR Name='celery.exe'" -ErrorAction SilentlyContinue
+
+$ours = @($all | Where-Object {
+    ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($proj, [StringComparison]::OrdinalIgnoreCase)) -or
+    ($_.CommandLine -and $_.CommandLine.IndexOf($proj, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+})
+$ourIds = @($ours | ForEach-Object { $_.ProcessId })
+
+# CHILDREN FIRST, AND MATCHED BY PARENT.
+#
+# uvicorn --reload runs the app in a child launched as
+#
+#     python.exe -c "from multiprocessing.spawn import spawn_main; ..."
+#
+# whose command line names no path at all -- not the project, not even the
+# venv, because it is started with the SYSTEM interpreter. Neither test above
+# can see it, so it survived every stop, and the port sweep below could not
+# find it either: Windows keeps reporting the socket's ORIGINAL owner, which
+# is dead the moment the parent is killed, while the live child holds an
+# inherited handle under a different pid. The sweep dutifully killed a pid
+# that no longer existed and reported success.
+#
+# The child is only identifiable while its parent is still alive, so it has to
+# be taken first. What that cost, three times: "api: already listening on
+# 8000", nothing started, and hours-old code serving the dashboard.
+$children = @($all | Where-Object {
+    $ourIds -contains $_.ParentProcessId -and $ourIds -notcontains $_.ProcessId
+})
+
 $stopped = 0
-Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='uvicorn.exe' OR Name='celery.exe'" -ErrorAction SilentlyContinue |
-    Where-Object {
-        ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($proj, [StringComparison]::OrdinalIgnoreCase)) -or
-        ($_.CommandLine -and $_.CommandLine.IndexOf($proj, [StringComparison]::OrdinalIgnoreCase) -ge 0)
-    } |
-    ForEach-Object {
-        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop; $stopped++ } catch {}
-    }
+foreach ($p in @($children) + @($ours)) {
+    try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $stopped++ } catch {}
+}
 Write-Host "api/worker/beat : stopped ($stopped processes)" -ForegroundColor Green
 
-# Whatever survived that -- an orphaned reload child whose parent is already
-# gone shows neither path once it is reparented -- is found by what it is
-# holding. A port is evidence; a name is a guess.
+# Backstop, for a child orphaned by an EARLIER stop: its parent is long gone,
+# so the pass above cannot match it either. Narrow on purpose -- an orphaned
+# spawn_main child whose parent no longer exists, and only while our port is
+# still held. Broadening this to every spawn_main process on the machine would
+# reach into unrelated software.
+Start-Sleep -Milliseconds 500
+if (Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue) {
+    $live = @((Get-CimInstance Win32_Process -ErrorAction SilentlyContinue).ProcessId)
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -and
+            $_.CommandLine.Contains("multiprocessing.spawn") -and
+            $live -notcontains $_.ParentProcessId
+        } |
+        ForEach-Object {
+            try {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
+                Write-Host "port 8000       : freed (orphaned reload child, pid $($_.ProcessId))" -ForegroundColor Yellow
+            } catch {}
+        }
+}
+
+# Last resort: whatever still holds the port, by the port itself.
 foreach ($port in 8000) {
     $owners = (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).OwningProcess
     foreach ($owner in @($owners | Where-Object { $_ })) {
@@ -56,6 +100,13 @@ foreach ($port in 8000) {
             Write-Host "port $port      : freed (pid $owner still held it)" -ForegroundColor Yellow
         } catch {}
     }
+}
+
+if (Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue) {
+    # Said out loud, because dev-start reads a busy port as "already running"
+    # and starts nothing -- which is how old code ends up serving a dashboard
+    # that looks freshly restarted.
+    Write-Host "port 8000       : STILL HELD -- dev-start will skip the API" -ForegroundColor Red
 }
 
 # -- Redis -----------------------------------------------------------
@@ -69,7 +120,14 @@ Write-Host "redis           : stopped" -ForegroundColor Green
 
 # -- PostgreSQL ------------------------------------------------------
 if (Test-Path "$local\pgsql\bin\pg_ctl.exe") {
-    & "$local\pgsql\bin\pg_ctl.exe" -D "$local\pgdata" -m fast stop 2>&1 | Out-Null
+    # Same pipe hazard as the start side, so the output goes to a file and the
+    # wait is on pg_ctl itself. Here we DO want to wait: a fast stop is what
+    # keeps the cluster from needing crash recovery next time.
+    $out = Join-Path $local "pg_ctl-stop.log"
+    Start-Process -FilePath "$local\pgsql\bin\pg_ctl.exe" `
+        -ArgumentList @("-D", "$local\pgdata", "-m", "fast", "stop") `
+        -Wait -WindowStyle Hidden `
+        -RedirectStandardOutput $out -RedirectStandardError "$out.err"
     Write-Host "postgres        : stopped cleanly" -ForegroundColor Green
 }
 

@@ -157,6 +157,18 @@ class Settings(BaseSettings):
     # nobody sent looks exactly like one that happened.
     whatsapp_app_secret: SecretStr | None = None
 
+    # Accept status callbacks that carry no valid signature.
+    #
+    # Off by default, and it should stay off. An unsigned callback endpoint is
+    # open to anyone who can reach it: guess a provider_message_id and a
+    # notification can be marked delivered, read, or FAILED -- and failure is
+    # terminal, so a genuine callback afterwards cannot undo it.
+    #
+    # The one honest use is the few minutes between subscribing the webhook at
+    # Meta and having the app secret to hand. Turn it on, finish the setup,
+    # turn it off.
+    whatsapp_webhook_allow_unsigned: bool = False
+
     # ── whatsapp via my dreams technology ────────────────────────────
     # The reseller authenticates on the QUERY STRING, so both of these end up
     # in any access log, proxy log or error breadcrumb that records a URL.

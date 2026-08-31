@@ -59,7 +59,10 @@ class _FakeSession:
         self.commits += 1
 
 
-def _client(session, *, app_secret=None, verify_token=None) -> TestClient:
+def _client(
+    session, *, app_secret=None, verify_token=None,
+    provider="meta_cloud", allow_unsigned=True,
+) -> TestClient:
     from app.api.v1 import notifications as module
 
     app = create_app()
@@ -73,6 +76,13 @@ def _client(session, *, app_secret=None, verify_token=None) -> TestClient:
     class _Settings:
         whatsapp_app_secret = _Secret(app_secret) if app_secret else None
         whatsapp_webhook_verify_token = _Secret(verify_token) if verify_token else None
+        # Only Meta sends these callbacks, so the endpoint 404s on any other
+        # provider. Every test here is about Meta's payloads.
+        whatsapp_provider = provider
+        # These tests predate the signature becoming mandatory and are about
+        # what the handler does with a payload, not about who may send one.
+        # The refusal itself is covered in TestUnsignedCallbacks below.
+        whatsapp_webhook_allow_unsigned = allow_unsigned
 
     module.get_settings = lambda: _Settings()
     return TestClient(app, raise_server_exceptions=False)
@@ -356,3 +366,101 @@ class TestWhatItRefusesToChokeOn:
         assert rows[0].status is NotificationStatus.DELIVERED
         assert rows[1].status is NotificationStatus.READ
         assert session.commits == 1
+
+
+# ── who is allowed to call this at all ───────────────────────────────
+#
+# WHAT WAS OPEN
+# =============
+# With WHATSAPP_APP_SECRET empty the POST endpoint accepted any unsigned body
+# from anyone who could reach it, logged a warning, and carried on. Probed
+# against a running instance it answered:
+#
+#     POST /api/v1/webhooks/whatsapp   (no signature, no session)
+#     -> 200 {"status":"ok","updated":0}
+#
+# Only "updated: 0" because the probe used a message id matching nothing. A
+# guessed provider_message_id would have marked a real notification delivered,
+# read, or FAILED -- and failure is terminal, so a genuine callback arriving
+# afterwards could not have put it right.
+#
+# The comment called unsigned a temporary convenience for the minutes before
+# the app secret arrives. Nothing made it temporary, and it had quietly become
+# the permanent state. It is now an explicit setting, off by default.
+#
+# None of it was reachable anyway: the deployment runs on the My Dreams
+# reseller, which publishes no callback at all, so the endpoint could not
+# receive a legitimate request. It was attack surface with no purpose.
+class TestUnsignedCallbacks:
+    def test_an_unsigned_callback_is_refused_by_default(self):
+        client = _client(_FakeSession(), allow_unsigned=False)
+
+        response = _post(client, _status_payload("wamid.ABC", "delivered"))
+
+        assert response.status_code == 403
+
+    def test_the_refusal_names_both_ways_out_of_it(self):
+        client = _client(_FakeSession(), allow_unsigned=False)
+
+        detail = _post(client, _status_payload()).json()["detail"]
+
+        assert "WHATSAPP_APP_SECRET" in detail
+        assert "WHATSAPP_WEBHOOK_ALLOW_UNSIGNED" in detail
+
+    def test_a_refused_callback_changes_nothing(self):
+        row = _Notification()
+        client = _client(_FakeSession([row]), allow_unsigned=False)
+
+        _post(client, _status_payload(row.provider_message_id, "failed"))
+
+        assert row.status is not NotificationStatus.FAILED
+
+    def test_the_escape_hatch_still_works_when_asked_for(self):
+        """Explicit and visible, for the minutes before the secret arrives."""
+        client = _client(_FakeSession(), allow_unsigned=True)
+
+        response = _post(client, _status_payload())
+
+        assert response.status_code == 200
+
+    def test_a_signed_callback_never_needs_the_escape_hatch(self):
+        client = _client(_FakeSession(), app_secret="s3cret", allow_unsigned=False)
+
+        response = _post(client, _status_payload(), secret="s3cret")
+
+        assert response.status_code == 200
+
+
+class TestTheEndpointIsClosedOnOtherProviders:
+    """Only Meta sends these. On the reseller it is surface with no purpose."""
+
+    def test_the_post_endpoint_is_not_found_on_mydreams(self):
+        client = _client(_FakeSession(), provider="mydreams", app_secret="s3cret")
+
+        response = _post(client, _status_payload(), secret="s3cret")
+
+        assert response.status_code == 404
+
+    def test_the_verification_handshake_is_not_found_either(self):
+        client = _client(_FakeSession(), provider="mydreams", verify_token=VERIFY_TOKEN)
+
+        response = client.get(
+            "/api/v1/webhooks/whatsapp",
+            params={"hub.mode": "subscribe", "hub.challenge": "12345",
+                    "hub.verify_token": VERIFY_TOKEN},
+        )
+
+        assert response.status_code == 404
+
+    def test_a_correctly_signed_callback_is_still_refused(self):
+        """Closed means closed: a valid signature does not reopen it.
+
+        The reseller holds no signing secret, so anything arriving here with a
+        valid one is not the reseller.
+        """
+        row = _Notification()
+        client = _client(_FakeSession([row]), provider="mydreams", app_secret="s3cret")
+
+        _post(client, _status_payload(row.provider_message_id, "failed"), secret="s3cret")
+
+        assert row.status is not NotificationStatus.FAILED
