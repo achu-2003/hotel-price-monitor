@@ -1090,3 +1090,26 @@ a.hcard:hover {
   /* Full width on its own line, rather than a stray x under the label. */
   .alert-number-row .alert-number-remove { width: 100%; }
 }
+
+/* The two ways of adding somebody, side by side.
+   Equal columns rather than content-sized: the panels are alternatives to
+   each other, and an unequal pair reads as one being the main route and the
+   other an afterthought. They stack below 900px, where two columns would put
+   the phone fields in about 200px. */
+.setup-pair {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+.setup-pair > .setup-col {
+  flex: 1 1 0;
+  min-width: 0;          /* let the column shrink; without it the muted
+                            paragraphs set a floor and the row overflows */
+}
+/* The heading already sits under the section rule, so the usual top margin
+   would push the two columns' panels out of line with each other. */
+.setup-pair > .setup-col > h2:first-child { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .setup-pair { flex-direction: column; gap: 0; }
+}

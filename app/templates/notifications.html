@@ -20,13 +20,18 @@
 </p>
 {% endif %}
 
-<section>
+{# The two ways of adding somebody, side by side: the quick one and the
+   considered one. Stacked, the second sat below a fold and read as a
+   different subject; paired, the choice between them is the first thing on
+   the page. #}
+<section class="setup-pair">
+  <div class="setup-col">
   <h2>WhatsApp alert numbers</h2>
   <p class="muted">
     Up to {{ max_alert_numbers }} numbers that get <strong>every price change,
     on every hotel</strong> — including hotels added later, with no assignment
     to keep up to date. The shortcut for "just WhatsApp me when anything
-    moves"; the recipients below are for anything more selective.
+    moves"; recipients are for anything more selective.
   </p>
   {% if is_admin %}
   <details class="panel" id="alert-numbers" {% if not alert_numbers %}open{% endif %}>
@@ -121,15 +126,15 @@
     </form>
   </details>
   {% endif %}
-</section>
+  </div>
 
-<section>
+  <div class="setup-col">
   <h2>Recipients</h2>
   <p class="muted">
     A recipient is a person; an <em>assignment</em> is the hotel they watch.
     Registering someone sends them nothing on its own — the dispatcher looks up
     assignments, so a recipient covering no hotels is silently inert. Expand a
-    row to assign one.
+    row below to assign one.
   </p>
   {% if is_admin %}
   <details class="panel" id="add-recipient" {% if not recipients %}open{% endif %}>
@@ -172,7 +177,12 @@
     </form>
   </details>
   {% endif %}
+  </div>
+</section>
 
+{# The list itself is full width: it has six columns and already needs a
+   horizontal scroller at this width, so half the page would guarantee one. #}
+<section>
   {# Declared lanes, obeyed. Without them one recipient covering eight hotels
      sized the "hotels covered" column by its own 130-character line and pushed
      Status and the test buttons off the right edge of the page. #}

@@ -290,3 +290,86 @@ class TestAlertNumbersGrowOnDemand:
         )
 
         assert page.count("+919000000001") == 1
+
+
+class TestTheTwoWaysOfAddingSomebodySitSideBySide:
+    """The quick route and the considered one are alternatives, not a sequence.
+
+    Stacked, "Add a recipient" sat below the alert-numbers panel and its own
+    intro paragraph, far enough down to read as a different subject. Paired,
+    the choice between them is the first thing on the page.
+    """
+
+    def test_both_panels_share_one_row(self):
+        page = render()
+
+        assert 'class="setup-pair"' in page
+        assert page.count('class="setup-col"') == 2
+
+    def test_the_alert_numbers_panel_is_in_the_pair(self):
+        page = render()
+        pair = page[page.index('class="setup-pair"'):]
+
+        assert pair.index('id="alert-numbers"') < pair.index("</section>")
+
+    def test_the_add_recipient_panel_is_in_the_pair(self):
+        page = render()
+        pair = page[page.index('class="setup-pair"'):]
+
+        assert pair.index('id="add-recipient"') < pair.index("</section>")
+
+    def test_alert_numbers_comes_first(self):
+        """Left is the quick route; the drawing put it there and so does the
+        reading order for anyone on a narrow screen, where the pair stacks."""
+        page = render()
+
+        assert page.index('id="alert-numbers"') < page.index('id="add-recipient"')
+
+    def test_the_recipients_table_is_not_in_the_pair(self):
+        """Six columns and a horizontal scroller already: half the page would
+        guarantee one."""
+        page = render()
+        pair_end = page.index("</section>", page.index('class="setup-pair"'))
+
+        assert page.index("grid-recipients") > pair_end
+
+    def test_the_markup_is_balanced(self):
+        """The pair added two divs across what used to be two sections.
+
+        An unclosed div here does not fail loudly -- it silently swallows the
+        recipients table into the right-hand column.
+        """
+        from html.parser import HTMLParser
+
+        void = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                "link", "meta", "param", "source", "track", "wbr"}
+
+        class _Check(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack = []
+                self.errors = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag not in void:
+                    self.stack.append(tag)
+
+            def handle_endtag(self, tag):
+                if tag in void:
+                    return
+                if not self.stack:
+                    self.errors.append(f"</{tag}> with nothing open")
+                    return
+                if self.stack[-1] != tag:
+                    self.errors.append(f"</{tag}> closes <{self.stack[-1]}>")
+                    if tag in self.stack:
+                        while self.stack and self.stack.pop() != tag:
+                            pass
+                    return
+                self.stack.pop()
+
+        check = _Check()
+        check.feed(render())
+
+        assert check.errors == []
+        assert check.stack == []
