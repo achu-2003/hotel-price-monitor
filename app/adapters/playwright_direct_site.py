@@ -75,6 +75,18 @@ _ROOMS_WAIT_MS = 25_000
 #: only when it publishes no sold-out marker to short-circuit it.
 _PRICE_WAIT_MS = 15_000
 
+#: How long to keep looking for a sold-out banner when NOTHING was waited for.
+#:
+#: Reached only where adapter_config gives the DOM strategy no selector to wait
+#: on -- most often a JSON-configured source whose rooms_path missed, which is
+#: precisely what a sold-out payload looks like. The alternative to waiting is
+#: judging a still-rendering page on its header alone and filing a config alert
+#: against a hotel that is merely full.
+#:
+#: Paid in full only when the page really is neither sold out nor configured,
+#: which is a state that needs a human anyway.
+_SOLD_OUT_WAIT_MS = 10_000
+
 
 class PlaywrightDirectSiteAdapter:
     """Reads prices from a hotel's own booking engine."""
@@ -281,14 +293,54 @@ class PlaywrightDirectSiteAdapter:
     ) -> tuple[list[NormalizedOffer], bool]:
         selectors = config.get("selectors") or {}
         card_selector = config.get("room_card")
+        page = fetch.page
+
         if not card_selector or not selectors.get("room_name") or not selectors.get("price"):
+            # ASK WHETHER THE HOTEL IS SIMPLY FULL BEFORE BLAMING THE CONFIG.
+            #
+            # A sold-out page and an unconfigured one look identical from
+            # here: neither has a price on it. Raising first turned a full
+            # hotel into a config alert, and worse, into a self-sustaining
+            # one:
+            #
+            #   the hotel sells out -> the page renders no prices -> discovery
+            #   finds nothing to learn and records the source unlearnable ->
+            #   the config stays empty -> the next fetch arrives here with no
+            #   selectors and reports "run probe_site.py"
+            #
+            # Every half hour, for as long as the hotel stayed full, against a
+            # site that had not changed at all -- and probe_site.py, run
+            # against that same sold-out page, would have found nothing
+            # either. Meanwhile the night itself went unrecorded, when "this
+            # hotel was full" is exactly the fact worth keeping.
+            #
+            # Sold out is the answer here even though nothing is configured:
+            # on a night with no rooms there is genuinely nothing to learn,
+            # and the selectors can be discovered on a night that has some.
+            # With no selectors there was nothing for _wait_for_rooms to wait
+            # on, so this is the first look at the page and the banner may not
+            # have rendered yet. A JSON-configured source reaches here the
+            # moment its rooms_path misses -- which is exactly what a sold-out
+            # payload does, since a hotel with nothing to sell has no room grid.
+            sold_out, body = _page_says_sold_out(
+                page, config, wait_ms=int(config.get("sold_out_wait_ms", _SOLD_OUT_WAIT_MS))
+            )
+            if sold_out:
+                log.info(
+                    "sold_out_without_selectors",
+                    hotel=context.hotel_name,
+                    page_text_chars=len(body),
+                )
+                return [], True
+
             raise AdapterConfigError(
                 "DOM extraction needs room_card plus selectors.room_name and "
-                "selectors.price in adapter_config. Run scripts/probe_site.py "
-                "against this hotel to find them."
+                "selectors.price in adapter_config, and no sold-out phrase "
+                f"appears anywhere in the {len(body):,} characters of text "
+                "the page rendered. Run scripts/probe_site.py against this "
+                "hotel to find them."
             )
 
-        page = fetch.page
         cards = _innermost_cards(page, card_selector, context)
 
         if not cards:
@@ -311,10 +363,8 @@ class PlaywrightDirectSiteAdapter:
             # _wait_for_price, eleven lines above, had already found that
             # very phrase -- it searches the whole body -- and returned early
             # on it. The answer was known and then discarded by a slice.
-            body = _safe_text(page, "body")
-            lowered = body.lower()
-            markers = config.get("sold_out_markers") or []
-            if any(m.lower() in lowered for m in markers) or looks_sold_out(body):
+            sold_out, body = _page_says_sold_out(page, config)
+            if sold_out:
                 log.info("sold_out_detected", hotel=context.hotel_name,
                          page_text_chars=len(body))
                 return [], True
@@ -621,6 +671,61 @@ def _element_text(element) -> str:
         return " ".join((element.inner_text() or "").split())
     except PlaywrightError:
         return ""
+
+
+def _page_says_sold_out(page, config: dict, wait_ms: int = 0) -> tuple[bool, str]:
+    """Whether the page announces no availability, and the text that was read.
+
+    ``wait_ms`` polls instead of reading once. ``inner_text`` returns only what
+    is RENDERED, so an early read on a booking SPA sees the header and nothing
+    else: one Agoda page answered with 3,844 characters at first look and
+    25,719 once it had settled, and the sold-out banner was in the difference.
+    Concluding "not sold out" from the first of those is how a full hotel gets
+    reported as a broken configuration.
+
+    Zero is right where the caller has already waited on something -- the price
+    wait upstream polls this same body text -- and a budget is right where
+    nothing has been waited for at all.
+
+    ASKED OF THE WHOLE PAGE, because where a site puts its availability notice
+    is not a decision it makes with us in mind: Treebo buries "SOLD OUT for the
+    selected dates" past eight thousand characters of header, and Agoda puts
+    "Sold out! Our last room is already booked" where the room list would be.
+
+    The body text is handed back so callers can report how much was searched.
+    A marker this list is simply missing otherwise looks identical, on the
+    screen where somebody has to act, to a site that really did move its
+    markup.
+
+    Both callers share this so the two cannot drift: one decides whether a
+    page with no selectors is full or unconfigured, the other whether a page
+    whose selectors matched nothing is full or redesigned. Those are the same
+    question asked at different points.
+    """
+    markers = [m.lower() for m in (config.get("sold_out_markers") or [])]
+
+    def _read() -> tuple[bool, str]:
+        body = _safe_text(page, "body")
+        lowered = body.lower()
+        return (
+            any(marker in lowered for marker in markers) or looks_sold_out(body),
+            body,
+        )
+
+    said, body = _read()
+    if said or wait_ms <= 0:
+        return said, body
+
+    # Polled about once a second: reading the whole body is far dearer than a
+    # selector lookup, and the thing being waited for takes seconds, not
+    # milliseconds.
+    deadline = time.monotonic() + wait_ms / 1000
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(1000)
+        said, body = _read()
+        if said:
+            return True, body
+    return False, body
 
 
 def _safe_text(page, selector: str) -> str:

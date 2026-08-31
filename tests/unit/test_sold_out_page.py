@@ -525,3 +525,244 @@ class TestTheAdapterAgainstTheRealSoldOutPage:
 
     def test_the_fetch_reports_the_hotel_as_sold_out(self, extracted):
         assert extracted[1] is True
+
+
+
+# ── a sold-out page with NOTHING configured ──────────────────────────
+#
+# THE INCIDENT
+# ============
+# An Agoda page for a Yelagiri hotel rendered, where the room list belongs:
+#
+#     Select your room
+#     Sold out!  Our last room is already booked
+#
+# and was reported every half hour as
+#
+#     adapter_config - will not retry
+#     DOM extraction needs room_card plus selectors.room_name and
+#     selectors.price. Run scripts/probe_site.py against this hotel.
+#
+# Nothing was wrong with the page or with the configuration. Two separate
+# mistakes stacked, and each is pinned below.
+#
+# 1. THE GUARD BLAMED THE CONFIG WITHOUT ASKING. A sold-out page and an
+#    unconfigured one are indistinguishable from inside the adapter -- neither
+#    has a price on it -- and the guard raised before the sold-out question was
+#    ever put. It also fed itself: no prices means discovery finds nothing to
+#    learn and records the source unlearnable, so the config stays empty and
+#    the next fetch lands on the same guard. probe_site.py, run against that
+#    same page, would have found nothing either.
+#
+# 2. THEN IT ASKED TOO EARLY. inner_text returns what is RENDERED. The page
+#    answered with 3,844 characters at first look and 25,719 once settled, and
+#    the banner was in the difference -- so "no sold-out phrase appears
+#    anywhere" was true of the header and false of the page.
+#
+#    It reached that first look having waited for nothing. The source is
+#    JSON-configured (json_url_contains + rooms_path, no room_card), a sold-out
+#    payload carries no room grid, so rooms_path missed and the adapter fell
+#    through to a DOM strategy with no selector for _wait_for_rooms to wait on.
+#    The one page state that cannot afford an early read was guaranteed one.
+from types import SimpleNamespace
+
+import app.adapters.playwright_direct_site as direct_site
+from app.adapters.playwright_direct_site import (
+    PlaywrightDirectSiteAdapter,
+    _page_says_sold_out,
+)
+from app.core.errors import AdapterConfigError
+
+#: Verbatim from the saved artifact, around the room list.
+AGODA_SOLD_OUT = (
+    "Your dates are popular among travelers Users are booking a place in "
+    "Yelagiri every 38 minutes on Agoda.com Select your room We price match! "
+    "Sold out! Our last room is already booked See other properties "
+    "Top things to do in Yelagiri"
+)
+
+#: What the same page answered with before it had settled.
+HEADER_ONLY = (
+    "A R Thangakottai, Yelagiri, India - Photos, Room Rates and Promotions "
+    "Sign In List your place Check in Check out Rooms Guests Search"
+)
+
+AGODA_CONTEXT = FetchContext(
+    hotel_source_id=43,
+    hotel_name="A R Thanga Kottai",
+    url="https://www.agoda.com/a-r-thangakottai/hotel/yelagiri-in.html",
+    external_id=None,
+    stay=StayWindow(date(2026, 8, 31), date(2026, 9, 1)),
+    adults=2,
+    children=0,
+    currency="INR",
+)
+
+
+class _Page:
+    """A page whose banner may render only after a few reads.
+
+    ``wait_for_timeout`` advances the clock the adapter reads, so a ten-second
+    budget is exercised for real without the test taking ten seconds. Without
+    that coupling the poll loop spins instead of waiting, and the test proves
+    something the production code never does.
+    """
+
+    def __init__(self, early, settled=None, reads_before_settling=0):
+        self._early = early
+        self._settled = settled if settled is not None else early
+        self._remaining = reads_before_settling
+        self.reads = 0
+        self.waited_ms = 0
+        self.clock = 0.0
+
+    def query_selector_all(self, _selector):
+        return []
+
+    def inner_text(self, _selector, timeout=None):  # noqa: ARG002
+        self.reads += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            return self._early
+        return self._settled
+
+    def wait_for_timeout(self, ms):
+        self.waited_ms += ms
+        self.clock += ms / 1000
+
+
+@pytest.fixture
+def page_clock(monkeypatch):
+    """Let a page's own waiting drive the adapter's deadline."""
+
+    def _install(page):
+        monkeypatch.setattr(
+            direct_site.time, "monotonic", lambda: page.clock, raising=False
+        )
+        return page
+
+    return _install
+
+
+def _fetch(page):
+    return SimpleNamespace(page=page, json_responses=[])
+
+
+class TestAFullHotelIsNotAConfigProblem:
+    """A page with no selectors AND no rooms is full, not misconfigured."""
+
+    def test_the_agoda_banner_announces_no_availability(self):
+        assert looks_sold_out(AGODA_SOLD_OUT)
+
+    def test_an_empty_config_on_a_sold_out_page_reports_sold_out(self, page_clock):
+        """The regression. This raised AdapterConfigError."""
+        page = page_clock(_Page(AGODA_SOLD_OUT))
+
+        offers, sold_out = PlaywrightDirectSiteAdapter()._extract_dom(
+            _fetch(page), {}, AGODA_CONTEXT
+        )
+
+        assert sold_out is True
+        assert offers == []
+
+    def test_a_half_configured_source_is_treated_the_same(self, page_clock):
+        """room_card alone, or selectors alone, hits the same guard."""
+        for config in ({"room_card": ".room"}, {"selectors": {"price": ".p"}}):
+            page = page_clock(_Page(AGODA_SOLD_OUT))
+            offers, sold_out = PlaywrightDirectSiteAdapter()._extract_dom(
+                _fetch(page), config, AGODA_CONTEXT
+            )
+            assert sold_out is True, config
+            assert offers == []
+
+    def test_a_genuinely_unconfigured_source_still_says_so(self, page_clock):
+        """The other answer has to stay reachable.
+
+        A page with rooms on it and no selectors is a real configuration gap,
+        and must not be recorded as a sold-out night -- that writes a false
+        business fact and tells whoever watches that hotel.
+        """
+        page = page_clock(_Page("Deluxe Room 3,200 Book Now"))
+
+        with pytest.raises(AdapterConfigError):
+            PlaywrightDirectSiteAdapter()._extract_dom(_fetch(page), {}, AGODA_CONTEXT)
+
+    def test_the_config_error_says_how_much_page_it_searched(self, page_clock):
+        """A marker simply missing from the list must not read as a redesign.
+
+        Without the count, "no sold-out phrase appears" is an assertion with
+        nothing to check it against -- and it was exactly that count which
+        revealed the page had only half rendered.
+        """
+        page = page_clock(_Page("Deluxe Room 3,200 Book Now"))
+
+        with pytest.raises(AdapterConfigError) as caught:
+            PlaywrightDirectSiteAdapter()._extract_dom(_fetch(page), {}, AGODA_CONTEXT)
+
+        assert "characters of text" in str(caught.value)
+
+    def test_a_configured_marker_counts_as_well_as_the_built_in_list(self):
+        """A site with its own wording should not need a code change."""
+        said, _ = _page_says_sold_out(
+            _Page("Keine Zimmer verfuegbar"),
+            {"sold_out_markers": ["keine zimmer verfuegbar"]},
+        )
+
+        assert said is True
+
+
+class TestTheBannerThatArrivesLate:
+    def test_a_late_banner_is_still_found(self, page_clock):
+        page = page_clock(_Page(HEADER_ONLY, AGODA_SOLD_OUT, reads_before_settling=2))
+
+        said, body = _page_says_sold_out(page, {}, wait_ms=10_000)
+
+        assert said is True
+        assert "Sold out!" in body
+
+    def test_the_early_read_alone_would_have_missed_it(self, page_clock):
+        """Pins the bug: with no budget this is a config alert."""
+        page = page_clock(_Page(HEADER_ONLY, AGODA_SOLD_OUT, reads_before_settling=2))
+
+        said, _ = _page_says_sold_out(page, {}, wait_ms=0)
+
+        assert said is False
+
+    def test_a_page_already_showing_it_is_not_waited_on(self, page_clock):
+        """The common case must not pay the budget for nothing."""
+        page = page_clock(_Page(AGODA_SOLD_OUT))
+
+        said, _ = _page_says_sold_out(page, {}, wait_ms=10_000)
+
+        assert said is True
+        assert page.waited_ms == 0
+
+    def test_a_page_that_never_says_it_gives_up(self, page_clock):
+        """The budget is a ceiling, not a hang."""
+        page = page_clock(_Page("Deluxe Room 3,200 Book Now"))
+
+        said, _ = _page_says_sold_out(page, {}, wait_ms=3_000)
+
+        assert said is False
+        assert page.waited_ms <= 4_000
+
+    def test_the_adapter_waits_when_it_has_no_selector_to_wait_on(self, page_clock):
+        """End to end: JSON-configured, sold out, no DOM selectors."""
+        page = page_clock(_Page(HEADER_ONLY, AGODA_SOLD_OUT, reads_before_settling=2))
+
+        offers, sold_out = PlaywrightDirectSiteAdapter()._extract_dom(
+            _fetch(page), {"json_url_contains": ["/GetSecondaryData"]}, AGODA_CONTEXT
+        )
+
+        assert sold_out is True
+        assert offers == []
+
+    def test_the_budget_is_configurable_per_source(self, page_clock):
+        page = page_clock(_Page("nothing here"))
+
+        with pytest.raises(AdapterConfigError):
+            PlaywrightDirectSiteAdapter()._extract_dom(
+                _fetch(page), {"sold_out_wait_ms": 0}, AGODA_CONTEXT
+            )
+
+        assert page.waited_ms == 0
