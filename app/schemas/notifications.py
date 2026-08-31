@@ -128,3 +128,61 @@ class WhatsAppWebhookStatus(ORMModel):
     status: str
     timestamp: datetime | None = None
     error_code: str | None = None
+
+
+#: How many WhatsApp alert numbers the Alerts page accepts.
+#:
+#: A cap rather than a limitation. Every number multiplies the per-change
+#: message count and each WhatsApp utility message is billed, so an unbounded
+#: list turns one busy repricing morning into a bill nobody predicted. Five is
+#: what the page was asked for; raising it means raising this constant and
+#: nothing else.
+MAX_ALERT_NUMBERS = 5
+
+
+class AlertNumberIn(ORMModel):
+    """One phone number on the Alerts page."""
+
+    phone_e164: str = Field(
+        pattern=r"^\+[1-9]\d{7,14}$",
+        description="E.164 with the country code, e.g. +919876543210.",
+    )
+    name: str | None = Field(default=None, max_length=120)
+
+
+class AlertNumbersIn(ORMModel):
+    """The complete list, not a delta.
+
+    A PUT of the whole set is what the form submits, so a number the operator
+    deleted from the last row is absent here -- which is how removal is
+    expressed. Sending a partial list silently switches off everyone missing
+    from it, so the endpoint is deliberately not a PATCH.
+    """
+
+    numbers: list[AlertNumberIn] = Field(default_factory=list, max_length=MAX_ALERT_NUMBERS)
+
+    @model_validator(mode="after")
+    def _no_duplicate_numbers(self):
+        seen = [n.phone_e164 for n in self.numbers]
+        duplicates = {p for p in seen if seen.count(p) > 1}
+        if duplicates:
+            raise ValueError(
+                f"The same number appears more than once: {sorted(duplicates)}. "
+                "It would be messaged twice for every price change."
+            )
+        return self
+
+
+class AlertNumberOut(ORMModel):
+    id: int
+    name: str
+    phone_e164: str | None = None
+
+
+class AlertNumbersOut(ORMModel):
+    numbers: list[AlertNumberOut] = Field(default_factory=list)
+    max_numbers: int = MAX_ALERT_NUMBERS
+    #: False while WhatsApp is switched off or missing credentials. Saved
+    #: numbers are kept either way -- they can be entered before the template
+    #: is approved -- but nothing reaches them until this is true.
+    whatsapp_ready: bool = False

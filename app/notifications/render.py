@@ -244,6 +244,9 @@ def _whatsapp_params(hotel_name: str, lines: list[ChangeLine], stamp: str) -> li
     {{7}} time``. When several changes are batched, the first is shown in full
     and the rest are summarised, because a template's variables cannot expand
     into a table.
+
+    The length is a contract with the provider, which refuses to send any other
+    count: see ``base.WHATSAPP_TEMPLATE_PARAM_COUNT``.
     """
     line = lines[0]
     room = line.room_name if len(lines) == 1 else f"{line.room_name} +{len(lines) - 1} more"

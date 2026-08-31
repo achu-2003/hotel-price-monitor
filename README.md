@@ -186,9 +186,15 @@ clock, no network — which is why they carry the bulk of the test suite.
 2. No adapter has been pointed at a real hotel. Run
    `scripts/probe_site.py` (Phase 0) first — it tells you which of your thirty
    hotels are automatable and produces the `adapter_config` for each.
-3. The WhatsApp template has not been submitted to Meta. Approval takes hours
-   to days, so **submit it on the first day you want WhatsApp**; email works
-   immediately and needs no approval.
+3. WhatsApp is **live**, through the My Dreams Technology reseller rather than
+   Meta directly, with the `price_change_alert` template approved and a real
+   message delivered end to end. The direct Meta path is kept alongside it
+   (`WHATSAPP_PROVIDER=meta_cloud`) and is still untested against a real
+   account. See **WhatsApp** in `docs/RUNBOOK.md`.
+
+   One thing to carry into any work here: the reseller answers `Success` even
+   for a template that does not exist, so a `sent` notification is proof only
+   that the reseller accepted the call — never that a message arrived.
 
 ### Running it
 

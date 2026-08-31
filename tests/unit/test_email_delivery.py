@@ -75,6 +75,18 @@ class FakeSession:
         columns = statement.column_descriptions
         entity = columns[0]["entity"]
 
+        # _all_hotel_recipient_ids asks for bare ids, not rows. Returning
+        # Recipient objects here puts them where recipient IDS are expected,
+        # and the next query fails deep inside SQLAlchemy rather than here.
+        if entity is Recipient and len(columns) == 1 and columns[0]["name"] == "id":
+            return _Result(
+                [
+                    r.id
+                    for r in self.tables.get("recipients", [])
+                    if r.is_active and getattr(r, "alerts_all_hotels", False)
+                ]
+            )
+
         # _assignments_for asks for two columns; _links_by_pair for the row.
         if entity is HotelRecipient and len(columns) == 2:
             return _Result(

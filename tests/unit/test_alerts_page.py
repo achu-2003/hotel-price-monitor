@@ -66,6 +66,10 @@ def render(**overrides) -> str:
         "default_quiet": (time(22, 0), time(7, 0)),
         "notifications": [],
         "hours": 168,
+        # The WhatsApp alert numbers panel. Mirrors what notifications_page
+        # passes; override to render the panel with numbers already saved.
+        "alert_numbers": [],
+        "max_alert_numbers": 5,
     }
     context.update(overrides)
     return templates.get_template("notifications.html").render(**context)
@@ -210,3 +214,79 @@ class TestDeliveryHistory:
         page = render(notifications=[(notification, "Priya", "Sunrise Resort")])
         assert "held →" in page
         assert "queued" in page
+
+
+def alert_number_rows(page: str) -> str:
+    """Just the live rows.
+
+    Excludes the <template> the Add button clones, which contains a row of the
+    same shape and would otherwise be counted as a visible one.
+    """
+    start = page.index('class="alert-number-rows"')
+    return page[start:page.index("alert-number-row-template", start)]
+
+
+class TestAlertNumbersGrowOnDemand:
+    """One row, then a button — not five empty boxes.
+
+    Five blank rows implied five numbers were expected and made the panel look
+    like a form to fill in. The list starts at the size it actually is and
+    grows only when asked.
+    """
+
+    def test_an_empty_panel_offers_exactly_one_row(self):
+        page = render(alert_numbers=[])
+
+        assert alert_number_rows(page).count('class="alert-number-row"') == 1
+
+    def test_saved_numbers_each_get_their_own_row(self):
+        page = render(
+            alert_numbers=[
+                _recipient(id=1, name="Front office", phone_e164="+919000000001"),
+                _recipient(id=2, name="Manager", phone_e164="+919000000002"),
+            ]
+        )
+
+        assert alert_number_rows(page).count('class="alert-number-row"') == 2
+        assert "+919000000001" in page
+        assert "+919000000002" in page
+
+    def test_no_blank_row_is_appended_after_saved_numbers(self):
+        """The Add button is how a sixth field appears, not an always-on blank.
+
+        A trailing empty row would be submitted as an empty phone and silently
+        skipped, which reads as the form losing a number.
+        """
+        page = render(alert_numbers=[_recipient(id=1, phone_e164="+919000000001")])
+
+        assert alert_number_rows(page).count('class="alert-number-row"') == 1
+
+    def test_the_add_button_and_its_ceiling_are_present(self):
+        page = render(alert_numbers=[])
+
+        assert "alert-number-add" in page
+        assert 'data-max="5"' in page
+
+    def test_every_row_can_be_removed(self):
+        page = render(alert_numbers=[_recipient(id=1, phone_e164="+919000000001")])
+
+        assert "alert-number-remove" in page
+
+    def test_a_row_template_is_shipped_for_the_add_button(self):
+        """Cloned by the JS, so both row shapes cannot drift apart."""
+        page = render(alert_numbers=[])
+
+        assert "alert-number-row-template" in page
+
+    def test_a_number_used_as_its_own_label_is_not_repeated_in_the_label_box(self):
+        """Saving without a label names the recipient after the number.
+
+        Echoing that back into the Label field would make it look like the
+        operator had typed the number twice.
+        """
+        page = render(
+            alert_numbers=[_recipient(id=1, name="+919000000001",
+                                      phone_e164="+919000000001")]
+        )
+
+        assert page.count("+919000000001") == 1

@@ -21,6 +21,109 @@
 {% endif %}
 
 <section>
+  <h2>WhatsApp alert numbers</h2>
+  <p class="muted">
+    Up to {{ max_alert_numbers }} numbers that get <strong>every price change,
+    on every hotel</strong> — including hotels added later, with no assignment
+    to keep up to date. The shortcut for "just WhatsApp me when anything
+    moves"; the recipients below are for anything more selective.
+  </p>
+  {% if is_admin %}
+  <details class="panel" id="alert-numbers" {% if not alert_numbers %}open{% endif %}>
+    <summary>
+      {% if alert_numbers %}
+        Alert numbers ({{ alert_numbers|length }} of {{ max_alert_numbers }})
+      {% else %}
+        Add alert numbers
+      {% endif %}
+    </summary>
+
+    {% if "whatsapp" not in channels %}
+    {# Said here as well as at the top: somebody arriving straight at this
+       panel needs to know the numbers will sit inert, not that they typed
+       something wrong. #}
+    <p class="note">
+      <strong>WhatsApp is not sending yet.</strong> Numbers save fine and are
+      kept, but nothing reaches them until the provider is configured and the
+      template is approved. See the runbook.
+    </p>
+    {% endif %}
+
+    {# One row to begin with, and a button for the next. Five empty rows up
+       front implied five were expected; most deployments want one or two. #}
+    <form class="stack alert-numbers-form" data-max="{{ max_alert_numbers }}">
+      <div class="alert-number-rows">
+        {% for existing in alert_numbers %}
+        <div class="alert-number-row">
+          <label>Number <span class="row-number">{{ loop.index }}</span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210"
+                   value="{{ existing.phone_e164 or '' }}">
+          </label>
+          <label>Label <span class="muted">(optional)</span>
+            <input name="label" maxlength="120" placeholder="Front office"
+                   value="{{ existing.name if existing.name != existing.phone_e164 else '' }}">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+        {% endfor %}
+        {% if not alert_numbers %}
+        <div class="alert-number-row">
+          <label>Number <span class="row-number">1</span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210">
+          </label>
+          <label>Label <span class="muted">(optional)</span>
+            <input name="label" maxlength="120" placeholder="Front office">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+        {% endif %}
+      </div>
+
+      {# Cloned by the Add button. Kept in the markup rather than built as a
+         string in JS so the two row shapes cannot drift apart. #}
+      <template class="alert-number-row-template">
+        <div class="alert-number-row">
+          <label>Number <span class="row-number"></span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210">
+          </label>
+          <label>Label <span class="muted">(optional)</span>
+            <input name="label" maxlength="120" placeholder="Front office">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+      </template>
+
+      <div class="alert-number-actions">
+        <button type="button" class="alert-number-add">+ Add another number</button>
+        <span class="muted alert-number-count"></span>
+      </div>
+
+      <span class="muted">
+        9876543210, 098765 43210 or +91 98765 43210 — all fine; each is
+        rewritten to +919876543210 when you leave the field. Remove a row with
+        × to stop that number: it stops receiving immediately, and its delivery
+        history below is kept.
+      </span>
+      <span class="muted">
+        These bypass quiet hours and the hourly cap, so they arrive at any
+        hour. A hotel's simultaneous changes are still batched into one
+        message, and each message is billed by WhatsApp.
+      </span>
+
+      <button type="submit">Save alert numbers</button>
+      <p class="form-status" hidden></p>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
+<section>
   <h2>Recipients</h2>
   <p class="muted">
     A recipient is a person; an <em>assignment</em> is the hotel they watch.

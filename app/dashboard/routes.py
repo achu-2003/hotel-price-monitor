@@ -59,6 +59,7 @@ from app.db.models import (
 )
 from app.db.models.price import SUPPRESSION_LABELS
 from app.notifications import registry
+from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
@@ -1162,6 +1163,11 @@ async def notifications_page(
     ).all()
     recipients = (await session.scalars(select(Recipient).order_by(Recipient.name))).all()
 
+    # The WhatsApp alert numbers, which are recipients wearing the
+    # alerts_all_hotels flag rather than a separate kind of thing -- so they
+    # reuse the digest, the dedupe and the delivery history below.
+    alert_numbers = [r for r in recipients if r.alerts_all_hotels and r.is_active]
+
     # Who each person actually covers. A recipient with no assignment receives
     # nothing at all -- the dispatcher looks up hotel_recipients, not
     # recipients -- so the page has to show the assignment, not just the row.
@@ -1194,6 +1200,8 @@ async def notifications_page(
         assignments=assignments, hotels=hotels,
         channels=registry.available_channels(),
         default_quiet=(settings.quiet_hours_start, settings.quiet_hours_end),
+        alert_numbers=alert_numbers,
+        max_alert_numbers=MAX_ALERT_NUMBERS,
     )
 
 

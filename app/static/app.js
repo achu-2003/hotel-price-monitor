@@ -910,4 +910,129 @@
     });
   }
 
+  // -- WhatsApp alert numbers ----------------------------------------
+  // The whole list is PUT on every save, never a delta: a cleared row is how
+  // "stop this number" is expressed, and it only reads as removal if the
+  // server sees the complete set. Sending just the filled rows would leave a
+  // number switched on with no way to switch it off.
+  document.querySelectorAll("form.alert-numbers-form").forEach(function (form) {
+    const rows = form.querySelector(".alert-number-rows");
+    const rowTemplate = form.querySelector(".alert-number-row-template");
+    const addButton = form.querySelector(".alert-number-add");
+    const countLabel = form.querySelector(".alert-number-count");
+    const max = Number(form.dataset.max || 5);
+
+    /** Renumber the visible rows and tell the operator how many are left.
+     *
+     * Called after every add and remove: the labels are positional, so a row
+     * removed from the middle would otherwise leave a gap in the numbering
+     * and make the list look broken.
+     */
+    function refresh() {
+      const all = rows.querySelectorAll(".alert-number-row");
+      all.forEach(function (row, index) {
+        const label = row.querySelector(".row-number");
+        if (label) label.textContent = index + 1;
+      });
+      // The last remaining row is emptied rather than deleted -- a form with
+      // no rows at all offers nowhere to type and looks broken.
+      const only = all.length === 1;
+      all.forEach(function (row) {
+        const remove = row.querySelector(".alert-number-remove");
+        if (remove) remove.title = only ? "Clear this number" : "Remove this number";
+      });
+      if (addButton) addButton.disabled = all.length >= max;
+      if (countLabel) {
+        countLabel.textContent = all.length >= max
+          ? "Five is the maximum."
+          : all.length + " of " + max;
+      }
+    }
+
+    if (addButton && rowTemplate) {
+      addButton.addEventListener("click", function () {
+        if (rows.querySelectorAll(".alert-number-row").length >= max) return;
+        const row = rowTemplate.content.cloneNode(true);
+        rows.appendChild(row);
+        refresh();
+        // Focus the field that was just revealed, so the button press and the
+        // typing are one continuous action.
+        const added = rows.lastElementChild.querySelector("input[name=phone]");
+        if (added) {
+          added.addEventListener("blur", function () { tidyPhoneField(added); });
+          added.focus();
+        }
+      });
+    }
+
+    rows.addEventListener("click", function (event) {
+      const button = event.target.closest(".alert-number-remove");
+      if (!button) return;
+      const row = button.closest(".alert-number-row");
+      if (rows.querySelectorAll(".alert-number-row").length === 1) {
+        row.querySelectorAll("input").forEach(function (input) { input.value = ""; });
+      } else {
+        row.remove();
+      }
+      refresh();
+    });
+
+    refresh();
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const status = form.querySelector(".form-status");
+
+      // Normalise before reading, not on blur alone: a number pasted into the
+      // field and submitted with Enter never fires a blur event, and would
+      // otherwise be rejected by the E.164 pattern on the server.
+      form.querySelectorAll("input[data-phone]").forEach(tidyPhoneField);
+
+      const numbers = [];
+      const seen = {};
+      let duplicate = null;
+      form.querySelectorAll(".alert-number-row").forEach(function (row) {
+        const phone = row.querySelector("input[name=phone]").value.trim();
+        if (!phone) return;
+        if (seen[phone]) { duplicate = phone; return; }
+        seen[phone] = true;
+        const label = row.querySelector("input[name=label]").value.trim();
+        const entry = { phone_e164: phone };
+        if (label) entry.name = label;
+        numbers.push(entry);
+      });
+
+      // Caught here as well as on the server, because the server's version
+      // rejects the whole save and this one names the offending number while
+      // the operator is still looking at the rows.
+      if (duplicate) {
+        say(status, duplicate + " is entered twice. Each number may appear once.", "error");
+        return;
+      }
+
+      say(status, "Saving…");
+      const result = await api("/api/v1/alert-numbers", "PUT", { numbers: numbers });
+      if (!result.ok) {
+        say(status, problemText(result), "error");
+        return;
+      }
+
+      const saved = (result.body && result.body.numbers) || [];
+      const ready = result.body && result.body.whatsapp_ready;
+      if (!saved.length) {
+        say(status, "All alert numbers removed. Nothing will be sent to them.", "ok");
+      } else if (ready) {
+        say(status, saved.length + " number(s) saved. They now get every price change.", "ok");
+      } else {
+        // Saved, but inert. Reported as a warning rather than a success, so
+        // nobody walks away believing alerts are live when they are not.
+        say(status, saved.length + " number(s) saved, but WhatsApp is not "
+                  + "configured yet — nothing will reach them until it is.", "error");
+      }
+      // Reloaded so the summary count and the row values come from the
+      // server's view rather than from what was typed.
+      setTimeout(function () { window.location.reload(); }, 1200);
+    });
+  });
+
 })();

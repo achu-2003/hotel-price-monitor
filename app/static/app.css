@@ -1056,3 +1056,37 @@ a.hcard:hover {
   margin: 0;
   flex: 0 0 auto;
 }
+
+/* WhatsApp alert numbers: phone and label side by side, stacking on narrow
+   screens so the panel stays usable on a phone -- which is where somebody
+   adding their own number is most likely to be standing. */
+.alert-number-row {
+  display: flex;
+  gap: .75rem;
+  align-items: flex-end;
+}
+.alert-number-row label { flex: 1 1 0; margin: 0; }
+.alert-number-row .alert-number-remove {
+  flex: 0 0 auto;
+  padding: .35rem .6rem;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--line, #d1d5db);
+  color: var(--muted, #6b7280);
+}
+.alert-number-row .alert-number-remove:hover {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+.alert-number-actions {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+.alert-number-add[disabled] { opacity: .5; cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  .alert-number-row { flex-direction: column; align-items: stretch; gap: .35rem; }
+  /* Full width on its own line, rather than a stray x under the label. */
+  .alert-number-row .alert-number-remove { width: 100%; }
+}

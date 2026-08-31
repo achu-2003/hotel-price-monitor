@@ -46,6 +46,33 @@ class Recipient(Base, TimestampMixin):
     quiet_hours_start: Mapped[time | None] = mapped_column(Time)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time)
 
+    # Follows every hotel, including ones added after this row was written.
+    #
+    # Evaluated at dispatch, not materialised into hotel_recipients rows: a
+    # backfill would have to be re-run on every hotel creation path, and the
+    # failure mode of missing one is a hotel that silently alerts nobody. The
+    # dispatcher synthesises the assignment instead -- see
+    # ``tasks_notify._links_by_pair``.
+    #
+    # A real hotel_recipients row still wins where one exists, so a per-hotel
+    # threshold set by hand is not overridden by this flag.
+    alerts_all_hotels: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
+    # Exempt from quiet hours AND from the per-recipient hourly cap.
+    #
+    # Deliberately one flag rather than two: both exist to stop a bulk reprice
+    # becoming a hundred separate messages, and a recipient who is exempt from
+    # one but not the other gets the surprising half of each. Set on the
+    # WhatsApp alert numbers, which are wanted immediately at any hour.
+    #
+    # Digest batching still applies -- that groups one hotel's changes into a
+    # single message and is what keeps this from being unusable.
+    bypass_throttle: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     hotel_links: Mapped[list[HotelRecipient]] = relationship(
         back_populates="recipient", cascade="all, delete-orphan"
     )

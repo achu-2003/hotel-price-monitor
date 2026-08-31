@@ -139,12 +139,31 @@ class Settings(BaseSettings):
 
     # ── whatsapp ─────────────────────────────────────────────────────
     whatsapp_enabled: bool = False
+    # Which side of the WhatsApp API we talk to. "meta_cloud" is Meta's own
+    # Graph endpoint; "mydreams" is the My Dreams Technology reseller the
+    # client's number is licensed through. They share the template name and
+    # nothing else -- different transport, different auth, different errors,
+    # and only meta_cloud reports delivery.
+    whatsapp_provider: Literal["meta_cloud", "mydreams"] = "meta_cloud"
     whatsapp_graph_version: str = "v21.0"
     whatsapp_phone_number_id: str = ""
     whatsapp_access_token: SecretStr | None = None
     whatsapp_template_name: str = "price_change_alert"
     whatsapp_template_lang: str = "en"
     whatsapp_webhook_verify_token: SecretStr | None = None
+    # Signs Meta's status callbacks. Without it the POST webhook is an open
+    # endpoint that anyone who can guess a provider_message_id may use to mark
+    # a notification delivered -- or failed, which is worse, because a failure
+    # nobody sent looks exactly like one that happened.
+    whatsapp_app_secret: SecretStr | None = None
+
+    # ── whatsapp via my dreams technology ────────────────────────────
+    # The reseller authenticates on the QUERY STRING, so both of these end up
+    # in any access log, proxy log or error breadcrumb that records a URL.
+    # The provider scrubs them before logging; nothing else may log the URL.
+    mydreams_base_url: str = "https://wa.mydreamstechnology.in/api"
+    mydreams_license_number: str = ""
+    mydreams_api_key: SecretStr | None = None
 
     # ── notification throttling ──────────────────────────────────────
     digest_window_seconds: int = 60

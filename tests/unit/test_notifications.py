@@ -9,7 +9,7 @@ from datetime import UTC, datetime, time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from app.notifications.base import ChangeLine
+from app.notifications.base import WHATSAPP_TEMPLATE_PARAM_COUNT, ChangeLine
 from app.notifications.digest import (
     ChangeFacts,
     dedupe_key,
@@ -221,7 +221,7 @@ class TestRenderDigest:
         # Fixed by the template Meta approved: hotel, room, old, new, delta,
         # dates, time. Reordering these silently sends the wrong numbers.
         params = render_digest("ABC Resort", [self._line()]).template_params
-        assert len(params) == 7
+        assert len(params) == WHATSAPP_TEMPLATE_PARAM_COUNT
         assert params[0] == "ABC Resort"
         assert params[1] == "Deluxe Room"
         assert params[2] == "₹3,000"

@@ -48,6 +48,15 @@ class ChangeLine:
         return self.direction in {"became_unavailable", "became_available"}
 
 
+#: How many body variables the approved WhatsApp template has.
+#:
+#: ``render._whatsapp_params`` produces exactly this many and the provider
+#: refuses to send any other number. The two must agree: Meta answers a wrong
+#: count with error 132000, which is classified permanent, so a drift here is a
+#: paid message that can never arrive and is never retried.
+WHATSAPP_TEMPLATE_PARAM_COUNT = 7
+
+
 @dataclass(frozen=True, slots=True)
 class RenderedMessage:
     """A message ready to hand to a provider.

@@ -1,6 +1,9 @@
 """Recipients, assignments, delivery history, and the WhatsApp status webhook."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -22,6 +25,9 @@ from app.db.models import (
 from app.notifications import registry
 from app.schemas.common import Page
 from app.schemas.notifications import (
+    AlertNumberOut,
+    AlertNumbersIn,
+    AlertNumbersOut,
     HotelRecipientIn,
     HotelRecipientOut,
     NotificationOut,
@@ -355,6 +361,32 @@ async def send_test_notification(
 
 
 # -- WhatsApp delivery webhook ---------------------------------------
+#: Where each state sits in the delivery lifecycle.
+#:
+#: Meta does not guarantee the order of its callbacks, and without this a
+#: 'delivered' landing after a 'read' walked the row backwards -- discarding
+#: "somebody actually opened it", which is the most valuable thing this webhook
+#: has to report.
+_LIFECYCLE_RANK = {
+    NotificationStatus.QUEUED: 0,
+    NotificationStatus.SENT: 1,
+    NotificationStatus.DELIVERED: 2,
+    NotificationStatus.READ: 3,
+}
+
+
+def _advances(current: NotificationStatus, new: NotificationStatus) -> bool:
+    """Whether ``new`` is genuinely later in the lifecycle than ``current``.
+
+    A failure is terminal. Meta does report one after acceptance -- 131047 when
+    the re-engagement window closed -- and a stray late 'delivered' must not
+    erase it, or a message nobody received would read as delivered.
+    """
+    if current is NotificationStatus.FAILED:
+        return False
+    return _LIFECYCLE_RANK.get(new, 0) > _LIFECYCLE_RANK.get(current, 0)
+
+
 @router.get("/webhooks/whatsapp")
 async def verify_whatsapp_webhook(
     request: Request,
@@ -368,8 +400,6 @@ async def verify_whatsapp_webhook(
     so the shared verify token is the only thing standing between this and an
     open endpoint, and it is compared in constant time.
     """
-    import hmac
-
     settings = get_settings()
     expected = (
         settings.whatsapp_webhook_verify_token.get_secret_value()
@@ -390,9 +420,35 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
     anything else with escalating frequency, and a parse bug on our side would
     turn into a retry storm rather than a log line.
     """
+    # The RAW bytes, before any parsing: Meta signs what it sent, and
+    # re-serialising the parsed JSON produces different bytes that can never
+    # match.
+    raw = await request.body()
+
+    settings = get_settings()
+    secret = (
+        settings.whatsapp_app_secret.get_secret_value()
+        if settings.whatsapp_app_secret
+        else ""
+    )
+    if secret:
+        expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(request.headers.get("X-Hub-Signature-256", ""), expected):
+            log.warning("whatsapp_webhook_signature_rejected")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Bad signature."
+            )
+    else:
+        # Deliberately still accepted, so the webhook can be wired up before
+        # the app secret is to hand -- but warned about every single time,
+        # because "unsigned" must not become the permanent state by accident.
+        log.warning("whatsapp_webhook_unverified", reason="whatsapp_app_secret is not set")
+
     try:
-        body = await request.json()
+        body = json.loads(raw)
     except ValueError:
+        return {"status": "ignored"}
+    if not isinstance(body, dict):
         return {"status": "ignored"}
 
     updated = 0
@@ -412,19 +468,127 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
                 if notification is None:
                     continue
 
+                # Counted only when a row actually moved. Meta also sends
+                # 'sent', which we already recorded ourselves, and committing
+                # for those was a write per callback that changed nothing.
                 if state == "delivered":
-                    notification.status = NotificationStatus.DELIVERED
-                    notification.delivered_at = datetime.now(UTC)
+                    if _advances(notification.status, NotificationStatus.DELIVERED):
+                        notification.status = NotificationStatus.DELIVERED
+                        notification.delivered_at = datetime.now(UTC)
+                        updated += 1
                 elif state == "read":
-                    notification.status = NotificationStatus.READ
+                    if _advances(notification.status, NotificationStatus.READ):
+                        notification.status = NotificationStatus.READ
+                        updated += 1
                 elif state == "failed":
                     notification.status = NotificationStatus.FAILED
                     errors = record.get("errors") or [{}]
                     notification.error_code = str(errors[0].get("code", "unknown"))
                     notification.error_detail = str(errors[0].get("title", ""))[:2000]
-                updated += 1
+                    updated += 1
 
     if updated:
         await session.commit()
         log.info("whatsapp_statuses_recorded", count=updated)
     return {"status": "ok", "updated": updated}
+
+
+# -- WhatsApp alert numbers ------------------------------------------
+#: The marker for a number added on the Alerts page.
+#:
+#: ``alerts_all_hotels`` doubles as coverage and as identity: a recipient with
+#: it set follows every hotel, and is exactly what this endpoint manages. A
+#: separate "is a quick number" column would have to be kept in step with it
+#: and could disagree.
+def _alert_numbers_query():
+    return (
+        select(Recipient)
+        .where(Recipient.alerts_all_hotels.is_(True), Recipient.is_active.is_(True))
+        .order_by(Recipient.id)
+    )
+
+
+def _alert_numbers_out(recipients) -> AlertNumbersOut:
+    return AlertNumbersOut(
+        numbers=[
+            AlertNumberOut(id=r.id, name=r.name, phone_e164=r.phone_e164)
+            for r in recipients
+        ],
+        whatsapp_ready="whatsapp" in registry.available_channels(),
+    )
+
+
+@router.get("/alert-numbers", response_model=AlertNumbersOut)
+async def list_alert_numbers(session: DbSession, _user: CurrentUser):
+    """The numbers that get every price change, on every hotel."""
+    return _alert_numbers_out((await session.scalars(_alert_numbers_query())).all())
+
+
+@router.put("/alert-numbers", response_model=AlertNumbersOut)
+async def replace_alert_numbers(
+    payload: AlertNumbersIn, request: Request, session: DbSession, admin: AdminUser
+):
+    """Replace the whole list in one submit.
+
+    Matching is by phone number, so re-saving an unchanged list is a no-op
+    rather than five new recipients. A number that drops out of the list is
+    **deactivated, not deleted** -- it stops receiving immediately, and its
+    delivery history stays in place to answer "what did we send that number
+    last month", which a delete would destroy.
+
+    Numbers are accepted before WhatsApp is configured. Setting them up while
+    the template is still awaiting approval is the normal order of events, and
+    refusing would just mean doing it twice.
+    """
+    submitted = {n.phone_e164: n for n in payload.numbers}
+    existing = list((await session.scalars(_alert_numbers_query())).all())
+
+    kept: list[Recipient] = []
+    for recipient in existing:
+        wanted = submitted.pop(recipient.phone_e164, None)
+        if wanted is None:
+            # Off the list. Keep the row and its history; stop the sending.
+            recipient.alerts_all_hotels = False
+            recipient.bypass_throttle = False
+            recipient.is_active = False
+            continue
+        if wanted.name:
+            recipient.name = wanted.name
+        kept.append(recipient)
+
+    for phone, wanted in submitted.items():
+        # A number previously removed comes back as the SAME row, so its
+        # history reconnects instead of forking into a second recipient with
+        # the same number -- which would then be messaged twice if anyone ever
+        # reactivated the first.
+        recipient = await session.scalar(
+            select(Recipient).where(Recipient.phone_e164 == phone).limit(1)
+        )
+        if recipient is None:
+            recipient = Recipient(name=wanted.name or phone, phone_e164=phone)
+            session.add(recipient)
+        elif wanted.name:
+            recipient.name = wanted.name
+
+        recipient.is_active = True
+        recipient.alerts_all_hotels = True
+        # Chosen on the Alerts page: these go out immediately, at any hour, and
+        # are not subject to the per-recipient hourly cap. Digest batching
+        # still groups one hotel's simultaneous moves into one message.
+        recipient.bypass_throttle = True
+        kept.append(recipient)
+
+    await session.flush()
+    await record_audit(
+        session, user=admin, action="replace", entity="alert_numbers",
+        # The list is the entity here -- there is no single row this edit
+        # belongs to, and picking one of the five would misreport the other four.
+        entity_id=None,
+        after={"numbers": [n.phone_e164 for n in payload.numbers]}, request=request,
+    )
+    await session.commit()
+
+    log.info("alert_numbers_saved", count=len(kept))
+    return _alert_numbers_out(
+        (await session.scalars(_alert_numbers_query())).all()
+    )

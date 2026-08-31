@@ -26,7 +26,12 @@ import httpx
 
 from app.config import get_settings
 from app.core.logging import get_logger
-from app.notifications.base import Destination, RenderedMessage, SendResult
+from app.notifications.base import (
+    WHATSAPP_TEMPLATE_PARAM_COUNT,
+    Destination,
+    RenderedMessage,
+    SendResult,
+)
 
 log = get_logger("notify.whatsapp")
 
@@ -70,7 +75,32 @@ class WhatsAppCloudProvider:
                 error_detail="Recipient has no E.164 phone number", retryable=False,
             )
 
-        params = message.template_params or [message.subject]
+        # Deliberately no fallback to a single-parameter send. The approved
+        # template has seven body variables, so any other count is rejected
+        # with 132000 -- which is permanent, so the message is paid for, lost,
+        # and never retried. Refusing here costs nothing and says why.
+        #
+        # This is reachable: a notification whose price_change rows were
+        # deleted rebuilds with no template params at all, and so does any
+        # message that is not about a price change.
+        params = message.template_params or []
+        if len(params) != WHATSAPP_TEMPLATE_PARAM_COUNT:
+            log.error(
+                "whatsapp_param_count_mismatch",
+                template=settings.whatsapp_template_name,
+                expected=WHATSAPP_TEMPLATE_PARAM_COUNT,
+                got=len(params),
+            )
+            return SendResult(
+                ok=False,
+                error_code="template_params",
+                error_detail=(
+                    f"Template {settings.whatsapp_template_name!r} takes "
+                    f"{WHATSAPP_TEMPLATE_PARAM_COUNT} parameters, got {len(params)}"
+                ),
+                retryable=False,
+            )
+
         url = (
             f"https://graph.facebook.com/{settings.whatsapp_graph_version}"
             f"/{settings.whatsapp_phone_number_id}/messages"
@@ -85,7 +115,7 @@ class WhatsAppCloudProvider:
                 "components": [
                     {
                         "type": "body",
-                        "parameters": [{"type": "text", "text": str(p)} for p in params],
+                        "parameters": [{"type": "text", "text": _clean(p)} for p in params],
                     }
                 ],
             },
@@ -131,6 +161,29 @@ class WhatsAppCloudProvider:
             error_detail=str(error.get("message") or response.text)[:500],
             retryable=retryable,
         )
+
+
+#: Meta's ceiling on one body parameter. Generous for a price or a date range.
+#: The one that can realistically reach it is a room name, which is scraped off
+#: somebody else's page and is therefore untrusted in length as well as content.
+_MAX_PARAM_CHARS = 700
+
+
+def _clean(value: object) -> str:
+    """One line, single-spaced, never empty, bounded.
+
+    Meta rejects a utility-template parameter containing a newline, a tab, or
+    four or more consecutive spaces, and rejects an empty one -- all as 132005,
+    which is permanent. Room names come from other people's markup, so any of
+    those can arrive without warning.
+
+    Collapsing beats refusing: a flattened room name still tells the reader
+    exactly what moved, whereas a dropped alert tells them nothing.
+    """
+    text = " ".join(str(value).split()) or "—"
+    if len(text) <= _MAX_PARAM_CHARS:
+        return text
+    return text[: _MAX_PARAM_CHARS - 1] + "…"
 
 
 def _first_message_id(data: dict) -> str | None:

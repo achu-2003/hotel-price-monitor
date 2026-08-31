@@ -225,7 +225,12 @@ def _create_notification(
     local_now = now.astimezone(_zone(recipient.timezone))
 
     scheduled_for = None
-    if in_quiet_hours(local_now.time(), quiet_start, quiet_end):
+    # An alert number is exempt: it was added to be told immediately, at any
+    # hour. Held messages are the normal case and this is the exception, so the
+    # flag is checked here rather than folded into in_quiet_hours().
+    if not recipient.bypass_throttle and in_quiet_hours(
+        local_now.time(), quiet_start, quiet_end
+    ):
         scheduled_for = release_time(now, quiet_end, recipient.timezone)
 
     notification = Notification(
@@ -304,12 +309,26 @@ def notify_ops(
     created: list[int] = []
 
     for recipient in contacts:
-        # Email carries a list of hostnames and timestamps far better than a
-        # WhatsApp bubble, so it wins when both are possible.
+        # Ops alerts are email-only, and a contact with only a phone number is
+        # skipped rather than reached over WhatsApp.
+        #
+        # This looks like a downgrade and is the opposite. A business-initiated
+        # WhatsApp message must use an approved template, and the only approved
+        # template takes seven positional parameters describing a price move --
+        # hotel, room, old, new, delta, dates, time. An ops alert has none of
+        # them, so the send is rejected with 132000, which is permanent and
+        # therefore never retried. The result was that "your monitoring has
+        # gone quiet" was the one message that could not be delivered: the
+        # deployment learned it had stopped working by not being told.
+        #
+        # Carrying these on WhatsApp needs a SECOND approved template and a
+        # second approval cycle. Until that exists, a loud warning here beats a
+        # send that is guaranteed to fail silently.
+        #
+        # Email also carries a list of hostnames and timestamps far better than
+        # a chat bubble does, which is why it was already preferred.
         if recipient.email and "email" in available:
             channel = "email"
-        elif recipient.phone_e164 and "whatsapp" in available:
-            channel = "whatsapp"
         else:
             log.warning(
                 "ops_contact_unreachable",
@@ -358,13 +377,16 @@ def send_notification(self, notification_id: int) -> dict[str, str]:
             return {"status": "failed"}
 
         settings = get_settings()
-        remaining = recipient_quota_remaining(recipient.id, settings.recipient_max_msgs_per_hour)
-        if remaining <= 0:
-            # Over the hourly cap. Held rather than dropped, and released by
-            # the same sweep that handles quiet hours.
-            notification.scheduled_for = now.replace(microsecond=0) + _one_hour()
-            log.info("notification_rate_limited", recipient_id=recipient.id)
-            return {"status": "deferred"}
+        if not recipient.bypass_throttle:
+            remaining = recipient_quota_remaining(
+                recipient.id, settings.recipient_max_msgs_per_hour
+            )
+            if remaining <= 0:
+                # Over the hourly cap. Held rather than dropped, and released
+                # by the same sweep that handles quiet hours.
+                notification.scheduled_for = now.replace(microsecond=0) + _one_hour()
+                log.info("notification_rate_limited", recipient_id=recipient.id)
+                return {"status": "deferred"}
 
         provider = registry.get_provider(notification.channel)
         destination = Destination(
@@ -441,6 +463,25 @@ def release_quiet_hours() -> dict[str, int]:
 
 
 # -- helpers ---------------------------------------------------------
+def _all_hotel_recipient_ids(session: Session) -> list[int]:
+    """Recipients that follow every hotel, present and future.
+
+    These are the WhatsApp alert numbers from the Alerts page. Resolved on
+    every dispatch rather than written into hotel_recipients when a hotel is
+    created: hotels arrive from the API, from discovery and from scripts, and a
+    backfill missed on any one of those paths produces a hotel that alerts
+    nobody -- which is indistinguishable, on every screen, from a hotel whose
+    price never moved.
+    """
+    return list(
+        session.execute(
+            select(Recipient.id).where(
+                Recipient.alerts_all_hotels.is_(True), Recipient.is_active.is_(True)
+            )
+        ).scalars()
+    )
+
+
 def _assignments_for(session: Session, hotel_ids: set[int]) -> dict[int, list[int]]:
     rows = session.execute(
         select(HotelRecipient.hotel_id, HotelRecipient.recipient_id).where(
@@ -450,6 +491,15 @@ def _assignments_for(session: Session, hotel_ids: set[int]) -> dict[int, list[in
     assignments: dict[int, list[int]] = {}
     for hotel_id, recipient_id in rows:
         assignments.setdefault(hotel_id, []).append(recipient_id)
+
+    # Union rather than append: an alert number that ALSO has a real
+    # assignment to this hotel must appear once, or it is batched twice and
+    # the person is messaged twice about the same move.
+    for recipient_id in _all_hotel_recipient_ids(session):
+        for hotel_id in hotel_ids:
+            bucket = assignments.setdefault(hotel_id, [])
+            if recipient_id not in bucket:
+                bucket.append(recipient_id)
     return assignments
 
 
@@ -465,10 +515,40 @@ def _any_assignment_exists(session: Session, hotel_ids: set[int]) -> bool:
 
 
 def _links_by_pair(session: Session, hotel_ids: set[int]) -> dict[tuple[int, int], HotelRecipient]:
+    """The assignment behind each (hotel, recipient) pair.
+
+    ``dispatch_changes`` skips any pair with no link, because the link carries
+    the channels and the thresholds. An alert number has no row for a hotel
+    nobody assigned it to, so one is synthesised here -- unsaved, never added
+    to the session, and used only to answer "which channels, what threshold"
+    for this dispatch.
+
+    A real row always wins. Assigning an alert number to one hotel by hand,
+    with a threshold or an extra channel, therefore behaves exactly as it reads
+    rather than being quietly overridden by the flag.
+    """
     rows = session.execute(
         select(HotelRecipient).where(HotelRecipient.hotel_id.in_(hotel_ids))
     ).scalars().all()
-    return {(link.hotel_id, link.recipient_id): link for link in rows}
+    links = {(link.hotel_id, link.recipient_id): link for link in rows}
+
+    for recipient_id in _all_hotel_recipient_ids(session):
+        for hotel_id in hotel_ids:
+            if (hotel_id, recipient_id) in links:
+                continue
+            links[(hotel_id, recipient_id)] = HotelRecipient(
+                hotel_id=hotel_id,
+                recipient_id=recipient_id,
+                # WhatsApp only. These are phone numbers collected on the
+                # Alerts page; several have no email address at all, and
+                # defaulting to email would queue a message with nowhere to go.
+                channels=["whatsapp"],
+                # No threshold: the point of an alert number is every move.
+                min_delta_abs=None,
+                min_delta_pct=None,
+                is_active=True,
+            )
+    return links
 
 
 def _render_lines(

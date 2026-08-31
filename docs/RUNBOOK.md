@@ -283,9 +283,195 @@ In development, mail goes to Mailhog — open <http://localhost:8025> to read it
 Nothing reaches a real inbox until `EMAIL_PROVIDER`/`SMTP_HOST` are pointed at
 a real relay.
 
-WhatsApp needs a Meta-approved *utility* template and stays off until
-`WHATSAPP_ENABLED=true`. Approval takes hours to days — submit it on day one
-of wanting WhatsApp. Email needs no approval and works immediately.
+### WhatsApp
+
+Two providers, chosen with `WHATSAPP_PROVIDER`:
+
+| | `meta_cloud` | `mydreams` |
+|---|---|---|
+| Who | Meta's Graph API directly | My Dreams Technology, a reseller |
+| Needs | a Meta app + system-user token | a licence number + API key |
+| Delivery receipts | yes — delivered/read | **no** — stops at `sent` |
+| Template approval | required | required (via the reseller's panel) |
+
+**The client's number is licensed through My Dreams**, so `mydreams` is the
+live path; `meta_cloud` is kept for a later move to a direct Meta account.
+Both send the same approved template, so section 1 below applies either way.
+
+Set up whichever one you are using — the template first, because
+**approval takes hours to days, so submit on day one.** Email needs no
+approval and works immediately.
+
+**1. Submit the template.** In the Meta WhatsApp Manager — or, on `mydreams`,
+through the reseller's own panel, since the licence owns the Meta account —
+create a template named exactly `price_change_alert`, category **Utility**,
+language **English** (`en`). Body, exactly this — seven variables, and the
+order is a contract with `app/notifications/render.py:_whatsapp_params`:
+
+```
+Rate update at {{1}}
+
+Room: {{2}}
+Was: {{3}}
+Now: {{4}}
+Change: {{5}}
+Stay: {{6}}
+
+Checked at {{7}}. Open the dashboard for the full list.
+```
+
+Sample values for the submission form: `Sunrise Resort` / `Deluxe Room` /
+`₹3,000` / `₹2,700` / `-₹300 (10.0%)` / `05 Sep 2026 → 06 Sep 2026` /
+`5:30 PM IST`.
+
+**Why prices lose their commas on `mydreams`.** A real message reads `₹12000`,
+not `₹12,000`. This is deliberate, not a formatting bug. The reseller passes
+all seven variables as one comma-joined string (`Param=a,b,c`) and splits on
+commas at the far end, so a comma inside a value — which Indian digit grouping
+puts in every rate above a thousand — shifts every later variable one slot
+left, and the alert then shows a real number against the wrong label with no
+error anywhere. URL-encoding does not help: `%2C` is decoded back before the
+split. `whatsapp_mydreams._param_safe` therefore drops grouping commas and
+turns any other comma into a semicolon. The Meta path keeps its grouping.
+If the reseller can confirm an escape or an alternate delimiter, that function
+is the one place to change and the grouping comes back.
+
+Three things that get templates rejected or silently unusable:
+
+- **Language code.** Meta's console also offers *English (US)* = `en_US`. Pick
+  that while `.env` says `WHATSAPP_TEMPLATE_LANG=en` and every send returns
+  132001 "template does not exist" — which looks exactly like "not approved
+  yet". This is the most common way this goes wrong.
+- **No header, footer, or buttons.** The provider sends only a `body`
+  component; a template expecting more is rejected with 132000.
+- **Do not shorten the labels.** Seven variables in a shorter body trips Meta's
+  "too many variables for the message length" check.
+
+"Rate update" rather than "Price change" because the same template also carries
+sold-out and available-again events.
+
+**2. Fill in `.env`.**
+
+Through the reseller (the live path):
+
+```
+WHATSAPP_ENABLED=true
+WHATSAPP_PROVIDER=mydreams
+MYDREAMS_LICENSE_NUMBER=<from the My Dreams API document>
+MYDREAMS_API_KEY=<from the My Dreams API document>
+```
+
+Both of those travel on the **query string**, so they land in every access log
+and reverse proxy in front of this app. The provider scrubs them out of its own
+logs and out of `notifications.error_detail`; nothing else may log the URL. If
+they leak, rotate them with the reseller — there is no scoping to fall back on,
+the key is full access to the licence.
+
+Direct to Meta:
+
+```
+WHATSAPP_ENABLED=true
+WHATSAPP_PROVIDER=meta_cloud
+WHATSAPP_PHONE_NUMBER_ID=<Meta > WhatsApp > API Setup>
+WHATSAPP_ACCESS_TOKEN=<a permanent system-user token, not the 24-hour test one>
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=<any random string, also pasted into Meta>
+WHATSAPP_APP_SECRET=<Meta > App settings > Basic>
+```
+
+Check the licence is live before sending anything — this messages nobody:
+
+```powershell
+curl "https://wa.mydreamstechnology.in/api/accountvalidity.php?LicenseNumber=<licence>&APIKey=<key>"
+```
+
+**3. Restart the API and the worker.** `get_settings()` and
+`registry.get_provider()` are both `lru_cache`d, so nothing above takes effect
+in a running process. Until the **API** restarts the channel stays hidden on the
+Notifications page and assignment returns 409; until the **worker** restarts
+nothing sends.
+
+```powershell
+.\scripts\dev-stop.ps1 ; .\scripts\dev-start.ps1     # this machine
+docker compose up -d --force-recreate api worker-notify   # Docker
+```
+
+**4. Prove it before a price move depends on it.** On **Notifications**, press
+**Test whatsapp**. It calls Meta synchronously and shows the real error code, so
+a wrong token or an unapproved template is visible in seconds.
+
+**5. Switch it on for the hotels you already monitor:**
+
+```powershell
+.venv312\Scripts\python scripts\enable_whatsapp.py --list   # changes nothing
+.venv312\Scripts\python scripts\enable_whatsapp.py --all
+```
+
+This adds `whatsapp` alongside `email` — it never removes the email trail. Undo
+with `--all --off`.
+
+**6. Optional — delivery receipts. `meta_cloud` only.** Point Meta's webhook at
+`https://<host>/api/v1/webhooks/whatsapp`, subscribed to the `messages` field,
+using the verify token above. This is what turns "sent" into "delivered" and
+"read" in the dashboard. While `WHATSAPP_APP_SECRET` is empty the callback is
+accepted unsigned and warns on every call; once set, unsigned callbacks are
+rejected.
+
+**On `mydreams`, "sent" is weaker than it looks — verified against the live
+account.** Sending `Template=zzz_definitely_not_a_real_template_9876` returns:
+
+```
+{"ApiResponse":"Success","ApiMessage":"Message Received and Send to Meta"}
+```
+
+— byte-identical to a real template. The reseller validates nothing and
+reports success for receiving the request. Meta rejects it afterwards, out of
+sight. So a green `sent` row proves only that the reseller accepted the call;
+it is not evidence the message arrived, or that the template even exists.
+**When a message does not arrive, the reseller's panel is the only place the
+Meta rejection can be read.** Useful checks that send nothing:
+
+```powershell
+# Licence, credits and WhatsApp balance
+curl "https://wa.mydreamstechnology.in/api/accountvalidity.php?LicenseNumber=<licence>&APIKey=<key>"
+# Whether a 24-hour session window is open for one contact
+curl "https://wa.mydreamstechnology.in/api/conversationvalidity.php?LicenseNumber=<licence>&APIKey=<key>&Contact=91XXXXXXXXXX"
+```
+
+**On `mydreams`, a notification never leaves `sent`.** The reseller's API
+document lists no delivery callback, so "the reseller accepted it" is the last
+thing this system ever learns — a message that WhatsApp then failed to deliver
+looks identical to one that was read. Do not read `sent` as "it arrived", and
+do not build an alert on notifications being stuck there. Worth asking My
+Dreams whether they expose a callback that simply is not documented; if they
+do, it is a small addition next to the existing Meta webhook.
+
+**7. WhatsApp alert numbers.** The Alerts page has a panel taking up to five
+numbers that get **every price change on every hotel**, including hotels added
+later. Use it for "just WhatsApp me when anything moves"; use recipients and
+assignments for anything more selective.
+
+These are ordinary `recipients` rows carrying two flags, so they reuse the
+digest, the dedupe key and the delivery history:
+
+- `alerts_all_hotels` — resolved at dispatch, never written into
+  `hotel_recipients`. That is what covers a hotel created next month with no
+  backfill. A real assignment, if one exists, always wins over the synthesised
+  one, so a hand-set threshold is not overridden.
+- `bypass_throttle` — no quiet-hours hold, no per-recipient hourly cap. Digest
+  batching still applies, so one hotel's simultaneous moves stay one message.
+
+Clearing a row deactivates the recipient: it stops receiving immediately and
+its delivery history is kept. Re-entering the same number reuses the same row
+rather than forking a second one.
+
+**Each of these numbers is a billed WhatsApp message per change per hotel.**
+Five numbers across ten hotels on a busy repricing morning is five times the
+message volume of one — worth watching on the first bill.
+
+**Ops alerts stay on email.** "A hotel stopped being checked" cannot go through
+the price template — its seven variables are all about a room rate, so Meta
+answers 132000, which is permanent and never retried. Carrying those on WhatsApp
+would need a second approved template.
 
 ---
 

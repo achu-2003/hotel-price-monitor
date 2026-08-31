@@ -148,6 +148,10 @@ def ops_session(**overrides):
         receives_ops_alerts=overrides.get("opted_in", True),
         quiet_hours_start=None,
         quiet_hours_end=None,
+        # An ops contact is an ordinary recipient: it follows the hotels it is
+        # assigned to and obeys quiet hours like everyone else.
+        alerts_all_hotels=False,
+        bypass_throttle=False,
     )
     session = FakeSession(recipients=[contact])
     # The real query filters on both flags; FakeSession only knows is_active.
@@ -197,12 +201,29 @@ class TestNotifyOps:
         session = ops_session(email=None, phone="+919876543210")
         assert self._run(monkeypatch, session, channels=("email",)) == []
 
-    def test_whatsapp_is_used_when_that_is_all_there_is(self, monkeypatch):
+    def test_ops_alerts_never_go_to_whatsapp(self, monkeypatch):
+        """Even when WhatsApp is the only channel configured and the contact
+        has a phone number.
+
+        The one approved template takes seven parameters describing a price
+        move, and an ops alert has none of them, so Meta rejects the send with
+        132000 -- permanent, so never retried. Writing the row would spend a
+        paid message to deliver nothing, and would mark the deployment as
+        having reported its own failure when it had not.
+        """
         session = ops_session(email=None, phone="+919876543210")
-        created = self._run(monkeypatch, session, channels=("whatsapp",))
+
+        assert self._run(monkeypatch, session, channels=("whatsapp",)) == []
+        assert session.tables.get("notifications", []) == []
+
+    def test_a_contact_with_both_still_gets_email_when_whatsapp_is_on(self, monkeypatch):
+        """Turning WhatsApp on for price alerts must not move ops alerts onto
+        it -- the reason this file's other test exists."""
+        session = ops_session(email="ops@example.com", phone="+919876543210")
+        created = self._run(monkeypatch, session, channels=("email", "whatsapp"))
 
         assert len(created) == 1
-        assert session.tables["notifications"][0].channel == "whatsapp"
+        assert session.tables["notifications"][0].channel == "email"
 
     def test_email_wins_when_both_are_possible(self, monkeypatch):
         """A list of hostnames and timestamps reads badly in a chat bubble."""
