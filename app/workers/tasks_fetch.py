@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import random
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from celery import shared_task
@@ -57,6 +57,11 @@ _LOCK_TTL_SECONDS = 600
 #: Backoff per attempt, seconds, before jitter. Long on purpose: a site that
 #: just failed is not helped by three requests in thirty seconds.
 _BACKOFF = (30, 120, 480)
+
+#: How long a queued check stays worth running. Half an hour, matching the
+#: shortest interval anyone schedules; past that the answer it would collect is
+#: about a moment that has gone.
+_STALE_AFTER_SECONDS = 1800
 
 
 # -- serialisation ---------------------------------------------------
@@ -115,7 +120,15 @@ def dispatch_due_checks() -> dict[str, int]:
                 countdown=countdown,
                 # Nothing useful comes of running a check that has been sitting
                 # in the queue longer than the interval it belongs to.
-                expires=now.timestamp() + 1800,
+                #
+                # A DEADLINE, NOT A CLOCK READING. Celery reads a bare number
+                # here as "seconds from now" (see AMQP.as_task_v2), so passing
+                # a POSIX timestamp asked for an expiry 1.79 billion seconds —
+                # about 56 years — away, and the guard never once fired. That
+                # is how checks queued before a two-day outage came back and
+                # ran against a check-in date already in the past, each one
+                # reading an empty page and reporting it as a site redesign.
+                expires=now + timedelta(seconds=_STALE_AFTER_SECONDS),
             )
             monitoring.schedule_next_run(session, group.target_ids, now)
             enqueued += 1
@@ -149,6 +162,28 @@ def fetch_prices(self, payload: dict[str, Any], triggered_by: str = "scheduler",
         check_in=payload["check_in"],
         check_run_id=check_run_id,
     )
+
+    # A window that has already begun is not worth a page load, and reading one
+    # is worse than reading nothing: a booking site asked for a date in the past
+    # renders no rooms, which every adapter correctly sees as "no room_card
+    # matched" and reports as a redesign. Five of those in a row open the
+    # circuit, so a stale message does not merely waste a fetch — it takes the
+    # hotel off monitoring and buries the real config under a false alarm.
+    #
+    # The expiry set at dispatch is the first line of defence, but it is a
+    # best-effort broker feature: a retry, a replayed message, or a queue that
+    # survived an outage can all still arrive here. This is the one that holds.
+    if stay.check_in < local_today(get_settings().timezone):
+        _write_check_run(
+            check_run_id, payload, stay, started, CheckRunStatus.SKIPPED,
+            triggered_by=triggered_by,
+            error_summary=(
+                f"Stay window {stay} has already started; a check for a past "
+                f"date cannot return a bookable rate."
+            ),
+        )
+        logger.info("fetch_skipped_stale", check_in=stay.check_in.isoformat())
+        return {"status": "skipped", "why": "stale", "check_run_id": check_run_id}
 
     try:
         with dispatch_lock(f"lock:{_lock_name(payload)}", _LOCK_TTL_SECONDS):
@@ -563,6 +598,12 @@ def _request_repair(
                 "collapsed_names": list(collapsed_names or []),
             },
             queue="browser",
+            # Discovery reads the page for the window frozen into these kwargs,
+            # so a repair that waits out its own stay window would re-derive
+            # selectors from a page showing no rooms and "fix" the config into
+            # something worse than it found. Given the same deadline as the
+            # fetch that asked for it.
+            expires=datetime.now(UTC) + timedelta(seconds=_STALE_AFTER_SECONDS),
         )
         logger.info("repair_requested", reason=reason)
     except Exception as exc:  # noqa: BLE001 - never fails the fetch
@@ -835,8 +876,18 @@ def _update_check_run(session, check_run_id: str, **fields: Any) -> None:
         setattr(run, key, value)
 
 
-def _lock_name(payload: dict[str, Any]) -> str:
+def _lock_name(payload: dict[str, Any], stay: StayWindow | None = None) -> str:
+    """The in-flight lock for one hotel source and one stay window.
+
+    ``stay`` overrides the window in the payload, which the rollover needs: the
+    night it goes on to read is NOT the night the payload describes, and taking
+    the payload's lock for it would leave that night unguarded. Must keep
+    producing exactly what ``DueGroup.lock_key`` does -- the dispatcher and the
+    task have to agree on the name or the lock protects nothing.
+    """
+    check_in = stay.check_in.isoformat() if stay else payload["check_in"]
+    check_out = stay.check_out.isoformat() if stay else payload["check_out"]
     return (
-        f"fetch:{payload['hotel_source_id']}:{payload['check_in']}"
-        f":{payload['check_out']}:{payload['adults']}:{payload['children']}"
+        f"fetch:{payload['hotel_source_id']}:{check_in}"
+        f":{check_out}:{payload['adults']}:{payload['children']}"
     )

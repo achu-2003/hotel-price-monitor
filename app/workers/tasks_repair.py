@@ -18,7 +18,7 @@ this task is that nothing happens.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from celery import shared_task
@@ -30,6 +30,7 @@ from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import AuditLog, HotelSource, MonitoringError
 from app.db.session import sync_session
+from app.services.dates import local_today
 from app.services.rediscovery import (
     DISCOVERY_VERSION,
     REPAIRABLE,
@@ -63,6 +64,22 @@ def rediscover_source(
     settings = get_settings()
     now = datetime.now(UTC)
     logger = log.bind(hotel_source_id=hotel_source_id, reason=reason or "unspecified")
+
+    # ── 0. refuse a window that has already begun ────────────────────
+    # The stay is frozen into this task's kwargs at enqueue time so that
+    # discovery inspects the page the fetch actually read. That is right while
+    # the message is fresh and wrong once it is not: a booking site asked for a
+    # past date renders no rooms, and discovery would then either find nothing
+    # or, worse, derive selectors from an empty-state page and store them as
+    # the repair.
+    #
+    # Checked BEFORE the claim below, so a backlog of stale repairs cannot
+    # spend the attempt budget that the real ones need. Skipping costs nothing:
+    # the config is untouched, the operator alert stands, and the next fetch
+    # asks again with a window that means something.
+    if check_in and date.fromisoformat(check_in) < local_today(settings.timezone):
+        logger.info("rediscovery_skipped", why="stay window already started", check_in=check_in)
+        return {"status": "skipped", "why": "stale window"}
 
     # ── 1. claim the attempt ─────────────────────────────────────────
     # Written and COMMITTED before the browser runs. Discovery takes tens of
