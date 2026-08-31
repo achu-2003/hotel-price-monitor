@@ -523,9 +523,31 @@ def _links_by_pair(session: Session, hotel_ids: set[int]) -> dict[tuple[int, int
     to the session, and used only to answer "which channels, what threshold"
     for this dispatch.
 
-    A real row always wins. Assigning an alert number to one hotel by hand,
-    with a threshold or an extra channel, therefore behaves exactly as it reads
-    rather than being quietly overridden by the flag.
+    WHATSAPP IS ADDED TO A REAL ROW, NOT BLOCKED BY IT.
+    ===================================================
+    Letting a real row win outright looked like the careful choice and quietly
+    broke the feature's whole promise. An alert number is usually somebody who
+    is ALREADY a recipient: one number added on the Alerts page covered ten
+    hotels, and reached WhatsApp on exactly one of them -- the only hotel with
+    no prior assignment. The other nine had ``channels=['email']`` rows from
+    before, which suppressed the synthesised link entirely. The panel said
+    "every price change, on every hotel" and delivered it for one in ten, with
+    nothing anywhere reporting a problem.
+
+    So the channel is unioned in. Everything else on the row is left exactly as
+    it was: its threshold still decides which changes are worth sending, and
+    email keeps behaving as it did, because adding a phone number is not a
+    statement about anybody's mail.
+
+    A DEACTIVATED assignment is treated as no assignment at all, not as a
+    veto. Switching one hotel off for somebody predates their being an alert
+    number and cannot express "...but still WhatsApp me about it", whereas the
+    flag says exactly that. The synthesised link that results is WhatsApp-only,
+    so an assignment switched off does not quietly resume sending email.
+
+    Nothing here is added to the session. These objects answer one dispatch;
+    persisting them would freeze today's hotel list into the database and undo
+    the future-hotel guarantee the flag exists for.
     """
     rows = session.execute(
         select(HotelRecipient).where(HotelRecipient.hotel_id.in_(hotel_ids))
@@ -534,8 +556,27 @@ def _links_by_pair(session: Session, hotel_ids: set[int]) -> dict[tuple[int, int
 
     for recipient_id in _all_hotel_recipient_ids(session):
         for hotel_id in hotel_ids:
-            if (hotel_id, recipient_id) in links:
+            existing = links.get((hotel_id, recipient_id))
+
+            if existing is not None and existing.is_active:
+                channels = list(existing.channels or [])
+                if "whatsapp" in channels:
+                    continue
+                # A COPY, never a mutation. ``existing`` is attached to the
+                # session, so appending to its channels would mark it dirty and
+                # rewrite the row on the next commit -- turning a decision made
+                # for one dispatch into a permanent, invisible edit to the
+                # operator's own configuration.
+                links[(hotel_id, recipient_id)] = HotelRecipient(
+                    hotel_id=hotel_id,
+                    recipient_id=recipient_id,
+                    channels=[*channels, "whatsapp"],
+                    min_delta_abs=existing.min_delta_abs,
+                    min_delta_pct=existing.min_delta_pct,
+                    is_active=True,
+                )
                 continue
+
             links[(hotel_id, recipient_id)] = HotelRecipient(
                 hotel_id=hotel_id,
                 recipient_id=recipient_id,

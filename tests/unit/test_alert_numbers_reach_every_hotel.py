@@ -297,3 +297,105 @@ def test_outside_quiet_hours_both_kinds_send_immediately(monkeypatch):
 
     assert row.scheduled_for is None
     assert returned == 1
+
+
+# ── the assignment that swallowed the promise ────────────────────────
+#
+# THE INCIDENT
+# ============
+# One number was added on the Alerts page, which reported it as covering all
+# ten hotels. It would have reached WhatsApp on exactly ONE of them.
+#
+# An alert number is usually somebody who is already a recipient, and this one
+# had ``channels=['email']`` rows from before for nine of the ten hotels. The
+# rule was "a real row always wins" -- meant to protect a hand-set threshold --
+# so those nine rows suppressed the synthesised WhatsApp link entirely. Only
+# the tenth hotel, which had no prior assignment, would have sent anything.
+#
+# Nothing reported a problem. The panel said "every price change, on every
+# hotel", the page said ten hotels covered, and nine in ten messages would
+# simply never have been sent.
+class TestWhatsAppIsAddedToAnAssignmentNotBlockedByIt:
+    def test_an_existing_email_assignment_gains_whatsapp(self):
+        """The regression. This returned ['email'] and sent nothing."""
+        session = _FakeSession(links=[_link(1, 7, channels=["email"])], all_hotel_ids=[7])
+
+        link = tasks_notify._links_by_pair(session, {1})[(1, 7)]
+
+        assert "whatsapp" in link.channels
+        assert "email" in link.channels
+
+    def test_the_stored_row_is_never_touched(self):
+        """A mutation here would rewrite the operator's configuration.
+
+        The real row is attached to the session, so appending to its channels
+        marks it dirty and the next commit persists it -- turning a decision
+        made for one dispatch into a permanent, invisible edit.
+        """
+        real = _link(1, 7, channels=["email"])
+        session = _FakeSession(links=[real], all_hotel_ids=[7])
+
+        merged = tasks_notify._links_by_pair(session, {1})[(1, 7)]
+
+        assert merged is not real
+        assert real.channels == ["email"]
+
+    def test_the_rows_own_threshold_is_carried_across(self):
+        """Adding a phone number is not a statement about sensitivity."""
+        session = _FakeSession(
+            links=[_link(1, 7, channels=["email"], min_abs=500)], all_hotel_ids=[7]
+        )
+
+        link = tasks_notify._links_by_pair(session, {1})[(1, 7)]
+
+        assert link.min_delta_abs == 500
+
+    def test_a_row_that_already_sends_whatsapp_is_left_alone(self):
+        """Nothing to add, so nothing is copied."""
+        real = _link(1, 7, channels=["email", "whatsapp"])
+        session = _FakeSession(links=[real], all_hotel_ids=[7])
+
+        assert tasks_notify._links_by_pair(session, {1})[(1, 7)] is real
+
+    def test_a_deactivated_assignment_does_not_veto_the_number(self):
+        """Switching one hotel off predates their being an alert number.
+
+        It cannot express "...but still WhatsApp me about it", whereas the flag
+        says exactly that.
+        """
+        session = _FakeSession(
+            links=[_link(1, 7, channels=["email"], is_active=False)], all_hotel_ids=[7]
+        )
+
+        link = tasks_notify._links_by_pair(session, {1})[(1, 7)]
+
+        assert link.is_active is True
+        assert "whatsapp" in link.channels
+
+    def test_a_deactivated_assignment_does_not_quietly_resume_email(self):
+        """Only the channel the flag is about comes back."""
+        session = _FakeSession(
+            links=[_link(1, 7, channels=["email"], is_active=False)], all_hotel_ids=[7]
+        )
+
+        link = tasks_notify._links_by_pair(session, {1})[(1, 7)]
+
+        assert link.channels == ["whatsapp"]
+
+    def test_an_ordinary_recipients_assignment_is_untouched(self):
+        """The union applies to alert numbers, not to everybody."""
+        real = _link(1, 3, channels=["email"])
+        session = _FakeSession(links=[real], all_hotel_ids=[])
+
+        assert tasks_notify._links_by_pair(session, {1})[(1, 3)] is real
+        assert real.channels == ["email"]
+
+    def test_every_hotel_ends_up_reachable_on_whatsapp(self):
+        """The shape of the real failure: nine assigned hotels, one not."""
+        assigned = [_link(h, 7, channels=["email"]) for h in range(1, 10)]
+        session = _FakeSession(links=assigned, all_hotel_ids=[7])
+
+        links = tasks_notify._links_by_pair(session, set(range(1, 11)))
+
+        reachable = [h for h in range(1, 11) if "whatsapp" in links[(h, 7)].channels]
+        assert len(reachable) == 10
