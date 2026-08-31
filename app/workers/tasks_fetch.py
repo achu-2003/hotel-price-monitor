@@ -355,13 +355,30 @@ def _with_rollover(
     if nxt is None:
         return readings
 
-    rate = effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
-    if not take_token(payload["source_id"], rate).allowed:
-        logger.info("rollover_skipped_rate_limited", rolled_to=str(nxt))
-        return readings
-
+    # UNDER THE ROLLED NIGHT'S OWN LOCK, not the one this task already holds.
+    #
+    # The lock this task entered is keyed on the window that was ASKED for, so
+    # it says nothing about the night the roll goes on to read -- and a second
+    # target watching that night has a different key and is free to run at the
+    # same moment. Two browsers would then land on one hotel, which is the
+    # thing the lock exists to prevent, and both would try to INSERT the same
+    # price_series row: offer_key is its primary key, so one of the two whole
+    # fetches would abort on the unique violation. Even when the row already
+    # exists they would both advance the same debounce counter, confirming a
+    # change on a single real sighting.
+    #
+    # Not acquiring it is a perfectly good outcome: somebody else is already
+    # reading that night, and their reading is the one to keep.
     try:
-        rolled = adapter.fetch(_context_for(payload, nxt, settings, check_run_id))
+        with dispatch_lock(f"lock:{_lock_name(payload, nxt)}", _LOCK_TTL_SECONDS):
+            rate = effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
+            if not take_token(payload["source_id"], rate).allowed:
+                logger.info("rollover_skipped_rate_limited", rolled_to=str(nxt))
+                return readings
+            rolled = adapter.fetch(_context_for(payload, nxt, settings, check_run_id))
+    except LockNotAcquired:
+        logger.info("rollover_skipped_locked", rolled_to=str(nxt))
+        return readings
     except Exception as exc:  # noqa: BLE001 - never fails the reading we have
         logger.info("rollover_fetch_failed", rolled_to=str(nxt), error=str(exc)[:200])
         return readings

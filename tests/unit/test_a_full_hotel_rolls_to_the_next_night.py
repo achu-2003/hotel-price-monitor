@@ -35,6 +35,7 @@ run says so instead of showing "0 offers, 0 changes".
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -45,6 +46,7 @@ from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.parsing import looks_sold_out
 from app.adapters.playwright_direct_site import PlaywrightDirectSiteAdapter
 from app.core.errors import SchemaDriftError
+from app.core.ratelimit import LockNotAcquired
 from app.services.dates import StayWindow, local_today, rollover_window
 from app.workers import tasks_fetch
 from app.workers.tasks_fetch import (
@@ -239,15 +241,25 @@ PAYLOAD = {
 }
 
 
+@contextmanager
+def _granted(_name, _ttl):
+    yield "token"
+
+
 @pytest.fixture
 def budget_allows(monkeypatch):
-    """The politeness budget, granted. The rolled read takes a real token."""
+    """The politeness budget, granted, and the rolled night free to read.
+
+    Both are patched because both talk to Redis. Leaving either real would make
+    this file pass or fail on whether a server happens to be up.
+    """
     monkeypatch.setattr(tasks_fetch, "effective_rate_per_min", lambda *a: 6)
     monkeypatch.setattr(
         tasks_fetch,
         "take_token",
         lambda *a: SimpleNamespace(allowed=True, retry_after_seconds=0.0),
     )
+    monkeypatch.setattr(tasks_fetch, "dispatch_lock", _granted)
 
 
 def roll(adapter, stay, result):
@@ -320,12 +332,88 @@ class TestReadingTheNextNight:
             "take_token",
             lambda *a: SimpleNamespace(allowed=False, retry_after_seconds=30.0),
         )
+        monkeypatch.setattr(tasks_fetch, "dispatch_lock", _granted)
         adapter = _Adapter(FetchResult(offers=[room()]))
 
         readings = roll(adapter, self.tonight, sold_out_result())
 
         assert len(readings) == 1
         assert adapter.windows == []
+
+
+class TestTheRolledNightIsLockedToo:
+    """The lock this task holds is keyed on the window that was ASKED for. A
+    second target watching the night the roll reads holds a DIFFERENT key and
+    is free to run at the same moment -- two browsers at one hotel, and two
+    transactions inserting the same price_series primary key, one of which
+    loses its entire fetch to the unique violation."""
+
+    @property
+    def tonight(self) -> StayWindow:
+        today = local_today("Asia/Kolkata")
+        return StayWindow(today, today + timedelta(days=1))
+
+    def _locks(self, monkeypatch) -> list[str]:
+        taken: list[str] = []
+
+        @contextmanager
+        def recording(name, _ttl):
+            taken.append(name)
+            yield "token"
+
+        monkeypatch.setattr(tasks_fetch, "effective_rate_per_min", lambda *a: 6)
+        monkeypatch.setattr(
+            tasks_fetch, "take_token",
+            lambda *a: SimpleNamespace(allowed=True, retry_after_seconds=0.0),
+        )
+        monkeypatch.setattr(tasks_fetch, "dispatch_lock", recording)
+        return taken
+
+    def test_the_lock_names_the_night_being_read(self, monkeypatch):
+        taken = self._locks(monkeypatch)
+        tomorrow = self.tonight.check_in + timedelta(days=1)
+
+        roll(_Adapter(FetchResult(offers=[room()])), self.tonight, sold_out_result())
+
+        assert len(taken) == 1
+        assert tomorrow.isoformat() in taken[0]
+        assert self.tonight.check_in.isoformat() not in taken[0]
+
+    def test_it_matches_the_name_that_night_s_own_target_would_use(self, monkeypatch):
+        """Same string as DueGroup.lock_key, or the lock guards nothing."""
+        taken = self._locks(monkeypatch)
+
+        roll(_Adapter(FetchResult(offers=[room()])), self.tonight, sold_out_result())
+
+        rolled = StayWindow(self.tonight.check_in + timedelta(days=1),
+                            self.tonight.check_out + timedelta(days=1))
+        expected = tasks_fetch._lock_name({**PAYLOAD,
+                                           "check_in": rolled.check_in.isoformat(),
+                                           "check_out": rolled.check_out.isoformat()})
+        assert taken[0] == f"lock:{expected}"
+
+    def test_a_held_lock_skips_the_roll_without_failing(self, monkeypatch):
+        """Somebody else is already reading that night; theirs is the reading
+        to keep. The sold-out we came with is still returned."""
+        monkeypatch.setattr(tasks_fetch, "effective_rate_per_min", lambda *a: 6)
+        monkeypatch.setattr(
+            tasks_fetch, "take_token",
+            lambda *a: SimpleNamespace(allowed=True, retry_after_seconds=0.0),
+        )
+
+        @contextmanager
+        def held(_name, _ttl):
+            raise LockNotAcquired("already running")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(tasks_fetch, "dispatch_lock", held)
+        adapter = _Adapter(FetchResult(offers=[room()]))
+
+        readings = roll(adapter, self.tonight, sold_out_result())
+
+        assert len(readings) == 1
+        assert adapter.windows == []
+        assert readings[0][1].sold_out_detected
 
     def test_a_failure_on_the_extra_read_never_loses_the_first(self, budget_allows):
         """A fetch that succeeded must not be turned into a failure by the
