@@ -667,21 +667,51 @@ _FIND_CARDS_JS = r"""
                        distinct: distinct, trusted: !!cand.trusted };
 
       // Varies across the cards, or there is only one card for it to vary
-      // against. Nothing to doubt.
-      if (distinct > 1 || cards.length < 2) return result;
+      // against. Nothing to doubt -- with one exception.
+      //
+      // If a TRUSTED name has already been seen reading identically on every
+      // card, then something that varies is as likely to be what SEPARATES
+      // the cards as what names them. That is the board basis in
+      // ``RATE_PLANS``: one room type on three rate plans, where "Deluxe Room"
+      // repeats and "Room Only"/"With Breakfast"/"Half Board" do not. Taking
+      // the varying one there names the rooms after their meal plan.
+      //
+      // So a trusted name is displaced only by another trusted one. On
+      // Cleartrip both are headings -- the rate plan repeats, the room title
+      // varies -- and the title wins. Here the alternative is a bare div, and
+      // the heading stands.
+      if (distinct > 1 || cards.length < 2) {
+        if (!fallback || !fallback.trusted || cand.trusted) return result;
+        continue;
+      }
 
-      // Reads identically everywhere. A heading or a self-declared name
-      // container is taken at its word -- one room type sold on three rate
-      // plans really does repeat -- and the repetition is reported so the
-      // pipeline downstream can still act on it.
-      if (cand.trusted) return result;
-
-      // Otherwise it is a shared label wearing a room name's clothes. Keep
-      // looking, and remember this one so a page where every candidate
-      // collapses still returns something rather than vanishing: the honest
-      // `distinct` and `trusted` values travel with it, and Python refuses to
-      // store the combination.
-      if (!fallback) fallback = result;
+      // Reads identically on every card.
+      //
+      // That is legitimate when one room type is sold on several rate plans,
+      // and it is also exactly what a RATE PLAN looks like on a site that
+      // nests plans inside rooms. Cleartrip renders both as an h4:
+      //
+      //   h4.sc-fqkvVR.hFFAkE                     "Deluxe Room - Pool view"
+      //   h4.sc-fqkvVR.bPeojd.room--inclusions--header
+      //                                           "Room with Breakfast & Dinner"
+      //
+      // The second is a heading, and its class contains "room", so it was
+      // trusted and returned on the spot -- ending the search before the
+      // first was ever considered. Nine room types were stored under one
+      // name, eight offers were dropped as duplicates of the ninth, and the
+      // hotel was monitored as a single room at 1 of its 9 prices.
+      //
+      // Being a heading cannot settle this, because BOTH of them are
+      // headings. The only evidence on the page is whether some other
+      // candidate actually varies across the cards, so the search now
+      // continues and this is kept as the answer for a page where nothing
+      // does -- which is the one-room-several-plans case, still answered
+      // exactly as before.
+      //
+      // Trust now decides only which non-varying candidate is kept, and still
+      // travels with the result: downstream needs it to tell one room on
+      // three rate plans from a selector that found a shared label.
+      if (!fallback || (cand.trusted && !fallback.trusted)) fallback = result;
     }
     return fallback;
   };
@@ -777,10 +807,30 @@ _FIND_CARDS_JS = r"""
     const withPrice = nodes.filter(n => parsePriceStrict(clean(blockText(n)), n) !== null);
     if (!withPrice.length) continue;
 
-    const sample = withPrice[0];
-    const picked = pickFrom(sample);
+    // WHICH NODE SPEAKS FOR THE GROUP.
+    //
+    // A signature names a layout component as often as it names a room, and a
+    // layout component gets reused. Cleartrip signs its page header, its
+    // sections AND its nine room blocks all as
+    // "div.iWfHoM.component-stacked-slots" -- eleven nodes, every one holding
+    // a price, because the sticky book bar carries one too.
+    //
+    // Reading only the first node in document order read the HEADER: a price,
+    // no room name, so the whole group was rejected -- and it was the only
+    // group whose cards contained the room titles. The nine rooms were never
+    // considered at all. What won instead was the rate-plan box nested inside
+    // them, whose heading reads "Room with Breakfast & Dinner" on every room,
+    // and nine room types were monitored as one.
+    //
+    // So the group is asked for a representative instead of being told which
+    // node it is. A group where no node yields both still dies, as before.
+    let sample = null, picked = null;
+    for (const node of withPrice.slice(0, 10)) {
+      const p = pickFrom(node);
+      if (p.priceEl && p.nameEl) { sample = node; picked = p; break; }
+    }
+    if (!sample) continue;
     let priceEl = picked.priceEl, nameEl = picked.nameEl, nameText = picked.nameText;
-    if (!priceEl || !nameEl) continue;
 
     let priceSel = selectorFor(priceEl, sample);
     if (!usable(priceSel)) priceSel = textSelectorFor(priceEl);
@@ -868,7 +918,29 @@ _FIND_CARDS_JS = r"""
   // a container calling itself a name, repetition means one room type on
   // several rate plans -- a real listing, not a broken selector -- and those
   // rows are told apart downstream by rate plan rather than by name.
-  for (const c of cards) c.rooms = c.name_trusted ? c.matched : c.distinct;
+  // The trusted allowance requires the selector to have distinguished
+  // SOMETHING. Nine cards reading one name have told nothing apart, whatever
+  // kind of element said it, and ranking that as nine rooms is what let
+  // Cleartrip's rate-plan heading -- "Room with Breakfast & Dinner", nine
+  // times -- beat the room titles beside it, which found seven names in eight
+  // cards and scored eight:
+  //
+  //   rate plan   matched 9  distinct 1  ->  rooms 9   <- won
+  //   room title  matched 8  distinct 7  ->  rooms 8
+  //
+  // The premise of the allowance is that repeats are one room on several rate
+  // plans, told apart downstream by rate plan rather than by name. That holds
+  // only while something downstream CAN tell them apart, and here nothing
+  // could: every offer collapsed onto one identity and eight of nine were
+  // dropped, which the fetch reported as parse_schema_drift asking for a
+  // meal_plan selector the config does not have.
+  //
+  // So the allowance survives where it was earned -- several distinct names
+  // with repeats among them, which is a real listing -- and a selector that
+  // produced exactly one name is worth the one room it can name.
+  for (const c of cards) {
+    c.rooms = (c.name_trusted && c.distinct > 1) ? c.matched : c.distinct;
+  }
 
   // Most rooms it can tell apart first; then most cards, because among
   // candidates that distinguish equally well the fuller one is the better
