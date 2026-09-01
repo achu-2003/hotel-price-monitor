@@ -18,9 +18,12 @@
 #      It points at an absolute host path instead.
 #
 # Secrets come from Coolify's environment variables, which it writes to a
-# .env beside this file. The three the app cannot start without are guarded
-# with `:?` so a missing one fails at parse time with a readable message
-# instead of a container that crash-loops on a pydantic ValidationError.
+# .env beside this file. The three the app cannot start without are written
+# `${VAR:?message}`, but do not read that as a fail-fast guard here the way
+# it would be under plain `docker compose`: Coolify parses this file, creates
+# each variable for you, and takes the MESSAGE as the default value. A secret
+# still reading "set ... in Coolify" in the UI is one nobody ever filled in,
+# and it will deploy quite happily with that as the password.
 
 x-app-env: &app-env
   env_file:
@@ -88,17 +91,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile.api
     <<: *app-env
-    environment:
-      # Coolify reads this name, generates the hostname, and points its proxy
-      # at port 8000 of this service. Replace the generated domain with a real
-      # one in the UI and TLS is issued automatically.
-      SERVICE_FQDN_API_8000: /
-      APP_ENV: ${APP_ENV:-production}
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
-      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in Coolify}
-      CREDENTIAL_KEK: ${CREDENTIAL_KEK:?set CREDENTIAL_KEK in Coolify}
+    # Nothing binds a host port; the proxy reaches this container over the
+    # compose network. `expose` is how Coolify learns which port the domain
+    # belongs to. SERVICE_FQDN_API_8000 is the documented way to ask for it
+    # and does not work under the dockercompose build pack -- it generated a
+    # domain for `migrate`, a container that exits by design, and served 404
+    # for everything. The domain is set on the resource instead.
+    expose:
+      - "8000"
     volumes:
       - artifacts:/data/artifacts
     depends_on:
@@ -161,8 +161,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile.api
     <<: *app-env
+    # --schedule is absolute on purpose. Beat persists its schedule to a
+    # shelve file and a relative path puts it in the working directory, /app,
+    # which the image's non-root user deliberately cannot write to.
     command: ["celery", "-A", "app.workers.celery_app", "beat",
+              "--schedule", "/data/beat/celerybeat-schedule",
               "--loglevel", "INFO"]
+    volumes:
+      - beatdata:/data/beat
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -193,4 +199,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  beatdata:
   artifacts:

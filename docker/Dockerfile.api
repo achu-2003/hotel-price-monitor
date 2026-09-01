@@ -27,8 +27,16 @@ COPY scripts/ ./scripts/
 
 # Run as a non-root user. Created after the copy so it owns nothing it should
 # not be able to modify at runtime.
+#
+# /data/beat exists because celery beat persists its schedule to a shelve file
+# and, given a relative --schedule, writes it into the working directory. That
+# is /app, which appuser deliberately does not own, so beat dies on start with
+# `_gdbm.error: [Errno 13] Permission denied: 'celerybeat-schedule'`. The
+# directory is created HERE rather than by the volume mount because Docker
+# copies ownership from the image when it initialises a named volume, and
+# makes the mount point root-owned when the path is absent from the image.
 RUN useradd --create-home --uid 10001 appuser \
-    && mkdir -p /data/artifacts \
+    && mkdir -p /data/artifacts /data/beat \
     && chown -R appuser:appuser /data
 USER appuser
 

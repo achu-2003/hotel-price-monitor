@@ -128,8 +128,14 @@ services:
   # SINGLE REPLICA, always. Two beats means every price check runs twice.
   beat:
     <<: [*app-build, *app-env]
+    # --schedule is absolute on purpose. Beat persists its schedule to a
+    # shelve file and a relative path puts it in the working directory, /app,
+    # which the image's non-root user deliberately cannot write to.
     command: ["celery", "-A", "app.workers.celery_app", "beat",
+              "--schedule", "/data/beat/celerybeat-schedule",
               "--loglevel", "INFO"]
+    volumes:
+      - beatdata:/data/beat
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -180,4 +186,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  beatdata:
   artifacts:
