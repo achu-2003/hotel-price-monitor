@@ -251,7 +251,10 @@ class TestAvailability:
     def test_a_room_that_disappears_from_the_page_is_marked_unavailable(
         self, session, hotel_fixture
     ):
-        """Otherwise a sold-out room freezes at its last price forever."""
+        """Otherwise a sold-out room freezes at its last price forever.
+
+        Takes two checks now: absence is confirmed before it is announced.
+        """
         base = datetime.now(UTC)
         ingest_fetch_result(
             session,
@@ -261,7 +264,36 @@ class TestAvailability:
         session.flush()
         assert session.scalar(select(func.count(PriceSeries.offer_key))) == 2
 
-        # Only the room-only rate comes back this time.
+        # Only the room-only rate comes back, twice running.
+        for minutes in (30, 60):
+            ingest_fetch_result(
+                session,
+                _result(_offer()),
+                _context(hotel_fixture, checked_at=base + timedelta(minutes=minutes)),
+            )
+            session.flush()
+
+        unavailable = session.scalars(
+            select(PriceSeries).where(PriceSeries.is_available.is_(False))
+        ).all()
+        assert len(unavailable) == 1
+        assert unavailable[0].meal_plan == "Breakfast"
+
+    def test_one_check_missing_a_room_tells_nobody(self, session, hotel_fixture):
+        """The partial read. A page that returns SOME rooms looks successful.
+
+        On 1 Sep a check returned five of nine rooms; the four it omitted were
+        reported sold out, and reported available again fourteen minutes later
+        when the next check read the whole page. Eight alerts, no events.
+        """
+        base = datetime.now(UTC)
+        ingest_fetch_result(
+            session,
+            _result(_offer(), _offer(name="Deluxe Room", price="4000", meal_plan="Breakfast")),
+            _context(hotel_fixture, checked_at=base),
+        )
+        session.flush()
+
         ingest_fetch_result(
             session,
             _result(_offer()),
@@ -269,11 +301,46 @@ class TestAvailability:
         )
         session.flush()
 
-        unavailable = session.scalars(
-            select(PriceSeries).where(PriceSeries.is_available.is_(False))
-        ).all()
-        assert len(unavailable) == 1
-        assert unavailable[0].meal_plan == "Breakfast"
+        assert session.scalars(select(PriceChange)).all() == [], "alerted on one bad read"
+        assert session.scalar(
+            select(func.count(PriceSeries.offer_key)).where(
+                PriceSeries.is_available.is_(False)
+            )
+        ) == 0
+
+    def test_a_room_that_comes_straight_back_is_never_reported_at_all(
+        self, session, hotel_fixture
+    ):
+        """The flap, end to end: gone from one read, back on the next."""
+        base = datetime.now(UTC)
+        both = _result(
+            _offer(), _offer(name="Deluxe Room", price="4000", meal_plan="Breakfast")
+        )
+        ingest_fetch_result(session, both, _context(hotel_fixture, checked_at=base))
+        session.flush()
+
+        # Truncated page.
+        ingest_fetch_result(
+            session,
+            _result(_offer()),
+            _context(hotel_fixture, checked_at=base + timedelta(minutes=15)),
+        )
+        session.flush()
+
+        # Whole page again.
+        ingest_fetch_result(
+            session,
+            _result(_offer(), _offer(name="Deluxe Room", price="4000", meal_plan="Breakfast")),
+            _context(hotel_fixture, checked_at=base + timedelta(minutes=30)),
+        )
+        session.flush()
+
+        assert session.scalars(select(PriceChange)).all() == []
+        series = session.scalars(
+            select(PriceSeries).where(PriceSeries.meal_plan == "Breakfast")
+        ).one()
+        assert series.is_available is True
+        assert series.missing_since is None, "the marker outlived the room coming back"
 
     def test_an_empty_broken_fetch_marks_nothing_unavailable(self, session, hotel_fixture):
         """A redesign must never be reported as "every room sold out"."""
@@ -654,11 +721,13 @@ class TestWhenThePriceActuallyChanged:
         assert change.changed_at == base + timedelta(minutes=30)
 
     def test_a_room_disappearing_has_no_earlier_sighting(self, session, hotel_fixture):
-        """Reported on the check that finds it gone, with no debounce.
+        """A DECLARED sold-out is reported on the check that finds it.
 
         The page has to SAY it is sold out. An empty result with no such marker
         is a broken read, and the sweep deliberately ignores it rather than
-        reporting a redesign as every room selling out at once.
+        reporting a redesign as every room selling out at once. A room merely
+        absent from a page that still lists others is debounced instead; this
+        one is a statement by the page and is believed at once.
         """
         base = datetime.now(UTC)
         ingest_fetch_result(session, _result(_offer()), _context(hotel_fixture, checked_at=base))

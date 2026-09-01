@@ -114,6 +114,14 @@ class PriceSeries(Base):
     pending_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pending_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # ── the same debounce, for the room going away ───────────────────
+    # When this room was first NOT on a page that still listed other rooms.
+    # Cleared the moment it is seen again, so a value here always means "absent
+    # on every check since". A disappearance is confirmed on the second such
+    # check; see ``ingest._handle_disappearances`` for why absence needs the
+    # debounce that a positively declared sold-out does not.
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     def __repr__(self) -> str:
         return f"<PriceSeries {self.offer_key[:12]}... {self.currency} {self.current_price}>"
 

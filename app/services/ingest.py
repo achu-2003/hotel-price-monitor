@@ -27,6 +27,12 @@ the end: any series for this hotel/source/stay that we did NOT see in a
 successful fetch is treated as an unavailability observation. Without this, a
 sold-out room would simply freeze at its last price forever and the dashboard
 would quietly lie.
+
+But "absent from the page" and "the page says sold out" are different claims,
+and only the second is evidence on its own. A partially rendered page is
+absence without a sell-out, it arrives flagged as a success, and it costs two
+false alerts per room -- gone, then back. So absence is debounced across two
+checks via ``PriceSeries.missing_since``, and a declared sold-out is not.
 """
 from __future__ import annotations
 
@@ -668,6 +674,13 @@ def _apply_comparison(
     series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available
 
+    # The room is on the page, so any half-finished disappearance is abandoned
+    # -- the same way a price returning to its baseline abandons a pending
+    # move. This is the line that makes a partial read cost nothing: the rooms
+    # a truncated page omitted are marked missing once, come back on the next
+    # check, and nobody is ever told.
+    series.missing_since = None
+
     # `pending_since` only moves when the pending price itself changes.
     #
     # Stamping it on every check quietly made it "pending as of the last
@@ -930,6 +943,14 @@ def _handle_disappearances(
     result from a broken adapter never reaches here, because the adapter raises
     ``SchemaDriftError`` instead; that distinction is what stops a site
     redesign from being reported as "every room sold out".
+
+    That guard catches the total failure and misses the partial one, which is
+    the common one. A page that returns SOME of its rooms passes every check
+    here — offers were found, no error was raised, the run records success —
+    and each room it happened to omit looks exactly like a room that sold.
+    So a room that is merely absent is confirmed across two consecutive checks
+    before anyone is told, while a page that positively declares itself sold
+    out is believed at once. See the comment on the debounce below.
     """
     if not result.offers and not result.sold_out_detected:
         return
@@ -950,6 +971,9 @@ def _handle_disappearances(
         if series.offer_key in seen_keys:
             continue
 
+        # Always recorded, even on a check that will not act on it: the
+        # observation table is the history, and a room flickering out of a page
+        # and back is exactly the evidence somebody needs later.
         _write_observation(
             session,
             NormalizedOffer(
@@ -960,6 +984,45 @@ def _handle_disappearances(
             series.offer_key,
             ctx,
         )
+
+        # ABSENCE IS DEBOUNCED. A DECLARED SOLD-OUT IS NOT.
+        # =================================================
+        # These are two different pieces of evidence and they earned different
+        # treatment the hard way.
+        #
+        # ``sold_out_detected`` means the page SAID so. That is a statement
+        # about the hotel, it is as trustworthy as any price on the same page,
+        # and it is reported on the check that finds it.
+        #
+        # A room merely absent from a page that still lists other rooms is not
+        # a statement about anything. It is equally consistent with the room
+        # selling, with a lazily-rendered list, with a slow response truncated
+        # midway, and with a selector that matched fewer cards this time. The
+        # guard above only rules out the total failures -- nothing returned at
+        # all. A page that returns five of nine rooms sails through it, and
+        # every one of those four rooms was reported sold out, then reported
+        # available again on the next check that read the whole page. Two
+        # alerts per room, to every recipient, for nothing that happened.
+        #
+        # So absence now has to survive one more check, which is the rule the
+        # price comparison has always applied to a move (see
+        # ``comparison``'s "confirm before shouting"). A genuine sell-out is
+        # still reported, one interval later. A truncated page costs nothing.
+        if not result.sold_out_detected and series.missing_since is None:
+            series.missing_since = ctx.checked_at
+            series.last_checked_at = ctx.checked_at
+            summary.outcomes[Outcome.PENDING_CONFIRMATION] += 1
+            log.info(
+                "room_missing_awaiting_confirmation",
+                hotel_id=ctx.hotel_id,
+                offer_key=series.offer_key[:12],
+                last_price=str(series.last_price),
+                offers_in_fetch=len(result.offers),
+            )
+            continue
+
+        # Read before the series is updated, because the update clears it.
+        missing_since = series.missing_since
 
         decision = compare(
             SeriesState(
@@ -976,6 +1039,7 @@ def _handle_disappearances(
         series.pending_price = None
         series.pending_count = 0
         series.pending_since = None
+        series.missing_since = None
         series.last_checked_at = ctx.checked_at
         series.last_changed_at = ctx.checked_at
 
@@ -983,10 +1047,10 @@ def _handle_disappearances(
             offer_key=series.offer_key,
             hotel_id=ctx.hotel_id,
             changed_at=ctx.checked_at,
-            # A room that has gone is reported on the check that finds it
-            # missing, with no debounce, so there is no earlier sighting to
-            # point at.
-            first_seen_at=ctx.checked_at,
+            # When the room was first not there, which is one check earlier
+            # than this one whenever the absence had to be confirmed. A
+            # declared sold-out has no earlier sighting and falls back to now.
+            first_seen_at=missing_since or ctx.checked_at,
             old_price=series.last_price,
             new_price=None,
             delta=None,
@@ -1004,6 +1068,8 @@ def _handle_disappearances(
             hotel_id=ctx.hotel_id,
             offer_key=series.offer_key[:12],
             last_price=str(series.last_price),
+            declared_sold_out=result.sold_out_detected,
+            missing_since=missing_since.isoformat() if missing_since else None,
         )
 
 
