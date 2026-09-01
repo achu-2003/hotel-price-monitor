@@ -81,6 +81,12 @@ services:
       dockerfile: docker/Dockerfile.api
     <<: *app-env
     command: ["alembic", "upgrade", "head"]
+    # Dockerfile.api's HEALTHCHECK curls :8000/health, which is right for that
+    # image's default gunicorn CMD and wrong for this one. Left enabled, this
+    # container is permanently "unhealthy" and Coolify reports the whole
+    # resource as degraded.
+    healthcheck:
+      disable: true
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,6 +140,12 @@ services:
     <<: *app-env
     command: ["celery", "-A", "app.workers.celery_app", "worker",
               "-Q", "http", "-c", "8", "-Ofair", "--loglevel", "INFO"]
+    # Dockerfile.api's HEALTHCHECK curls :8000/health, which is right for that
+    # image's default gunicorn CMD and wrong for this one. Left enabled, this
+    # container is permanently "unhealthy" and Coolify reports the whole
+    # resource as degraded.
+    healthcheck:
+      disable: true
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -148,6 +160,12 @@ services:
     <<: *app-env
     command: ["celery", "-A", "app.workers.celery_app", "worker",
               "-Q", "notify", "-c", "4", "--loglevel", "INFO"]
+    # Dockerfile.api's HEALTHCHECK curls :8000/health, which is right for that
+    # image's default gunicorn CMD and wrong for this one. Left enabled, this
+    # container is permanently "unhealthy" and Coolify reports the whole
+    # resource as degraded.
+    healthcheck:
+      disable: true
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -167,6 +185,12 @@ services:
     command: ["celery", "-A", "app.workers.celery_app", "beat",
               "--schedule", "/data/beat/celerybeat-schedule",
               "--loglevel", "INFO"]
+    # Dockerfile.api's HEALTHCHECK curls :8000/health, which is right for that
+    # image's default gunicorn CMD and wrong for this one. Left enabled, this
+    # container is permanently "unhealthy" and Coolify reports the whole
+    # resource as degraded.
+    healthcheck:
+      disable: true
     volumes:
       - beatdata:/data/beat
     depends_on:
@@ -176,20 +200,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Nightly verified pg_dump. The host path is absolute on purpose: Coolify
-  # re-clones the repository on every deploy, so anything written under the
-  # source tree is gone the next time you press Deploy.
+  # Nightly verified pg_dump.
+  #
+  # Built rather than bind-mounting ./docker/backup.sh the way the development
+  # stack does: Coolify keeps no repository on the host, so that mount source
+  # does not exist, and Docker silently creates an empty DIRECTORY in its place
+  # and mounts it over /backup.sh. See docker/Dockerfile.backup.
+  #
+  # The dumps go to an absolute host path, not a named volume and not the
+  # source tree: the point of this service is to survive both `down -v` and a
+  # redeploy, and Coolify rebuilds the application directory on every deploy.
   backup:
-    image: postgres:16-alpine
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backup
     env_file:
       - path: .env
         required: false
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
-    entrypoint: ["/bin/sh", "/backup.sh"]
     volumes:
-      - ./docker/backup.sh:/backup.sh:ro
       - /data/hotel-price-monitor/backups:/backups
     depends_on:
       postgres:

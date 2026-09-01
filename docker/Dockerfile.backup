@@ -1,0 +1,19 @@
+# Nightly pg_dump, with the script baked in rather than bind-mounted.
+#
+# docker-compose.yml mounts ./docker/backup.sh straight into a stock postgres
+# image, which is the right thing locally: edit the script, restart, done.
+# It cannot work on Coolify. Coolify does not keep the repository on the host
+# -- the application directory holds only the generated compose file and .env
+# -- so Docker resolves the missing bind-mount source by creating an empty
+# DIRECTORY at that path and mounting it over /backup.sh. `/bin/sh` handed a
+# directory exits 0 without printing anything, so the container restart-loops
+# silently and forever, with `docker logs` showing nothing to explain it.
+#
+# Building the script into the image removes the host from the equation. Still
+# based on the postgres image so pg_dump's version always matches the server's;
+# a newer server and an older pg_dump is a refused connection.
+FROM postgres:16-alpine
+
+COPY docker/backup.sh /backup.sh
+
+ENTRYPOINT ["/bin/sh", "/backup.sh"]
