@@ -250,13 +250,30 @@ def _whatsapp_params(hotel_name: str, lines: list[ChangeLine], stamp: str) -> li
     """
     line = lines[0]
     room = line.room_name if len(lines) == 1 else f"{line.room_name} +{len(lines) - 1} more"
+    # BOTH availability directions are decided BEFORE the delta is consulted,
+    # the way ``_headline`` and ``_render_html`` already decide them.
+    #
+    # Testing ``delta is not None`` first read the wrong field on a room coming
+    # back: a became_available row carries delta 0.00 -- a real number, not a
+    # NULL, because the price it returned at is compared against the price it
+    # left at. So it fell into the price-move branch, took the "not an
+    # increase" sign, and a room returning to sale was announced as
+    #
+    #     Change: -₹0 (0.0%)
+    #
+    # while "now available" sat in an else that nothing could reach. The email
+    # for the same change said "available again" correctly, which is why this
+    # survived: the two channels disagreed and only the quiet one was wrong.
     if line.direction == "became_unavailable":
         delta = "sold out"
+    elif line.direction == "became_available":
+        delta = "now available"
     elif line.delta is not None:
         sign = "+" if line.direction == "increase" else "-"
         delta = f"{sign}{money(abs(line.delta), line.currency)} ({_pct(line.delta_pct)})"
     else:
-        delta = "now available"
+        # A priced direction with no delta is a data fault, not a free room.
+        delta = "—"
 
     return [
         hotel_name,

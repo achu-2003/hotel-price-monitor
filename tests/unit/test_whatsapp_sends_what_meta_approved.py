@@ -205,6 +205,33 @@ class TestWhatMetaReceives:
 
         assert _sent_params(route)[4] == "sold out"
 
+    @respx.mock
+    def test_a_room_coming_back_says_so_rather_than_a_zero_rupee_drop(self, configured):
+        """A became_available row carries delta 0.00, not NULL.
+
+        The price it returned at is compared against the price it left at, so
+        an unchanged rate is a real zero. Testing the delta before the
+        direction sent that through the price-move branch and announced a room
+        returning to sale as "-₹0 (0.0%)", with "now available" sitting in an
+        else nothing could reach. The email for the same change read
+        "available again" -- the two channels disagreed and only the quiet one
+        was wrong.
+        """
+        route = respx.post(GRAPH_URL).mock(return_value=_accepted())
+
+        configured.send(
+            TO,
+            _message(
+                direction="became_available",
+                old_price=Decimal("11475"),
+                new_price=Decimal("11475"),
+                delta=Decimal("0.00"),
+                delta_pct=Decimal("0.00"),
+            ),
+        )
+
+        assert _sent_params(route)[4] == "now available"
+
 
 class TestParameterHygiene:
     """Room names are scraped off other people's pages.
