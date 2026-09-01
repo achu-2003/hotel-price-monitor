@@ -55,7 +55,14 @@
      single-operator deployment they told the reader something they already
      knew, on every screen. Worth restoring once there is more than one
      account -- there is no way to create a second one today. #}
+  {# /change-password was reachable but unlinked, which was fine only while
+     every account was created by create_admin.py and force-redirected there
+     on first login. An account made with --keep-password never gets that
+     redirect, so without this link there is no way to reach the page from
+     the UI at all. #}
   <div class="user">
+    <a href="/change-password"
+       class="{{ 'active' if path.startswith('/change-password') }}">Change password</a>
     <a href="/logout">Log out</a>
   </div>
 </header>
