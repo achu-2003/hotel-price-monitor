@@ -876,10 +876,63 @@ _FIND_CARDS_JS = r"""
     }
     if (!names.length) continue;
 
+    // A ROOM IS NOT A LINK TO ANOTHER PAGE.
+    //
+    // Hotel pages carry a "similar properties" carousel, and it looks exactly
+    // like a room list to everything above: repeated cards, one price each,
+    // distinct names. On Treebo it beats the real room list outright, because
+    // the page shows ONE room card and hides the rest behind "View All Rooms",
+    // so four neighbouring hotels out-count it four to one:
+    //
+    //   a.gjOMp        4 names, 4 prices   -> "Treebo Premium Emerald Dove..."
+    //   div.inMrU...   1 name,  1 price    -> "Deluxe Room (Maple)"
+    //
+    // Stored, that monitors four competitors' cards under this hotel's name,
+    // and it verifies perfectly: those prices really are on the page. Ranking
+    // cannot separate them, because by every measure the carousel is the
+    // better room list. What separates them is where a click goes. Each
+    // carousel card is wrapped in an anchor to a DIFFERENT property page; a
+    // room card navigates nowhere, or only within the page it is on --
+    // Booking.com's room rows link to "#RD680595401", Cleartrip's to nothing.
+    //
+    // Required of EVERY card, not any: one room among several linking out is
+    // a cross-sell inside a real list, not a list of cross-sells. And it
+    // sorts rather than rejects, so a site whose room cards genuinely are
+    // links still works when it is the only candidate there is.
+    // Both directions: a carousel card may BE the anchor, or wrap it. Treebo
+    // produces candidates of each kind for the same four hotels.
+    //
+    // And every card must lead somewhere DIFFERENT. That is what separates a
+    // list of other properties from a room list whose cards each carry a
+    // "Book" link -- those all point at the same checkout path, while four
+    // neighbouring hotels point at four pages. Without it this would demote
+    // real room lists on any engine that links its rooms.
+    const here = location.pathname;
+    const destinations = [];
+    for (const c of sampled) {
+      const found = new Set();
+      const own = c.closest ? c.closest("a[href]") : null;
+      const anchors = own ? [own] : [...c.querySelectorAll("a[href]")];
+      for (const a of anchors) {
+        try {
+          const path = new URL(a.href, location.href).pathname;
+          if (path !== here) found.add(path);
+        } catch (e) { /* an href this browser cannot resolve is not a
+                         destination, and must not make one up */ }
+      }
+      destinations.push([...found].sort().join("|"));
+    }
+    const everyCardLeaves =
+      destinations.length > 1 && destinations.every(d => d !== "");
+    const eachSomewhereElse =
+      new Set(destinations).size === destinations.length;
+    const linksAway = (everyCardLeaves && eachSomewhereElse) ? 1 : 0;
+
     cards.push({
       card: sig,
       name_selector: nameSel,
       price_selector: priceSel,
+      linksAway: linksAway,
       count: withPrice.length,
       matched: names.length,
       names: names.slice(0, 8),
@@ -947,7 +1000,12 @@ _FIND_CARDS_JS = r"""
   // read; then the candidate whose names differ most; then the tightest card,
   // because a container holding one room beats one holding the whole page;
   // and only then a stable anchor over a class list.
+  // Cards that navigate to another property come last, whatever else they
+  // score -- ahead of the room count, because a better-looking list of other
+  // hotels is still a list of other hotels. Only a page where EVERY candidate
+  // links out falls back to one.
   cards.sort((a, b) =>
+    (a.linksAway - b.linksAway) ||
     (b.rooms - a.rooms) || (b.matched - a.matched) || (b.distinct - a.distinct) ||
     (a.cardLen - b.cardLen) || (b.anchored - a.anchored) || (b.count - a.count));
   return { cards: cards.slice(0, 5), priceCount: priceEls.length };
