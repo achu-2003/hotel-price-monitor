@@ -67,6 +67,9 @@ celery_app.conf.update(
         # concurrency 8, no shm_size, no memory headroom -- which fails as an
         # out-of-memory kill rather than as anything that names the cause.
         "repair.rediscover_source": {"queue": "browser"},
+        # Same reasoning, other caller: attaching a hotel on an unrecognised
+        # engine inspects the page in a browser, and the API image has none.
+        "discover.inspect_url": {"queue": "browser"},
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},

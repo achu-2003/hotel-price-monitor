@@ -384,3 +384,79 @@ def _finish(
             ),
         }
         session.commit()
+
+
+@shared_task(name="discover.inspect_url")
+def inspect_pasted_url(
+    url: str,
+    *,
+    check_in: str | None = None,
+    check_out: str | None = None,
+    adults: int = 2,
+) -> dict[str, Any]:
+    """Inspect a pasted booking URL in a browser, for the attach endpoint.
+
+    WHY THIS IS A TASK AND NOT A FUNCTION CALL
+    ==========================================
+    Attaching a hotel on an unrecognised engine has to open the page in a real
+    browser. The API cannot do that: docker/Dockerfile.api ships no browser on
+    purpose -- it is what keeps that image at ~200MB rather than ~1.7GB, and
+    what stops a Chromium leak reaching the web server and the scheduler. So
+    calling discovery in-process worked natively, where one process has
+    everything, and failed in Docker with
+
+        BrowserType.launch: Executable doesn't exist at
+        /home/appuser/.cache/ms-playwright/...
+
+    which named a missing file rather than the missing design decision.
+
+    ``repair.rediscover_source`` had already settled where this work belongs;
+    this is the same journey for the other caller.
+
+    RETURNS DATA, NOT EXCEPTIONS
+    ============================
+    Failures come back as a dict rather than propagating. Celery's JSON
+    serializer can only re-raise an exception the caller can import and
+    reconstruct, and the distinction that matters here -- a FetchError, which
+    has already explained itself in a sentence an operator can act on, versus
+    anything else, where only the first line is worth showing -- is exactly
+    what would be lost in that round trip. So it is decided here, where the
+    exception is still real, and travels as a flag.
+    """
+    from app.adapters.discovery import inspect_url
+    from app.core.errors import FetchError
+
+    try:
+        result = inspect_url(
+            url, check_in=check_in, check_out=check_out, adults=adults
+        )
+    except FetchError as exc:
+        log.warning("discovery_failed", url=url[:120], error=str(exc))
+        return {"ok": False, "raised": True, "explained": True, "message": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - reported to the operator, never leaked raw
+        log.warning("discovery_failed", url=url[:120], error=str(exc))
+        # Playwright names every navigation failure "Error", so the class name
+        # alone is a dead end. The first line is the reason; the rest is a call
+        # log nobody needs in a form field.
+        reason = str(exc).splitlines()[0].strip() or type(exc).__name__
+        return {"ok": False, "raised": True, "explained": False, "message": reason}
+
+    if not result.ok:
+        return {
+            "ok": False,
+            "raised": False,
+            "reason": result.notes[-1] if result.notes else "nothing usable was found.",
+        }
+
+    best = result.best
+    fragment = json_fragment(best.source_url)
+    return {
+        "ok": True,
+        "raised": False,
+        "config": best.as_adapter_config(fragment),
+        "fragment": fragment,
+        "room_count": best.room_count,
+        "corroborated": best.corroborated,
+        "sample_count": len(best.sample_prices),
+        "fields": best.fields,
+    }

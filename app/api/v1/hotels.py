@@ -337,16 +337,13 @@ async def attach_source(
 
 
 
-def _json_fragment(url: str) -> str:
-    """A stable slice of an endpoint URL, for matching it again next fetch.
-
-    Delegates to the adapter layer so that attaching a source and repairing one
-    derive the identical fragment. Kept as a name here because this module's
-    callers read better for it.
-    """
-    from app.adapters.discovery import json_fragment
-
-    return json_fragment(url)
+#: How long to wait for the browser worker to inspect a pasted URL.
+#:
+#: inspect_url gives the page 60s of its own, so this is that plus room to
+#: reach a worker that may be part-way through a fetch when the paste lands.
+#: Below the 300s soft time limit in celery_app, so a hung inspection is
+#: killed there rather than leaving this request holding a dead result.
+_DISCOVERY_WAIT_SECONDS = 180
 
 
 def _detection_for_discovery(url: str):
@@ -412,64 +409,77 @@ async def attach_source_from_url(
         # hotel, and it is the difference between "we support your site" and
         # "someone must write a profile first".
         #
-        # Sync Playwright cannot run inside the event loop, so it goes to a
-        # worker thread.
+        # Handed to the browser worker rather than run here. This used to call
+        # discovery directly in a worker thread, which works only where the API
+        # process happens to have a browser: true natively, false in Docker,
+        # where docker/Dockerfile.api ships none on purpose. There it failed
+        # with "BrowserType.launch: Executable doesn't exist at
+        # /home/appuser/.cache/ms-playwright/...", which names a missing file
+        # rather than the missing decision. repair.rediscover_source had
+        # already settled where browser work belongs; this is the other caller
+        # making the same journey.
+        from celery.exceptions import TimeoutError as CeleryTimeoutError
         from fastapi.concurrency import run_in_threadpool
 
-        from app.adapters.discovery import inspect_url
+        from app.workers.tasks_repair import inspect_pasted_url
 
+        queued = inspect_pasted_url.apply_async(
+            args=[str(payload.url)], queue="browser"
+        )
+        # .get blocks, so it goes to a thread for the same reason the direct
+        # call did: this endpoint is async and the event loop has other work.
         try:
-            result = await run_in_threadpool(inspect_url, str(payload.url))
-        except Exception as exc:  # noqa: BLE001 - reported, never leaked raw
-            log.warning("discovery_failed", url=str(payload.url)[:120], error=str(exc))
-            # A FetchError has already said what happened, to an
-            # operator, in a sentence they can act on: which bot wall
-            # matched, or how long the page was given to load. Reporting
-            # only the class name threw all of that away and told
-            # everyone the same thing about CAPTCHAs -- including the
-            # people whose page had simply been slow.
-            from app.core.errors import FetchError
-
-            if isinstance(exc, FetchError):
-                detail = f"Could not inspect that page. {exc}"
-            else:
-                # Whatever escaped, quote it. The class name alone is a dead
-                # end for anyone trying to fix this -- Playwright names every
-                # navigation failure "Error", so this branch read
-                # "Could not inspect that page: Error." and then invented a
-                # CAPTCHA to explain it. The first line of the message is the
-                # reason; the rest is a call log nobody needs in a form field.
-                reason = str(exc).splitlines()[0].strip() or type(exc).__name__
-                detail = f"Could not inspect that page: {reason}"
+            found = await run_in_threadpool(queued.get, timeout=_DISCOVERY_WAIT_SECONDS)
+        except CeleryTimeoutError as exc:
+            log.warning("discovery_timed_out", url=str(payload.url)[:120])
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=detail,
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    f"The page inspector did not answer within "
+                    f"{_DISCOVERY_WAIT_SECONDS}s. It runs on the browser worker, "
+                    f"so this means that worker is stopped, busy with fetches, or "
+                    f"cannot start a browser. Nothing was attached — try again."
+                ),
             ) from exc
 
-        if not result.ok:
-            reason = result.notes[-1] if result.notes else "nothing usable was found."
+        if found["raised"]:
+            # A FetchError has already said what happened, to an operator, in a
+            # sentence they can act on: which bot wall matched, or how long the
+            # page was given to load. Reporting only the class name threw all
+            # of that away and told everyone the same thing about CAPTCHAs --
+            # including the people whose page had simply been slow. Which kind
+            # of failure it was is decided in the task, where the exception
+            # still exists; only the verdict survives the queue.
+            detail = (
+                f"Could not inspect that page. {found['message']}"
+                if found["explained"]
+                else f"Could not inspect that page: {found['message']}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail
+            )
+
+        if not found["ok"]:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"Inspected the page but could not find prices it could trust. "
-                    f"{reason} This usually means the rates only load after "
+                    f"{found['reason']} This usually means the rates only load after "
                     f"choosing dates inside the page. Try the URL you land on "
                     f"AFTER clicking Book Now and picking dates — or track this "
                     f"hotel by manual entry."
                 ),
             )
 
-        best = result.best
-        fragment = _json_fragment(best.source_url)
-        discovered_config = best.as_adapter_config(fragment)
+        discovered_config = found["config"]
         discovery_note = (
-            f"Auto-discovered: {best.room_count} rooms from {fragment}, "
-            f"{best.corroborated}/{len(best.sample_prices)} prices confirmed "
+            f"Auto-discovered: {found['room_count']} rooms from {found['fragment']}, "
+            f"{found['corroborated']}/{found['sample_count']} prices confirmed "
             f"against the page."
         )
         detection = _detection_for_discovery(str(payload.url))
         log.info("source_discovered", url=str(payload.url)[:120],
-                 rooms=best.room_count, fields=best.fields)
+                 rooms=found["room_count"], fields=found["fields"])
     # A URL with no date parameter cannot ask for a specific night. That is a
     # real limitation, not a reason to refuse: plenty of small hotels publish
     # one standing rate rather than pricing per night, and tracking that rate
