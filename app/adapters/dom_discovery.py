@@ -212,13 +212,60 @@ _FIND_CARDS_JS = r"""
   // if stored.
   const isPerInstanceId = (v) => /[-_]?\d+$/.test(v);
 
+  // STATE CLASSES SPLIT ONE ROW INTO SEVERAL SHAPES.
+  //
+  // A repeating row rarely carries identical classes on every instance. Real
+  // markup decorates some of them -- which row is last, which price is the
+  // cheapest, which card is selected:
+  //
+  //   tr.js-rt-block-row.e2e-hprt-table-row                          x5
+  //   tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row      x5
+  //   tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-cheapest-...  x1
+  //
+  // Signed by every class they happen to have, those eleven rows became three
+  // groups, and the winner was the group of ONE: an eleven-room hotel
+  // monitored as its cheapest room, reporting success. The ranking could not
+  // save it, because a candidate that sees the other ten was never built.
+  //
+  // Which classes describe the shape is not a judgement about their names --
+  // guessing at "cheapest" or "--selected" only ever covers the sites already
+  // seen. It is a question the page answers: a shape class is on every
+  // sibling of that kind, a state class is on some of them. So each of the
+  // element's own classes is counted across its same-tag siblings and only
+  // the most widely shared are kept. Ties keep every class that ties, so a
+  // row genuinely described by three classes keeps all three.
+  const shapeClasses = (el, cls) => {
+    const parent = el.parentElement;
+    if (!parent || cls.length < 2) return cls;
+    const family = [];
+    for (const sib of parent.children) {
+      if (sib.tagName === el.tagName) family.push(sib);
+    }
+    // Nothing to compare against: an only child cannot say which of its
+    // classes are structural, and inventing an answer is worse than keeping
+    // what it has.
+    if (family.length < 2) return cls;
+    const counts = cls.map(c => {
+      let n = 0;
+      for (const sib of family) { if (sib.classList.contains(c)) n++; }
+      return n;
+    });
+    let top = 0;
+    for (const n of counts) { if (n > top) top = n; }
+    const kept = cls.filter((c, i) => counts[i] === top);
+    return kept.length ? kept : cls;
+  };
+
   const signature = (el) => {
     const cls = (el.className && typeof el.className === "string")
       ? el.className.trim().split(/\s+/).filter(c =>
           c && !/^(ng|is|has)-/.test(c) && !/\d{3,}/.test(c)
-          && !isGeneratedClass(c)).slice(0, 3)
+          && !isGeneratedClass(c))
       : [];
-    return el.tagName.toLowerCase() + (cls.length ? "." + cls.join(".") : "");
+    // Narrowed to the shape BEFORE the cap, so a state class cannot occupy
+    // one of the three slots and push a structural one out of the selector.
+    const shape = cls.length ? shapeClasses(el, cls).slice(0, 3) : [];
+    return el.tagName.toLowerCase() + (shape.length ? "." + shape.join(".") : "");
   };
 
   // Playwright's text engine matches the SMALLEST element containing the
