@@ -62,6 +62,7 @@ keeps its digit grouping.
 from __future__ import annotations
 
 import re
+from urllib.parse import quote
 
 import httpx
 
@@ -175,10 +176,10 @@ class MyDreamsWhatsAppProvider:
             "Param": ",".join(_param_safe(p) for p in params),
         }
 
-        url = f"{settings.mydreams_base_url.rstrip('/')}/sendtemplate.php"
+        url = f"{settings.mydreams_base_url.rstrip('/')}/sendtemplate.php?{_encode(query)}"
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
-                response = client.get(url, params=query)
+                response = client.get(url)
         except httpx.HTTPError as exc:
             # str(exc) on an httpx error can carry the full request URL, and
             # the URL is where the API key is.
@@ -188,6 +189,38 @@ class MyDreamsWhatsAppProvider:
             )
 
         return _classify(response)
+
+
+def _encode(query: dict[str, str]) -> str:
+    """Build the query string with %20 for a space, never '+'.
+
+    THE SPACE, WHICH IS THE COMMA'S TWIN
+    ====================================
+    ``httpx`` builds a query string with form encoding, which writes a space as
+    ``+``. Every HTTP client does; it is correct for a form body and it is what
+    ``urlencode`` has always done. The reseller then decodes with PHP's
+    ``rawurldecode``, which turns ``%XX`` back into bytes and leaves ``+``
+    exactly where it is.
+
+    So the space survived the wire and died on arrival, and every template
+    variable ever sent through here reached the handset mangled::
+
+        Rate update at MGM+WHISPERING+NEST
+        Room: Villa+3+Bedroom+with+Living+Room++1+more
+        Checked at 10:25+AM+IST
+
+    Nothing reported it. The reseller answers Success, Meta accepts the
+    template, the message is delivered, and the defect is visible only to the
+    person reading the chat -- which is why it ran for the life of the
+    integration.
+
+    ``quote`` is ``rawurlencode``'s counterpart: it writes ``%20`` for a space,
+    which the reseller does decode. That it also encodes the joining commas as
+    ``%2C`` is harmless and already established -- the reseller decodes before
+    it splits, which is the very round-trip that makes ``%2C`` useless as an
+    escape and is documented in ``_param_safe``.
+    """
+    return "&".join(f"{key}={quote(str(value), safe='')}" for key, value in query.items())
 
 
 #: Ceiling on one parameter, matching the Meta path.
@@ -319,10 +352,38 @@ def _retryable(status_code: int, lowered_body: str) -> bool:
 
 
 def _message_id(payload: dict) -> str | None:
+    """Meta's ``wamid``, wherever this reseller happened to put it.
+
+    It puts it one level down. The success body is Meta's own /messages
+    response wrapped in the reseller's envelope::
+
+        {"ApiResponse": "Success",
+         "ApiMessage": {"messaging_product": "whatsapp",
+                        "contacts": [{"wa_id": "91..."}],
+                        "messages": [{"id": "wamid.HBg..."}]}}
+
+    Reading only the top level found nothing, so every row stored
+    ``provider_message_id = NULL``. That is the id the reseller's panel is
+    keyed on, and the panel is the ONLY place a delivery failure appears --
+    there is no callback on this transport. Without it, "did that alert
+    arrive?" could not be answered for any message ever sent, and a run of
+    messages Meta accepted and then dropped for pacing (error 131049) looked
+    from here like a working integration.
+
+    ``ApiMessage`` is a plain string on some responses, hence the isinstance.
+    """
     for key in ("messageid", "message_id", "msgid", "id", "MessageId", "MessageID"):
         value = payload.get(key)
         if value:
             return str(value)[:255]
+
+    envelope = payload.get("ApiMessage") or payload.get("apimessage")
+    if isinstance(envelope, dict):
+        messages = envelope.get("messages")
+        if isinstance(messages, list) and messages:
+            first = messages[0]
+            if isinstance(first, dict) and first.get("id"):
+                return str(first["id"])[:255]
     return None
 
 

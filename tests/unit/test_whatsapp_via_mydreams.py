@@ -168,6 +168,32 @@ def test_url_encoding_would_not_have_saved_us():
     assert "," not in _param_safe("a,b,c,d")
 
 
+def test_a_space_crosses_the_wire_as_percent_20_not_plus(configured):
+    """The defect this pins is invisible to ``parse_qs``, which is why it ran.
+
+    ``parse_qs`` decodes '+' and '%20' to the same space, so every existing
+    assertion in this file passed while the reseller -- which decodes with
+    rawurldecode, and so leaves '+' alone -- delivered "MGM+WHISPERING+NEST"
+    to the handset. The assertion has to be on the RAW query string.
+    """
+    with respx.mock:
+        route = respx.get(SEND_URL).mock(return_value=httpx.Response(200, text="Success"))
+        assert configured.send(TO, _message(params=["MGM WHISPERING NEST"] + ["x"] * 6)).ok
+
+    raw = urlparse(str(route.calls[0].request.url)).query
+    assert "MGM%20WHISPERING%20NEST" in raw
+    assert "+" not in raw, "a space went out as '+' and the reseller will not decode it"
+
+
+def test_the_parameter_separator_survives_the_encoding(configured):
+    """Encoding the joining commas is safe: the reseller decodes before it splits."""
+    with respx.mock:
+        route = respx.get(SEND_URL).mock(return_value=httpx.Response(200, text="Success"))
+        assert configured.send(TO, _message()).ok
+
+    assert len(_sent_query(route)["Param"].split(",")) == WHATSAPP_TEMPLATE_PARAM_COUNT
+
+
 def test_newlines_and_blank_values_are_handled_like_the_meta_path():
     assert _param_safe("Deluxe\n\tRoom   Sea") == "Deluxe Room Sea"
     assert _param_safe("") == "—"
@@ -249,6 +275,53 @@ def test_a_message_id_is_kept_when_one_is_offered(configured):
             )
         )
         assert configured.send(TO, _message()).provider_message_id == "wamid.XYZ"
+
+
+def test_metas_own_message_id_is_dug_out_of_the_resellers_envelope(configured):
+    """The wamid is nested, and it is the only handle on a delivered message.
+
+    This transport has no delivery callback, so the reseller's panel is the
+    one place a failure appears -- and the panel is keyed on this id. Reading
+    only the top level stored NULL for every message ever sent, which is how a
+    run of alerts Meta accepted and then dropped for pacing (131049) looked
+    from here like a working integration.
+    """
+    with respx.mock:
+        respx.get(SEND_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "ApiResponse": "Success",
+                    "ApiMessage": {
+                        "messaging_product": "whatsapp",
+                        "contacts": [{"input": "919876543210", "wa_id": "919876543210"}],
+                        "messages": [{"id": "wamid.HBgMOTE5ODc2NTQzMjEw"}],
+                    },
+                },
+            )
+        )
+        result = configured.send(TO, _message())
+
+    assert result.ok
+    assert result.provider_message_id == "wamid.HBgMOTE5ODc2NTQzMjEw"
+
+
+def test_a_prose_envelope_is_still_a_success_without_an_id(configured):
+    """``ApiMessage`` is a plain string on some responses."""
+    with respx.mock:
+        respx.get(SEND_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "ApiResponse": "Success",
+                    "ApiMessage": "Message Received and Send to Meta",
+                },
+            )
+        )
+        result = configured.send(TO, _message())
+
+    assert result.ok
+    assert result.provider_message_id is None
 
 
 @pytest.mark.parametrize(
