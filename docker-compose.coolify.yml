@@ -1,0 +1,196 @@
+# Production stack for Coolify (single compose file, deployed from git).
+#
+# Coolify deploys ONE compose file — it never merges, so
+# docker-compose.override.yml (development) is invisible here and this file
+# has to be self-contained. It is deliberately a sibling of
+# docker-compose.yml rather than an overlay on it, because three things in
+# the base file are actively wrong on a Coolify host:
+#
+#   1. `ports: "8000:8000"` on api. Coolify's own UI owns host port 8000, so
+#      that binding is a refused deploy, not a warning. Nothing here binds a
+#      host port at all: ingress is the Coolify proxy (see SERVICE_FQDN
+#      below) and everything else talks over the compose network.
+#   2. mailhog. It catches development email; in production a real provider
+#      does, so it is gone. Set EMAIL_PROVIDER/SMTP_* in Coolify's env vars.
+#   3. `./backups`. Coolify re-clones the repository on every deploy, so a
+#      bind mount under the source tree loses every dump the moment you
+#      redeploy — exactly the failure the backup service exists to prevent.
+#      It points at an absolute host path instead.
+#
+# Secrets come from Coolify's environment variables, which it writes to a
+# .env beside this file. The three the app cannot start without are guarded
+# with `:?` so a missing one fails at parse time with a readable message
+# instead of a container that crash-loops on a pydantic ValidationError.
+
+x-app-env: &app-env
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    APP_ENV: ${APP_ENV:-production}
+    # Overridden here, not in .env: these are compose service names, and are
+    # the one part of the configuration the host cannot get right.
+    POSTGRES_HOST: postgres
+    REDIS_HOST: redis
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
+    SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in Coolify}
+    CREDENTIAL_KEK: ${CREDENTIAL_KEK:?set CREDENTIAL_KEK in Coolify}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hotelmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-hotelmonitor_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hotelmonitor_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    # appendonly: a restart must not silently drop queued price checks.
+    # noeviction: the broker must never evict a task to reclaim memory.
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot: runs migrations, then exits. Everything else waits for it, so no
+  # container can start against an out-of-date schema.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    <<: *app-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    <<: *app-env
+    environment:
+      # Coolify reads this name, generates the hostname, and points its proxy
+      # at port 8000 of this service. Replace the generated domain with a real
+      # one in the UI and TLS is issued automatically.
+      SERVICE_FQDN_API_8000: /
+      APP_ENV: ${APP_ENV:-production}
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in Coolify}
+      CREDENTIAL_KEK: ${CREDENTIAL_KEK:?set CREDENTIAL_KEK in Coolify}
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Heavy browser work, isolated: its own image, its own queue, its own memory
+  # cap. A Chromium leak here cannot starve Postgres.
+  worker-browser:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.browser
+    <<: *app-env
+    volumes:
+      - artifacts:/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    mem_limit: 4g
+    shm_size: 1gb          # Chromium crashes with the 64MB Docker default
+    restart: unless-stopped
+
+  # Light work: HTTP-only adapters and everything that is not a browser.
+  worker-http:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    <<: *app-env
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "-Q", "http", "-c", "8", "-Ofair", "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker-notify:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    <<: *app-env
+    command: ["celery", "-A", "app.workers.celery_app", "worker",
+              "-Q", "notify", "-c", "4", "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # SINGLE REPLICA, always. Two beats means every price check runs twice.
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    <<: *app-env
+    command: ["celery", "-A", "app.workers.celery_app", "beat",
+              "--loglevel", "INFO"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Nightly verified pg_dump. The host path is absolute on purpose: Coolify
+  # re-clones the repository on every deploy, so anything written under the
+  # source tree is gone the next time you press Deploy.
+  backup:
+    image: postgres:16-alpine
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    volumes:
+      - ./docker/backup.sh:/backup.sh:ro
+      - /data/hotel-price-monitor/backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  artifacts:
