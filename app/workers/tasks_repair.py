@@ -266,6 +266,11 @@ def rediscover_source(
             session,
             hotel_id=hotel_id,
             collapsed_names=collapsed_names,
+            # The neighbours a "similar properties" carousel put in this
+            # hotel's room list. Nothing in a fetch can report this -- the
+            # prices are real and every check succeeds -- so the scan is the
+            # only place the evidence exists.
+            cross_sold_names=result.cross_sold_names,
             discovered_names=best.sample_names,
             logger=logger,
         )
@@ -330,6 +335,7 @@ def _retire_invented_rooms(
     collapsed_names: list[str] | None,
     discovered_names: list[str],
     logger,
+    cross_sold_names: list[str] | None = None,
 ) -> list[str]:
     """Delete the room types the broken config invented. See names_to_retire().
 
@@ -346,7 +352,7 @@ def _retire_invented_rooms(
     from app.db.models import RoomType
     from app.services import room_matching
 
-    retire = names_to_retire(collapsed_names, discovered_names)
+    retire = names_to_retire(collapsed_names, discovered_names, cross_sold_names)
     if not retire:
         return []
 
@@ -443,6 +449,22 @@ def _finish(
 
     ``refund`` hands the attempt back, for an ending that proved nothing about
     whether this source can be repaired -- see ``RepairState.settle``.
+
+    THE GENERATION STAMP GOES DOWN HERE TOO
+    =======================================
+    "This scanner looked and could not do it" is a real answer from the CURRENT
+    scanner, and recording it is what ends the attempt -- the same reasoning the
+    ``no_change`` branch above sets out. Without the stamp the source still
+    reads as never-tried, ``scanner_moved_on`` waves it past the budget every
+    time, and the sweep that looks for behind-generation configs finds it again
+    on the next pass. A browser at somebody else's site every hour, forever:
+    the runaway loop the budget exists to prevent, arriving through the
+    mechanism meant to let a fixed scanner reach old configs.
+
+    A REFUND IS THE EXCEPTION, and it is the same exception it always was.
+    There the page had nothing on it to read -- a hotel sold out for the night
+    -- so this generation never actually got to look, and the question it would
+    have answered has not been asked. The cooldown paces that one instead.
     """
     with sync_session() as session:
         row = session.execute(
@@ -457,6 +479,7 @@ def _finish(
         # claimed. This only records how it ended.
         row.adapter_config = {
             **config,
+            **({} if refund else {VERSION_KEY: DISCOVERY_VERSION}),
             **RepairState.from_config(config).settle(
                 now, outcome=outcome, refund=refund
             ),

@@ -116,6 +116,19 @@ celery_app.conf.update(
             "task": "maintenance.ensure_partitions",
             "schedule": 86_400.0,
         },
+        # The only route by which a scanner fix reaches a hotel that is
+        # silently wrong -- one reading the property next door's prices, say,
+        # where every check succeeds and nothing ever asks for a repair. See
+        # maintenance.sweep_stale_configs.
+        #
+        # Hourly, and it hands out five at a time. Nothing here is urgent: the
+        # configs it finds have been wrong for as long as it took to notice,
+        # and each repair drives a browser against someone else's site.
+        "sweep-stale-configs": {
+            "task": "maintenance.sweep_stale_configs",
+            "schedule": 3_600.0,
+            "options": {"expires": 3_500},
+        },
     },
 )
 

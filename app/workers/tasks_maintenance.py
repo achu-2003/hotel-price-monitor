@@ -1,12 +1,13 @@
 """Housekeeping that keeps the system honest while nobody is watching.
 
-Four jobs, each addressing a way this system fails quietly rather than loudly:
+Five jobs, each addressing a way this system fails quietly rather than loudly:
 
 ``ensure_partitions``   next month's partition must exist BEFORE the first of
                         the month, or every insert fails at midnight
 ``alert_on_silence``    a target that stopped succeeding without erroring
 ``prune_artifacts``     screenshots and HTML fill a disk otherwise
 ``retention_sweep``     drop observation partitions past the retention window
+``sweep_stale_configs`` a config the current scanner would not have written
 """
 from __future__ import annotations
 
@@ -15,12 +16,14 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from celery import shared_task
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.session import sync_session
 from app.services import monitoring
+from app.services.dates import local_today, resolve_stay_window
+from app.services.rediscovery import DISCOVERY_VERSION, needs_rescan
 
 log = get_logger("tasks.maintenance")
 
@@ -261,3 +264,144 @@ def _month_from_name(name: str) -> date | None:
         return date(int(parts[1]), int(parts[2]), 1)
     except ValueError:
         return None
+
+
+#: How many sources one sweep may hand to the repair queue.
+#:
+#: Small on purpose. Each one drives a real browser against somebody else's
+#: site, and this sweep is not urgent -- nothing is on fire, the hotels it
+#: finds have been quietly wrong for as long as it took to notice. Five an
+#: hour drains a fleet of thirty in an afternoon without ever looking like a
+#: crawl, and the repair's own cooldown and budget bound it further.
+STALE_CONFIG_BATCH = 5
+
+
+@shared_task(name="maintenance.sweep_stale_configs", ignore_result=True)
+def sweep_stale_configs(limit: int = STALE_CONFIG_BATCH) -> dict[str, int]:
+    """Ask for a re-derivation of configs an older scanner wrote.
+
+    WHY A SCANNER FIX CANNOT REACH THE HOTELS IT WAS WRITTEN FOR
+    ============================================================
+    Every repair in this system is triggered by a fetch that noticed something:
+    offers collapsing onto one identity, a selector matching nothing, an
+    endpoint gone. That covers the faults which announce themselves, and misses
+    the entire class that does not.
+
+    A hotel page carries a "similar properties" carousel. It out-scores the
+    real room list on every measure the ranking has -- four repeated cards, one
+    price each, four distinct names against the room's one -- so a config built
+    from it monitors four COMPETITORS under this hotel's name. Downstream there
+    is nothing to see: the prices are real and on the page, corroboration
+    passes, no offers collapse, and every check reports success. The scan now
+    demotes such a candidate by where its cards LEAD, and that fix could not
+    reach a single affected hotel, because no fetch will ever ask for a repair.
+
+    ``DISCOVERY_VERSION`` already knows which configs predate a scanner change,
+    and ``may_attempt`` already lets one past a spent budget on those grounds.
+    Nothing consulted it unless something else asked first. This is the asking.
+
+    WHAT IT WILL NOT TOUCH
+    ======================
+    Only configs DISCOVERY wrote, identified by the ``discovery_note`` it
+    stamps on them. An engine profile -- Agoda's JSON paths, aiosell's field
+    map -- was written by a person against a documented payload, and re-running
+    a DOM scan over one would replace curated knowledge with a guess.
+
+    Only sources something is actually monitoring, and with the window that
+    monitor uses, so discovery reads the page the fetch reads rather than a
+    default one that may legitimately show different rooms.
+
+    And only a few at a time.
+    """
+    from app.db.models import Hotel, HotelSource, MonitorTarget, Source
+    from app.workers.tasks_repair import rediscover_source
+
+    settings = get_settings()
+    if not settings.auto_rediscovery_enabled:
+        return {"stale": 0, "requested": 0}
+
+    now = datetime.now(UTC)
+    today = local_today(settings.timezone)
+    requested = 0
+    stale = 0
+
+    with sync_session() as session:
+        rows = session.execute(
+            select(HotelSource, MonitorTarget)
+            .join(MonitorTarget, MonitorTarget.hotel_source_id == HotelSource.id)
+            .join(Source, Source.id == HotelSource.source_id)
+            .join(Hotel, Hotel.id == HotelSource.hotel_id)
+            .where(
+                # The same gates find_due_groups applies, because a source this
+                # sweep may not fetch is a source it has no business opening a
+                # browser at either -- the compliance sign-off included.
+                MonitorTarget.is_enabled.is_(True),
+                HotelSource.is_active.is_(True),
+                Hotel.is_active.is_(True),
+                Source.is_enabled.is_(True),
+                Source.tos_reviewed_at.is_not(None),
+                # Written by discovery, so re-deriving it is in kind. An engine
+                # profile carries no note and is left alone.
+                HotelSource.adapter_config["discovery_note"].is_not(None),
+            )
+            .order_by(HotelSource.id)
+        ).all()
+
+        seen: set[int] = set()
+        for hotel_source, target in rows:
+            if hotel_source.id in seen:
+                continue
+
+            # The decision itself is pure and lives beside the rules it
+            # belongs to -- what makes a config worth offering to the current
+            # scanner, and why this caller waits where a fetch does not.
+            if not needs_rescan(
+                hotel_source.adapter_config,
+                now=now,
+                cooldown_minutes=settings.auto_rediscovery_cooldown_minutes,
+            ):
+                continue
+
+            stale += 1
+            if requested >= limit:
+                continue
+
+            # The window this target is actually monitored on. A repair given
+            # no window renders a URL with no dates in it, and a booking page
+            # without dates shows either nothing or a different room list --
+            # either way, not the page whose config is being repaired.
+            stay = resolve_stay_window(
+                strategy=target.date_strategy,
+                today=today,
+                fixed_check_in=target.fixed_check_in,
+                fixed_check_out=target.fixed_check_out,
+                lead_time_days=target.lead_time_days,
+                length_of_stay_nights=target.length_of_stay_nights,
+            )
+            if stay is None:
+                # A fixed window that has passed. dispatch_due_checks disables
+                # these; nothing to repair against in the meantime.
+                continue
+
+            seen.add(hotel_source.id)
+            requested += 1
+            rediscover_source.apply_async(
+                args=[hotel_source.id],
+                kwargs={
+                    "check_in": stay.check_in.isoformat(),
+                    "check_out": stay.check_out.isoformat(),
+                    "adults": target.adults,
+                    "children": target.children,
+                    "reason": f"scanner_generation_{DISCOVERY_VERSION}",
+                },
+                queue="browser",
+            )
+
+    if stale:
+        log.info(
+            "stale_configs_swept",
+            stale=stale,
+            requested=requested,
+            generation=DISCOVERY_VERSION,
+        )
+    return {"stale": stale, "requested": requested}

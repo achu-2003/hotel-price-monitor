@@ -271,6 +271,18 @@ class DiscoveryResult:
     #: distinction: "come back when this hotel has a room to sell" is not a
     #: failed attempt, and must not be charged as one.
     unlearnable: str | None = None
+    #: Names read from a candidate the scan demoted because every one of its
+    #: cards leads to a DIFFERENT property -- a "similar hotels" carousel, not
+    #: a room list. Usually empty.
+    #:
+    #: Carried because a repair needs it. A config built from that carousel
+    #: monitors four competitors under this hotel's name, and it does not look
+    #: broken from anywhere downstream: the prices are real, corroboration
+    #: passes, and every check reports success. Replacing the config leaves the
+    #: four invented rooms behind, still holding a price series, and the next
+    #: fetch reports each of them sold out. This is the evidence that says
+    #: which rooms those are -- see ``names_to_retire``.
+    cross_sold_names: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -633,6 +645,44 @@ def why_the_page_cannot_be_learned(
     if looks_sold_out(text):
         return "the page says it has no availability"
     return None
+
+
+def cross_sold_names(
+    dom_cards: list[dict], winner_names: list[str], limit: int = 16
+) -> list[str]:
+    """Names belonging to another property, read off candidates the scan demoted.
+
+    A hotel page carries a "similar properties" carousel, and it out-scores the
+    real room list on every measure the ranking has: repeated cards, one price
+    each, four distinct names against the room's one. The scan separates them
+    by where a click GOES -- every card leading off the page, each somewhere
+    different -- and demotes the carousel to last.
+
+    That demotion is invisible from outside the scan; the winner simply wins.
+    But a config ALREADY built from such a carousel has seeded this hotel's
+    room types with its neighbours' names, and replacing the config does not
+    remove them: the repaired fetch reads a room nothing matches, and the four
+    invented rooms, now absent, are each reported sold out.
+
+    Nothing downstream can supply this evidence. A carousel price is a real
+    price on a real page -- corroboration passes, no offers collapse, every
+    check succeeds -- so the scan is the only place the fault is ever visible.
+
+    A NOMINATION, NOT A VERDICT. Names the winning candidate also reads are
+    excluded here, and ``names_to_retire`` applies the same test again against
+    the config actually stored. A room this hotel really has is safe however
+    many carousels happen to mention it.
+    """
+    kept = {str(n).strip() for n in winner_names if str(n).strip()}
+    found: list[str] = []
+    for card in dom_cards:
+        if not card.get("linksAway"):
+            continue
+        for value in card.get("names") or []:
+            name = str(value).strip()
+            if name and name not in kept and name not in found:
+                found.append(name)
+    return found[:limit]
 
 
 def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
@@ -1373,6 +1423,10 @@ def inspect_url(
             if considered.is_verified:
                 dom_candidate = considered
                 break
+
+        result.cross_sold_names = cross_sold_names(
+            dom_cards, dom_candidate.sample_names if dom_candidate else []
+        )
 
         if dom_candidate is not None:
             # A verified DOM finding beats an unverified JSON one: the whole

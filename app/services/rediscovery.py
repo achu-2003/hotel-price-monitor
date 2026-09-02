@@ -381,7 +381,9 @@ def merge_config(
 
 
 def names_to_retire(
-    collapsed_names: list[str] | None, discovered_names: list[str] | None
+    collapsed_names: list[str] | None,
+    discovered_names: list[str] | None,
+    cross_sold_names: list[str] | None = None,
 ) -> set[str]:
     """Which room types the broken config invented, and the repair must remove.
 
@@ -408,15 +410,37 @@ def names_to_retire(
     to be a real room on the repaired page, it is kept, and a hotel's genuine
     rooms can never be retired by this no matter what the broken config did.
 
+    TWO WAYS A ROOM GETS INVENTED, AND THE SAME PROOF FOR BOTH
+    ==========================================================
+    ``collapsed_names`` is the first: the ingest layer watched these labels
+    share one identity, so a selector was reading something several cards
+    shared.
+
+    ``cross_sold_names`` is the second, and it never collapses anything. A
+    hotel page carries a "similar properties" carousel, and to every measure
+    the ranking has it is the better room list -- repeated cards, one price
+    each, four distinct names against the room's one. A config built from it
+    monitors four COMPETITORS under this hotel's name and looks perfect from
+    everywhere downstream: those prices really are on the page, corroboration
+    passes, and no alert is ever raised. Nothing in a fetch can notice it,
+    which is exactly why the evidence has to come from the scan -- the names
+    belong to a candidate demoted because each of its cards leads to a
+    different property page.
+
+    Both are only ever a nomination. The second condition is what makes this
+    safe, and it is unchanged: a name the repaired config READS BACK is a real
+    room and is kept, whatever the broken config did with it.
+
     Matching is on the raw strings as the ingest layer reported them; the caller
     normalises, because normalisation lives in ``room_matching`` and this module
     stays free of that dependency.
     """
-    collapsed = {n.strip() for n in (collapsed_names or []) if n and n.strip()}
-    if not collapsed:
+    suspect = {n.strip() for n in (collapsed_names or []) if n and n.strip()}
+    suspect |= {n.strip() for n in (cross_sold_names or []) if n and n.strip()}
+    if not suspect:
         return set()
     kept = {n.strip() for n in (discovered_names or []) if n and n.strip()}
-    return collapsed - kept
+    return suspect - kept
 
 
 def is_a_real_change(
@@ -475,3 +499,62 @@ def identity_selectors_changed(
         return {key: merged.get(key) for key in IDENTITY_SELECTORS}
 
     return selectors(current) != selectors(discovered)
+
+
+def needs_rescan(
+    config: dict[str, Any] | None,
+    *,
+    now: datetime,
+    cooldown_minutes: int,
+) -> bool:
+    """Is this config worth offering to the current scanner, unprompted?
+
+    THE QUESTION A FETCH NEVER ASKS
+    ===============================
+    Every other repair in this system is triggered by a fetch that noticed
+    something. That covers the faults which announce themselves and misses the
+    ones that do not — a config reading a "similar properties" carousel
+    monitors the hotels next door at prices that are genuinely on the page, so
+    corroboration passes, no offers collapse, and every check reports success.
+    Nothing will ever ask. :func:`may_attempt` would allow the repair; it is
+    simply never consulted.
+
+    So a sweep asks on its own, and this is what it asks. Two conditions:
+
+    * the config was written by DISCOVERY. ``discovery_note`` is the marker.
+      An engine profile — Agoda's JSON paths, aiosell's field map — was written
+      by a person against a documented payload, and running a DOM scan over one
+      would replace knowledge with a guess.
+
+    * a generation older than the scanner now running wrote it. That is the
+      whole claim being made: not "this is broken", but "the code that decided
+      this no longer exists, and the current code has never been asked".
+
+    WHY THE COOLDOWN IS APPLIED HERE AND NOT IN ``may_attempt``
+    ==========================================================
+    ``may_attempt`` waives both the budget and the cooldown for a
+    behind-generation config, on purpose: a fetch asking for a repair is
+    holding a live alert, and making it wait six hours for a scanner that has
+    already been fixed is exactly the lockout the version stamp exists to end.
+
+    A sweep is holding nothing. It found a config that MIGHT be improvable and
+    has all day to find out — so it waits, and that wait is what stops a hotel
+    with nothing on its page from being re-read every hour forever. Those
+    attempts are refunded and the generation stamp withheld, correctly, because
+    a page with no rooms on it never asked this generation anything; without a
+    cooldown of its own the sweep would offer the same empty page back
+    endlessly.
+    """
+    config = config or {}
+    if not config.get("discovery_note"):
+        return False
+
+    state = RepairState.from_config(config)
+    if not state.scanner_moved_on:
+        return False
+
+    if state.last_attempt_at is not None and cooldown_minutes > 0:
+        if now < state.last_attempt_at + timedelta(minutes=cooldown_minutes):
+            return False
+
+    return True
