@@ -95,12 +95,30 @@ class NormalizedOffer:
             return self.price_exclusive if self.price_exclusive is not None else self.price_inclusive
         return self.price_inclusive if self.price_inclusive is not None else self.price_exclusive
 
+    #: The width of ``price_series.meal_plan``. A plan longer than this cannot
+    #: be stored, and the failure is not a graceful one: the INSERT raises and
+    #: takes down the whole fetch, every room in it included.
+    MEAL_PLAN_MAX = 60
+
     def __post_init__(self) -> None:
         if self.is_available and self.price_inclusive is None and self.price_exclusive is None:
             # Not fatal here: the pipeline records the observation and refuses
             # to derive a change from it (see services/comparison.py). Raising
             # would throw away the other rooms found in the same page load.
             pass
+
+        # The meal plan is hashed into the offer key AND stored in a column
+        # sixty characters wide, so it is bounded HERE rather than at either of
+        # those. Every adapter passes through this constructor; only some go on
+        # to hash, and a value trimmed in one place and not the other would
+        # produce a key that no longer describes the row it belongs to.
+        #
+        # Whitespace is collapsed for the same reason it is in the room name:
+        # a label that gains a line break on the next deploy is the same plan,
+        # and it must not open a second price series for the same offer.
+        if self.meal_plan is not None:
+            plan = " ".join(str(self.meal_plan).split())[: self.MEAL_PLAN_MAX]
+            object.__setattr__(self, "meal_plan", plan or None)
 
 
 @dataclass(frozen=True, slots=True)

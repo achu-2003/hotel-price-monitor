@@ -17,6 +17,7 @@ from app.services.rediscovery import (
     STATE_KEY,
     VERSION_KEY,
     RepairState,
+    identity_selectors_changed,
     is_a_real_change,
     may_attempt,
     merge_config,
@@ -272,3 +273,141 @@ class TestHandingTheBudgetBack:
         assert released["selectors"] == DOM_CONFIG["selectors"]
         assert released["room_card"] == DOM_CONFIG["room_card"]
         assert released["discovery_note"] == DOM_CONFIG["discovery_note"]
+
+
+class TestARepairThatChangesWhatAnOfferIS:
+    """Some selectors decide how a page is READ. Two decide what it IS.
+
+    ``meal_plan`` and ``refundable`` are hashed into the offer key, so adding
+    either one re-keys every offer on the page. Nothing downstream reads that
+    as a config change: it reads as every room disappearing at once, and one
+    check later each is recorded as BECAME_UNAVAILABLE and sent to whoever is
+    on the recipient list. A repair that fixed a silently wrong price would
+    have announced that the hotel had sold out.
+
+    So the repair has to be able to ASK, which is what this is for. What it
+    does with the answer -- retire the series the new config can no longer
+    address, before they can be reported as a sell-out -- lives in
+    ``tasks_repair._retire_superseded_series``.
+    """
+
+    WITH_PLAN = {
+        **REPAIRED,
+        "selectors": {**REPAIRED["selectors"], "meal_plan": "div.board"},
+    }
+
+    def test_adding_a_meal_plan_selector_is_an_identity_change(self):
+        assert identity_selectors_changed(REPAIRED, self.WITH_PLAN) is True
+
+    def test_removing_one_is_too(self):
+        """The same event in reverse, and just as loud."""
+        assert identity_selectors_changed(self.WITH_PLAN, REPAIRED) is True
+
+    def test_renaming_the_room_selector_is_not(self):
+        """A renamed room still resolves to its room type through the matcher
+        and its aliases, so the key survives and the history with it."""
+        assert identity_selectors_changed(DOM_CONFIG, REPAIRED) is False
+
+    def test_an_unchanged_plan_is_not(self):
+        moved = {
+            **self.WITH_PLAN,
+            "selectors": {**self.WITH_PLAN["selectors"], "price": "span.new"},
+        }
+        assert identity_selectors_changed(self.WITH_PLAN, moved) is False
+
+    def test_a_json_config_is_read_from_its_own_key(self):
+        """DOM configs carry selectors under "selectors" and JSON ones under
+        "fields". A repair may move a source from one route to the other."""
+        json_config = {"rooms_path": "rooms", "fields": {"room_name": "name"}}
+        with_plan = {
+            "rooms_path": "rooms",
+            "fields": {"room_name": "name", "meal_plan": "board"},
+        }
+        assert identity_selectors_changed(json_config, with_plan) is True
+        assert identity_selectors_changed(json_config, json_config) is False
+
+    def test_a_source_with_no_config_at_all_does_not_crash_it(self):
+        assert identity_selectors_changed(None, REPAIRED) is False
+        assert identity_selectors_changed(None, self.WITH_PLAN) is True
+
+
+class TestTheScannerGenerationMovedOn:
+    """The bump that lets a fixed scanner reach the configs it was written for.
+
+    Three scanner changes shipped against one alert -- an unrepresentative
+    first node no longer kills a group, a candidate whose cards link to other
+    properties sorts last, and the scan now derives a rate plan. Every source
+    stamped with the previous generation spent its attempts proving the OLD
+    scanner could not read it, and without a bump each would stay locked out of
+    the fix. That has happened before; it is why the stamp exists.
+    """
+
+    def test_a_config_from_the_previous_generation_is_tried_again(self):
+        spent = RepairState.from_config({
+            VERSION_KEY: DISCOVERY_VERSION - 1,
+            STATE_KEY: {"attempts": 3, "last_attempt_at": NOW.isoformat()},
+        })
+        verdict = may_attempt(
+            spent, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3,
+        )
+        assert verdict.allowed is True, verdict.reason
+
+    def test_a_config_from_this_generation_is_not(self):
+        """The budget still means something, or the bump is a way around it."""
+        spent = RepairState.from_config({
+            VERSION_KEY: DISCOVERY_VERSION,
+            STATE_KEY: {"attempts": 3, "last_attempt_at": NOW.isoformat()},
+        })
+        verdict = may_attempt(
+            spent, now=NOW, enabled=True, cooldown_minutes=360, max_attempts=3,
+        )
+        assert verdict.allowed is False, verdict.reason
+
+
+class TestAHandSetIdentitySelectorSurvivesARepair:
+    """Wholesale replacement is right for everything except these two.
+
+    ``merge_config`` replaces discovery's keys rather than merging them, so a
+    site that moved from CSS to a JSON endpoint does not keep a dead
+    ``selectors`` block beside its new ``fields``. But ``meal_plan`` and
+    ``refundable`` are hashed into the offer key, and discovery derives a
+    ``meal_plan`` only where the cards are COLLIDING -- so on a page that has
+    stopped colliding because somebody put the selector there, the replacement
+    would take the working one with it and re-break the hotel.
+    """
+
+    WITH_PLAN = {
+        **DOM_CONFIG,
+        "selectors": {**DOM_CONFIG["selectors"], "meal_plan": "div.board"},
+    }
+
+    def test_it_is_carried_through(self):
+        merged = merge_config(self.WITH_PLAN, REPAIRED)
+        assert merged["selectors"]["meal_plan"] == "div.board"
+
+    def test_and_the_offers_keep_their_keys(self):
+        """Which is the whole point: no re-key, so no series to retire."""
+        merged = merge_config(self.WITH_PLAN, REPAIRED)
+        assert identity_selectors_changed(self.WITH_PLAN, merged) is False
+
+    def test_a_derived_one_wins_over_the_stored_one(self):
+        """Discovery read the page; the stored selector is a guess about a
+        page that has since changed."""
+        derived = {
+            **REPAIRED,
+            "selectors": {**REPAIRED["selectors"], "meal_plan": "h4.plan"},
+        }
+        merged = merge_config(self.WITH_PLAN, derived)
+        assert merged["selectors"]["meal_plan"] == "h4.plan"
+
+    def test_everything_else_is_still_replaced_wholesale(self):
+        merged = merge_config(self.WITH_PLAN, REPAIRED)
+        assert merged["selectors"]["room_name"] == REPAIRED["selectors"]["room_name"]
+        assert merged["selectors"]["price"] == REPAIRED["selectors"]["price"]
+
+    def test_a_css_selector_does_not_follow_a_source_onto_a_json_route(self):
+        """It would match nothing there, and mean nothing."""
+        to_json = {"rooms_path": "rooms", "fields": {"room_name": "name"}}
+        merged = merge_config(self.WITH_PLAN, to_json)
+        assert "selectors" not in merged
+        assert "meal_plan" not in merged["fields"]

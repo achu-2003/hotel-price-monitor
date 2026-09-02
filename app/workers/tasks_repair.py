@@ -36,6 +36,7 @@ from app.services.rediscovery import (
     REPAIRABLE,
     VERSION_KEY,
     RepairState,
+    identity_selectors_changed,
     is_a_real_change,
     may_attempt,
     merge_config,
@@ -269,6 +270,19 @@ def rediscover_source(
             logger=logger,
         )
 
+        superseded = 0
+        # Against what is being STORED, not against what was discovered: a
+        # meal_plan a person set and this scan did not re-derive is carried
+        # through by merge_config, and the offers keep the keys they had.
+        if identity_selectors_changed(current, repaired):
+            superseded = _retire_superseded_series(
+                session,
+                hotel_id=hotel_id,
+                source_id=source_row.source_id,
+                today=local_today(settings.timezone),
+                logger=logger,
+            )
+
         session.add(
             AuditLog(
                 user_id=None,          # nobody: this was the system repairing itself
@@ -279,6 +293,7 @@ def rediscover_source(
                 after={
                     **{k: v for k, v in repaired.items() if k != "auto_repair"},
                     "rooms_retired": retired,
+                    "series_superseded": superseded,
                     "rooms_discovered": list(best.sample_names[:12]),
                 },
                 # No Python-side default on this column, and the audit write
@@ -296,12 +311,14 @@ def rediscover_source(
         names=best.sample_names[:6],
         errors_resolved=resolved,
         rooms_retired=retired,
+        series_superseded=superseded,
     )
     return {
         "status": "repaired",
         "rooms": best.room_count,
         "errors_resolved": resolved,
         "rooms_retired": retired,
+        "series_superseded": superseded,
         "config": discovered,
     }
 
@@ -356,6 +373,67 @@ def _retire_invented_rooms(
     if removed:
         logger.info("invented_rooms_retired", rooms=removed[:8])
     return removed
+
+
+def _retire_superseded_series(
+    session,
+    *,
+    hotel_id: int,
+    source_id: int,
+    today: date,
+    logger,
+) -> int:
+    """Drop the series the repaired config can no longer address.
+
+    Called only when the repair changed a selector the OFFER KEY is built from
+    — see :func:`identity_selectors_changed`. Every offer on the page now
+    hashes to a key nothing has ever written, and the rows under the old keys
+    are unreachable: no fetch will ever update one again.
+
+    Left in place they do not sit quietly. ``_handle_disappearances`` selects
+    every available series for the stay being checked, finds each of these
+    absent from the fetch, and one check later records it as
+    BECAME_UNAVAILABLE — so a repair that fixed a silently wrong price would
+    announce that the hotel had sold out, room by room, to everybody on the
+    recipient list.
+
+    ONLY THE STAYS STILL AHEAD
+    ==========================
+    A series for a night already past is never selected again by that sweep,
+    which filters on the stay being checked. It is inert, it is real history,
+    and it is left exactly where it is. What has to go is the small set the
+    monitor is still working on, and those are rebuilt under their new keys by
+    the next fetch — within one interval, with the rate plan that was missing.
+
+    DELETED rather than deactivated, for the reason ``_retire_invented_rooms``
+    gives: a deactivated series keeps its last price on the dashboard, so the
+    hotel would show every room twice — once live and correct, once frozen at
+    whatever it cost the day the config changed.
+
+    Room types are untouched. Only the price series is keyed on the plan; the
+    rooms themselves are matched by name and are as valid after the repair as
+    before it.
+    """
+    from app.db.models import PriceSeries
+
+    doomed = session.scalars(
+        select(PriceSeries).where(
+            PriceSeries.hotel_id == hotel_id,
+            PriceSeries.source_id == source_id,
+            PriceSeries.check_in >= today,
+        )
+    ).all()
+
+    for series in doomed:
+        session.delete(series)
+
+    if doomed:
+        logger.info(
+            "superseded_series_retired",
+            count=len(doomed),
+            why="the repair changed a selector the offer key is built from",
+        )
+    return len(doomed)
 
 
 def _finish(

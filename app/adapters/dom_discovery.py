@@ -716,6 +716,144 @@ _FIND_CARDS_JS = r"""
     return fallback;
   };
 
+  // Read the way the ADAPTER will read it: _text_in() takes the inner text of
+  // the matched element and collapses its whitespace. Sampling ownText here
+  // would qualify a selector on wording the fetch never sees.
+  //
+  // Capped at 60 characters because that is the width of the column this
+  // lands in. A label longer than that is not a rate plan anyway -- it is the
+  // card's description, and a description is not something two offers can be
+  // told apart by.
+  const readPlan = (card, selector) => {
+    let hit = null;
+    try { hit = card.querySelector(selector); } catch (e) { hit = null; }
+    if (!hit) return null;
+    const t = clean(blockText(hit)).replace(/\s+/g, " ").trim();
+    return (t && t.length <= 60) ? t : null;
+  };
+
+  // Words a rate plan is written in, and the containers that hold one. Both
+  // only ever RANK a candidate -- a site labelling its plans "EP"/"CP"/"MAP"
+  // says none of these words, and what actually qualifies a candidate is
+  // behavioural: does it separate the cards that are colliding?
+  const PLAN_WORDS =
+    /\b(breakfast|dinner|lunch|meal|meals|board|inclusive|inclusions?|plans?|refundable|cancellation|cancel|free|only|ep|cp|map|ap|bb|hb|fb)\b/i;
+  const PLAN_CLASS =
+    /\b(board|meal|meals|plan|plans|inclusion|inclusions|rate|rates|tariff|policy|cancellation|refund)\b/;
+
+  // WHAT TELLS TWO CARDS OF THE SAME ROOM APART.
+  //
+  // Downstream a room's identity is (name, meal plan, refundability). With
+  // only a name selector stored the last two are empty on every offer, so one
+  // suite sold room-only and again with breakfast arrives as ONE identity: the
+  // second card is dropped, and the fetch says so every half hour --
+  //
+  //   1 of 12 offers shared an identity with another offer in the same fetch
+  //   AT A DIFFERENT PRICE, so the cheaper or dearer of each pair was dropped
+  //   and this hotel is being monitored as 11 room(s).
+  //
+  // -- ending with advice to add a meal_plan selector. Nothing could supply
+  // one. The adapter reads `selectors.meal_plan` when it is there and
+  // discovery never produced it, so the advice was addressed to a person, the
+  // repair re-derived a byte-identical config, "a repair must actually differ"
+  // refused to write it, and the alert returned on the next check forever.
+  //
+  // Nor was the surviving price the right one to keep: the winner is whichever
+  // card came first in the DOM, which is not the figure the listing leads with
+  // and is not stable either -- a site that reorders its two rate rows walks
+  // the stored series between them and reports a change nobody made.
+  //
+  // SCOPED TO PAGES THAT ARE ACTUALLY COLLIDING.
+  //
+  // A plan selector rewrites the offer key of EVERY room on the page, so it is
+  // not something to hand out on suspicion. It is derived only where the cards
+  // already prove it is needed -- two of them, one name, two prices -- and a
+  // room list that names each room once is left exactly as it was.
+  const resolvePlanSelector = (cards, names, prices, nameSel, priceSel) => {
+    if (cards.length < 2) return null;
+
+    const byName = new Map();
+    for (let i = 0; i < names.length; i++) {
+      if (!byName.has(names[i])) byName.set(names[i], []);
+      byName.get(names[i]).push(i);
+    }
+    const conflicts = [];
+    for (const group of byName.values()) {
+      if (group.length > 1 && new Set(group.map(i => prices[i])).size > 1) {
+        conflicts.push(group);
+      }
+    }
+    if (!conflicts.length) return null;
+
+    // Every short label inside a card, as a selector that could be re-run.
+    const seen = new Set(), options = [];
+    for (const card of cards) {
+      for (const el of card.querySelectorAll("*")) {
+        if (el.children.length > 2) continue;
+        const t = ownText(el);
+        if (!t || t.length < 2 || t.length > 60) continue;
+        if (!/[A-Za-z]{2}/.test(t)) continue;
+        if (parsePriceStrict(t, el) !== null) continue;
+        const sel = selectorFor(el, card);
+        // A text selector is built from ONE card's wording, so it cannot be
+        // the thing that separates the cards: it reads that label in the card
+        // it came from and nothing at all in the others.
+        if (!usable(sel) || sel.startsWith("text=")) continue;
+        if (sel === nameSel || sel === priceSel || seen.has(sel)) continue;
+        seen.add(sel);
+        options.push({ selector: sel, where: context(el) });
+      }
+    }
+
+    let best = null;
+    for (const opt of options) {
+      const values = cards.map(c => readPlan(c, opt.selector));
+      const found = values.filter(v => v);
+      if (found.length * 2 < cards.length) continue;
+
+      // A LABEL THAT MOVES IS WORSE THAN NO LABEL AT ALL.
+      //
+      // The plan goes into the offer key, so a value that changes between
+      // checks -- "2 rooms left", a date, a countdown, a percentage off --
+      // files every fetch under a brand new series, and the hotel's price
+      // history restarts twice an hour while every room reports itself sold
+      // out. Digits are what all of those have in common, and a board basis
+      // never has one.
+      if (found.some(v => /\d/.test(v))) continue;
+
+      // It has to separate every collision, and separate it COMPLETELY: two
+      // cards of one room at two prices must come away with two different
+      // plans, or the pair still collapses and nothing has been fixed.
+      let separates = true;
+      for (const group of conflicts) {
+        for (const i of group) {
+          for (const j of group) {
+            if (i < j && prices[i] !== prices[j]
+                && (values[i] || "") === (values[j] || "")) separates = false;
+          }
+        }
+      }
+      if (!separates) continue;
+
+      // ...and it has to read like a rate plan rather than merely happen to
+      // differ. Either the page reuses the wording across other cards -- a
+      // board basis is a small vocabulary spread over a room list -- or every
+      // value it read says in words what it is. Without one of the two, a
+      // per-card scrap of prose separates the collision by accident and is
+      // written into the identity of every offer on the page.
+      const distinct = new Set(found).size;
+      const reused = distinct < found.length;
+      const speaks = found.every(v => PLAN_WORDS.test(v));
+      if (!reused && !speaks) continue;
+
+      const score = (speaks ? 4 : 0) + (reused ? 2 : 0)
+        + (PLAN_CLASS.test(opt.where) ? 3 : 0)
+        + found.length - distinct * 0.5;
+      if (!best || score > best.score) best = { selector: opt.selector, score };
+    }
+    return best ? best.selector : null;
+  };
+
   // 1. every element whose OWN text is a price
   const priceEls = [];
   for (const el of document.querySelectorAll("body *")) {
@@ -867,14 +1005,19 @@ _FIND_CARDS_JS = r"""
     // best guess, so what is reported here is what the adapter will actually
     // read back later. Prices stay per-card: they are legitimately allowed to
     // repeat, so there is nothing for a cross-card check to add.
-    const names = [], prices = [];
+    const names = [], prices = [], read = [];
     for (const card of sampled) {
       const found = pickFrom(card);
       const n = readName(card, nameSel, found);
       const p = readPrice(card, priceSel, found);
-      if (n && p !== null) { names.push(n); prices.push(p); }
+      if (n && p !== null) { names.push(n); prices.push(p); read.push(card); }
     }
     if (!names.length) continue;
+
+    // What tells two cards of the SAME room apart. Empty when nothing does,
+    // and empty is the common case -- most room lists name each room once.
+    const planSel = resolvePlanSelector(read, names, prices, nameSel, priceSel);
+    const plans = planSel ? read.map(c => readPlan(c, planSel) || "") : [];
 
     // A ROOM IS NOT A LINK TO ANOTHER PAGE.
     //
@@ -928,10 +1071,22 @@ _FIND_CARDS_JS = r"""
       new Set(destinations).size === destinations.length;
     const linksAway = (everyCardLeaves && eachSomewhereElse) ? 1 : 0;
 
+    // The identities these cards would actually be filed under: (name, plan),
+    // which is what the offer key is built from. Without a plan selector it
+    // collapses to the distinct names, which is what it always was.
+    const identities = new Set(
+      names.map((n, i) => n + "" + (plans[i] || ""))
+    ).size;
+
     cards.push({
       card: sig,
       name_selector: nameSel,
       price_selector: priceSel,
+      // Empty unless the cards were colliding and something on them
+      // separates the collision. See resolvePlanSelector.
+      plan_selector: planSel || "",
+      plans: plans.slice(0, 8),
+      identities: identities,
       linksAway: linksAway,
       count: withPrice.length,
       matched: names.length,
@@ -991,8 +1146,16 @@ _FIND_CARDS_JS = r"""
   // So the allowance survives where it was earned -- several distinct names
   // with repeats among them, which is a real listing -- and a selector that
   // produced exactly one name is worth the one room it can name.
+  //
+  // All of that is an inference about what downstream CAN tell apart, and it
+  // is only needed while the answer is unknown. Where a plan selector was
+  // found the answer is known exactly: the offers will be filed under (name,
+  // plan), so the count of those is the count of rooms, with nothing to guess
+  // and no allowance to grant.
   for (const c of cards) {
-    c.rooms = (c.name_trusted && c.distinct > 1) ? c.matched : c.distinct;
+    c.rooms = c.plan_selector
+      ? c.identities
+      : ((c.name_trusted && c.distinct > 1) ? c.matched : c.distinct);
   }
 
   // Most rooms it can tell apart first; then most cards, because among

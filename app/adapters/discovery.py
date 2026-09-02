@@ -120,6 +120,11 @@ class Candidate:
     #: "json" or "dom". Decides which adapter_config shape is produced.
     kind: str = "json"
     sample_names: list[str] = field(default_factory=list)
+    #: DOM only, and usually empty. The rate plan read from each sampled card,
+    #: aligned with ``sample_names``, when the scan found a selector that tells
+    #: two cards of one room apart. Empty everywhere else, which is every page
+    #: whose rooms are each named once.
+    sample_plans: list[str] = field(default_factory=list)
     sample_prices: list[Decimal] = field(default_factory=list)
     room_count: int = 0
     #: How many of the prices were also found in the page's visible text.
@@ -166,6 +171,13 @@ class Candidate:
         and refused from an untrusted one. One sampled room is exempt either
         way -- there is nothing for it to differ from.
 
+        All of that is about NAMES because, until the scan learned to find a
+        rate plan, a name was the whole of an offer's identity. Where a plan
+        selector was found it is not: the offers will be filed under (name,
+        plan), and that is what has to tell the rooms apart. A shared name the
+        plan separates is then no longer a collapse, and counting names would
+        refuse a candidate that is about to work perfectly.
+
         PARTIAL repetition counts too, and asking only whether ALL the names
         were identical missed the case that matters most. A booking engine
         labelling each rate row with its category gave eight cards reading
@@ -177,13 +189,28 @@ class Candidate:
         """
         if not self.sample_prices or self.corroborated * 2 < len(self.sample_prices):
             return False
+        identities = self.sample_identities
         if (
             not self.name_trusted
-            and len(self.sample_names) > 1
-            and len(set(self.sample_names)) * 2 <= len(self.sample_names)
+            and len(identities) > 1
+            and len(set(identities)) * 2 <= len(identities)
         ):
             return False
         return True
+
+    @property
+    def sample_identities(self) -> list[str]:
+        """What the sampled offers will actually be filed under.
+
+        The name alone where no plan selector was found, which is every page
+        that needed none. A card whose plan came back empty keeps its name and
+        an empty plan, exactly as the fetch will key it.
+        """
+        plans = self.sample_plans or []
+        return [
+            f"{name}\x1f{plans[i] if i < len(plans) else ''}"
+            for i, name in enumerate(self.sample_names)
+        ]
 
     @property
     def is_strongly_verified(self) -> bool:
@@ -623,7 +650,29 @@ def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
         # right -- see the identical guard in dom_discovery.py.
         return None
 
-    names = [str(n).strip() for n in (card.get("names") or []) if str(n).strip()]
+    # The rate plan, when the scan found one. Only a page whose cards were
+    # already colliding produces this -- see resolvePlanSelector -- so a
+    # healthy source's config is unchanged and its offer keys with it.
+    fields = {"room_name": name_selector, "price": price_selector}
+    plan_selector = str(card.get("plan_selector") or "")
+    if plan_selector and plan_selector not in (name_selector, price_selector):
+        fields["meal_plan"] = plan_selector
+    else:
+        plan_selector = ""
+
+    # Names and plans are paired BEFORE either is filtered. Dropping a blank
+    # name from one list and not the other would shift every plan after it by
+    # one, and a room would be verified against the plan belonging to the room
+    # below it.
+    raw_plans = [str(p).strip() for p in (card.get("plans") or [])]
+    names, plans = [], []
+    for index, value in enumerate(card.get("names") or []):
+        name = str(value).strip()
+        if not name:
+            continue
+        names.append(name)
+        plans.append(raw_plans[index] if index < len(raw_plans) else "")
+
     prices: list[Decimal] = []
     for value in card.get("prices") or []:
         parsed = _as_price(value)
@@ -635,9 +684,10 @@ def _candidate_from_dom(card: dict, source_url: str) -> Candidate | None:
     return Candidate(
         source_url=source_url,
         rooms_path=card["card"],
-        fields={"room_name": name_selector, "price": price_selector},
+        fields=fields,
         kind="dom",
         sample_names=names[:8],
+        sample_plans=plans[:8] if plan_selector else [],
         sample_prices=prices[:8],
         room_count=int(card.get("count") or len(names)),
         # Absent on an older scan result: default to trusting, so a missing

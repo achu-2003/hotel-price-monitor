@@ -61,6 +61,14 @@ DISCOVERY_OWNED_KEYS = frozenset({
     "discovery_version",
 })
 
+#: The parts of a config that go into the OFFER KEY rather than merely into how
+#: a page is read. ``room_name`` is deliberately absent: a renamed room still
+#: resolves to the same ``room_type`` through the matcher and its aliases, so
+#: the key survives. These two do not go through anything -- their text is
+#: hashed into the key verbatim.
+IDENTITY_SELECTORS = ("meal_plan", "refundable")
+
+
 #: Where the repair history is kept. Inside ``adapter_config`` rather than in
 #: new columns because ``discovery_note`` already establishes that this column
 #: carries the provenance of the configuration beside the configuration.
@@ -92,7 +100,15 @@ STATE_KEY = "auto_repair"
 #: the counter is not a resource being topped up. The refusal simply no longer
 #: applies, because the question "can discovery read this page?" has not
 #: actually been asked of the scanner now doing the asking.
-DISCOVERY_VERSION = 2
+#:
+#: Generation 3 covers three scanner changes that all bear on the same alert:
+#: a group is asked for a node that yields both a name and a price rather than
+#: told which one speaks for it; a candidate whose cards link away to other
+#: properties sorts last; and the scan now derives a ``meal_plan`` selector for
+#: a page whose cards collide. Every source stamped 2 was read by a scanner
+#: that could do none of that, so its stored verdict says nothing about this
+#: one -- which is the entire reason this constant exists.
+DISCOVERY_VERSION = 3
 
 #: Where that stamp lives. Discovery-owned, so a repair overwrites it with the
 #: current generation rather than carrying an old one forward.
@@ -330,7 +346,38 @@ def merge_config(
         for key, value in (current or {}).items()
         if key not in DISCOVERY_OWNED_KEYS
     }
-    return {**kept, **discovered, VERSION_KEY: DISCOVERY_VERSION}
+    merged = {**kept, **discovered, VERSION_KEY: DISCOVERY_VERSION}
+
+    # ── the two selectors wholesale replacement must not silently drop ──
+    #
+    # ``meal_plan`` and ``refundable`` are not instructions for reading a page.
+    # They are hashed into the offer key, so removing one re-keys every offer
+    # on the page: the stored series become unreachable, the fetch writes new
+    # ones beside them, and the old rows are reported sold out a check later.
+    #
+    # Discovery derives a ``meal_plan`` only where the cards are colliding, so
+    # on a page that has stopped colliding -- because a person put the selector
+    # there and it works -- it produces none, and the wholesale replacement
+    # would take the working one with it. The repair would then re-break the
+    # hotel it was called out to fix, and charge a history restart for it.
+    #
+    # Carried only between configs of the SAME route. A source moving from CSS
+    # selectors to a JSON contract must not take a CSS selector along in its
+    # ``fields``, where it would match nothing and mean nothing.
+    for container in ("selectors", "fields"):
+        inherited = (current or {}).get(container) or {}
+        derived = discovered.get(container)
+        if not isinstance(derived, dict) or not isinstance(inherited, dict):
+            continue
+        carried = {
+            key: inherited[key]
+            for key in IDENTITY_SELECTORS
+            if inherited.get(key) and not derived.get(key)
+        }
+        if carried:
+            merged[container] = {**derived, **carried}
+
+    return merged
 
 
 def names_to_retire(
@@ -394,3 +441,37 @@ def is_a_real_change(
         }
 
     return comparable(current) != comparable(discovered)
+
+
+def identity_selectors_changed(
+    current: dict[str, Any] | None, discovered: dict[str, Any]
+) -> bool:
+    """Will the repaired config file the same offers under different keys?
+
+    WHY THIS HAS TO BE ASKED
+    ========================
+    An offer key is a hash of the booking conditions, and the meal plan is one
+    of them. So the moment a repair adds a ``meal_plan`` selector — which is
+    exactly what a collapsing page needs — every offer on that page starts
+    hashing to a key that has never been seen before.
+
+    Nothing downstream reads that as "the config changed". It reads as every
+    room on the page vanishing at once: the new keys are written as new series,
+    and the old ones, still marked available and still selected by the
+    disappearance sweep, are absent from the fetch. One check later each is
+    confirmed gone, recorded as BECAME_UNAVAILABLE and sent to whoever is on
+    the recipient list. The repair that fixed a silent wrong price would have
+    announced a sell-out of the entire hotel.
+
+    Removing a selector does the same in reverse, so the test is inequality
+    rather than "was one added".
+    """
+    def selectors(config: dict[str, Any] | None) -> dict[str, Any]:
+        config = config or {}
+        # A DOM config carries them under "selectors" and a JSON one under
+        # "fields". Both are read, because a repair is allowed to move a
+        # source from one route to the other.
+        merged = {**(config.get("fields") or {}), **(config.get("selectors") or {})}
+        return {key: merged.get(key) for key in IDENTITY_SELECTORS}
+
+    return selectors(current) != selectors(discovered)
