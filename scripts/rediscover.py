@@ -34,6 +34,18 @@ USAGE
     python scripts/rediscover.py ananthyam
     python scripts/rediscover.py treebo --dry-run
     python scripts/rediscover.py --all --check-in 2026-09-10
+    python scripts/rediscover.py midvalley --retire-unseen
+
+--retire-unseen also DELETES the rooms the repaired config no longer reads.
+A config that invented rooms leaves them behind, and they do not sit quietly:
+the next fetch cannot find them, so each is recorded as having sold out and
+reported to whoever is on the recipient list. One property showed four
+competitor hotels on its dashboard as its own sold-out rooms.
+
+It is an assertion, not an instruction. The names are handed to the repair as
+candidates and ``names_to_retire`` keeps only those the repaired config does
+not read back from the page, so a room that is really there survives being
+named here.
 
 A hotel sold out for tonight gives discovery a page with no rates on it, and
 the repair rightly declines. ``--check-in`` points it at a night that has
@@ -51,7 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import select  # noqa: E402
 
 from app.adapters.engines import parameterise_url  # noqa: E402
-from app.db.models import Hotel, HotelSource  # noqa: E402
+from app.db.models import Hotel, HotelSource, RoomType  # noqa: E402
 from app.db.session import sync_session  # noqa: E402
 
 
@@ -66,6 +78,29 @@ def _sources(match: str | None) -> list[tuple[int, str, str | None]]:
         needle = match.lower()
         rows = [r for r in rows if needle in r[1].lower()]
     return [(r[0], r[1], r[2]) for r in rows]
+
+
+def _existing_room_names(hotel_source_id: int) -> list[str]:
+    """Every room this hotel currently has on record.
+
+    Handed to the repair as ``collapsed_names``, which is an assertion: "these
+    came from a config I believe was wrong, check them." It is not taken at
+    face value. ``names_to_retire`` keeps only the names the repaired config
+    does NOT read back from the page, so a room that is genuinely there
+    survives no matter what is passed here -- which is what makes this safe to
+    point at a hotel whose rooms are mostly fine.
+    """
+    with sync_session() as session:
+        hotel_id = session.execute(
+            select(HotelSource.hotel_id).where(HotelSource.id == hotel_source_id)
+        ).scalar_one_or_none()
+        if hotel_id is None:
+            return []
+        return list(
+            session.scalars(
+                select(RoomType.name).where(RoomType.hotel_id == hotel_id)
+            )
+        )
 
 
 def _retemplate(hotel_source_id: int, *, dry_run: bool) -> str | None:
@@ -93,6 +128,13 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="say what would change; write nothing")
     parser.add_argument("--check-in", help="YYYY-MM-DD; default tomorrow")
+    parser.add_argument(
+        "--retire-unseen", action="store_true",
+        help="DELETE rooms the repaired config no longer reads on the page. "
+             "For a source whose old config invented rooms -- competitor "
+             "hotels from a cross-sell carousel, or occupancy badges -- which "
+             "otherwise sit on the dashboard forever, reported sold out.",
+    )
     args = parser.parse_args()
 
     if not (args.hotel or args.all or args.list):
@@ -138,15 +180,26 @@ def main() -> int:
             print("  (dry run: discovery not run)")
             continue
 
+        existing = _existing_room_names(hs_id) if args.retire_unseen else None
+        if existing:
+            print(f"  retire-unseen: offering {len(existing)} existing room name(s) "
+                  f"for checking against what the page now reads")
+
         result = rediscover_source(
             hs_id,
             check_in=check_in.isoformat(),
             check_out=check_out.isoformat(),
             reason="manual: scripts/rediscover.py",
+            collapsed_names=existing,
         )
         status = result.get("status")
         print(f"  discovery: {status}"
               + (f" -- {result.get('why')}" if result.get("why") else ""))
+        retired = result.get("rooms_retired") or []
+        if retired:
+            print(f"    retired {len(retired)} room(s) the page does not have:")
+            for name in retired:
+                print(f"      - {name}")
         config = result.get("config") or {}
         if config:
             print(f"    room_card: {config.get('room_card')}")
