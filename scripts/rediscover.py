@@ -35,6 +35,13 @@ USAGE
     python scripts/rediscover.py treebo --dry-run
     python scripts/rediscover.py --all --check-in 2026-09-10
     python scripts/rediscover.py midvalley --retire-unseen
+    python scripts/rediscover.py midvalley --retire-unseen --force
+
+--force ignores the repair cooldown. A source repaired in the last six
+hours is refused otherwise, which is right for an automatic repair and
+wrong for a person who has just fixed the scanner and wants to apply it.
+It forces an ATTEMPT, never a result: the verification bar afterwards is
+unchanged, and only the repair bookkeeping is cleared -- never selectors.
 
 --retire-unseen also DELETES the rooms the repaired config no longer reads.
 A config that invented rooms leaves them behind, and they do not sit quietly:
@@ -103,6 +110,34 @@ def _existing_room_names(hotel_source_id: int) -> list[str]:
         )
 
 
+def _clear_cooldown(hotel_source_id: int) -> str | None:
+    """Hand this source a fresh repair budget.
+
+    The cooldown and the attempt budget exist to stop an automatic repair
+    driving a browser at somebody else's site every half hour forever. Neither
+    reason applies to a person running this once, against one hotel, having
+    just looked at the dashboard -- and waiting six hours to delete four
+    competitor hotels from a client's screen is not a policy anybody chose.
+
+    Only the repair BOOKKEEPING is cleared. The selectors are untouched, and
+    the verification bar the repair applies afterwards is exactly the same:
+    forcing an attempt does not force a result.
+    """
+    with sync_session() as session:
+        row = session.execute(
+            select(HotelSource).where(HotelSource.id == hotel_source_id)
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        config = dict(row.adapter_config or {})
+        state = config.pop("auto_repair", None)
+        if state is None:
+            return None
+        row.adapter_config = config
+        session.commit()
+        return str(state.get("last_attempt_at") or state)
+
+
 def _retemplate(hotel_source_id: int, *, dry_run: bool) -> str | None:
     """Rewrite a stored URL's dates as placeholders. Returns what changed."""
     with sync_session() as session:
@@ -128,6 +163,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="say what would change; write nothing")
     parser.add_argument("--check-in", help="YYYY-MM-DD; default tomorrow")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="ignore the repair cooldown and attempt budget. The verification "
+             "bar is unchanged: this forces an ATTEMPT, not a result.",
+    )
     parser.add_argument(
         "--retire-unseen", action="store_true",
         help="DELETE rooms the repaired config no longer reads on the page. "
@@ -179,6 +219,11 @@ def main() -> int:
         if args.dry_run:
             print("  (dry run: discovery not run)")
             continue
+
+        if args.force:
+            cleared = _clear_cooldown(hs_id)
+            if cleared:
+                print(f"  force: cleared the repair cooldown (last attempt {cleared})")
 
         existing = _existing_room_names(hs_id) if args.retire_unseen else None
         if existing:
