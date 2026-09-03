@@ -58,6 +58,45 @@ _ISO_DATE_IN_PATH_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _COMBINED_OCCUPANCY_RE = re.compile(r"^(\d+)-(\d+)$")
 
+#: Separators seen joining two dates inside ONE parameter. Cleartrip writes
+#: ?c=010926%7C020926 -- check-in and check-out in a single value.
+_COMBINED_DATE_SEPARATORS: tuple[str, ...] = ("|", "~", "_", ",")
+
+
+def _combined_date_pattern(value: str) -> str | None:
+    """A one-parameter date pair rewritten as placeholders, or None.
+
+    Both dates in one value is the case _PARAM_ALIASES cannot see: it matches
+    on the parameter NAME, and a parameter holding a whole stay is usually
+    called something opaque like "c". Left alone, such a URL is stored with the
+    night baked in, and every check afterwards re-reads the night the operator
+    happened to be looking at -- which is exactly the failure described on
+    ``is_complete``, except silent, because the URL does price a real night and
+    the fetch succeeds.
+
+    A real property was monitored this way for two days: the dashboard showed
+    9,995 for a room that was selling at 7,264, and the number never moved.
+
+    The reading is settled by the pair, as everywhere else here -- "010926" is
+    1 September to a day-first site and 9 January to a month-first one, and
+    only one of those readings puts the check-out a night after the check-in.
+    An unreadable or ambiguous pair returns None, and the value is left exactly
+    as pasted rather than rewritten into a different wrong night.
+    """
+    for separator in _COMBINED_DATE_SEPARATORS:
+        if value.count(separator) != 1:
+            continue
+        left, right = value.split(separator)
+        if not left or not right:
+            continue
+        fmt = _date_format_of(left, right)
+        if not fmt:
+            continue
+        check_in = "{check_in}" if fmt == "%Y-%m-%d" else "{check_in:" + fmt + "}"
+        check_out = "{check_out}" if fmt == "%Y-%m-%d" else "{check_out:" + fmt + "}"
+        return check_in + separator + check_out
+    return None
+
 
 #: Date spellings seen in booking URLs, with the strftime pattern that
 #: reproduces each. ISO first, because it is unambiguous.
@@ -68,6 +107,15 @@ _DATE_VALUE_FORMATS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("%m-%d-%Y", re.compile(r"^\d{1,2}-\d{1,2}-\d{4}$")),
     ("%d/%m/%Y", re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")),
     ("%m/%d/%Y", re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")),
+    # Written with no separators at all. Cleartrip spells 1 September 2026 as
+    # "010926". Every reading of six or eight digits is listed, because which
+    # one is meant is decided by the PAIR below and not by this table.
+    ("%Y%m%d", re.compile(r"^\d{8}$")),
+    ("%d%m%Y", re.compile(r"^\d{8}$")),
+    ("%m%d%Y", re.compile(r"^\d{8}$")),
+    ("%d%m%y", re.compile(r"^\d{6}$")),
+    ("%m%d%y", re.compile(r"^\d{6}$")),
+    ("%y%m%d", re.compile(r"^\d{6}$")),
 )
 
 
@@ -588,10 +636,15 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
             if normalised in _COMBINED_OCCUPANCY_PARAMS and value
             else None
         )
+        dates = _combined_date_pattern(value) if value and not placeholder else None
         if placeholder and value:
             substituted[key] = f"{value} -> {placeholder}"
             placeholder_values.add(placeholder)
             rebuilt.append((key, placeholder))
+        elif dates:
+            substituted[key] = f"{value} -> {dates}"
+            placeholder_values.add(dates)
+            rebuilt.append((key, dates))
         elif combined:
             substituted[key] = f"{value} -> {{adults}}-{{children}}"
             placeholder_values.add("{adults}-{children}")

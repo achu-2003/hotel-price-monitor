@@ -199,6 +199,64 @@ class TestCombinedOccupancyParameter:
         assert "utm_source=googlehotelads" in url
 
 
+class TestBothDatesInOneParameter:
+    """`?c=010926|020926` -- a whole stay in one opaque parameter.
+
+    _PARAM_ALIASES matches on the parameter NAME, and a parameter holding both
+    dates is usually called something that says nothing, like "c". So the URL
+    was stored with the night baked in and every check afterwards re-read that
+    same night: A R Thanga Kottai reported 9,995 for a room selling at 7,264,
+    and the number never moved because it was a real price for 1 September.
+    """
+
+    STORED = (
+        "https://www.cleartrip.com/hotels/details/-4534091"
+        "?c=010926%7C020926&city=null&r=2%2C0"
+    )
+
+    def test_both_dates_are_templated(self):
+        url, changed = parameterise_url(self.STORED)
+        assert "c={check_in:%d%m%y}|{check_out:%d%m%y}" in url
+        assert changed["c"].endswith("{check_in:%d%m%y}|{check_out:%d%m%y}")
+
+    def test_the_source_is_no_longer_a_standing_rate(self):
+        """is_complete asks whether a check-in placeholder came out of here."""
+        url, _ = parameterise_url(self.STORED)
+        assert "{check_in" in url
+
+    def test_the_pair_decides_the_dialect(self):
+        """010926 is 1 Sep day-first and 9 Jan month-first.
+
+        Only day-first puts the check-out a night after the check-in, so only
+        day-first describes a stay. Nothing else in the URL says which.
+        """
+        url, _ = parameterise_url("https://x.example/book?c=010926|020926")
+        assert "%d%m%y" in url
+
+    def test_an_unreadable_pair_is_left_exactly_as_pasted(self):
+        """Rewriting it would ask for a different wrong night, which is worse.
+
+        02-03-2026 to 03-03-2026 is one night read day-first and twenty-eight
+        read month-first. Both are stays, so neither reading can be preferred.
+        """
+        url, changed = parameterise_url("https://x.example/book?c=020326|030326")
+        assert "c=020326%7C030326" in url   # left alone, re-encoded normally
+        assert "c" not in changed
+
+    def test_a_value_that_is_not_a_date_pair_is_left_alone(self):
+        url, changed = parameterise_url("https://x.example/book?c=deluxe|twin")
+        assert "c=deluxe%7Ctwin" in url
+        assert "c" not in changed
+
+    def test_a_named_date_parameter_still_wins(self):
+        """A parameter this function can already read is not second-guessed."""
+        url, _ = parameterise_url(
+            "https://x.example/book?checkin=2026-09-01&checkout=2026-09-02"
+        )
+        assert "checkin={check_in}" in url
+        assert "checkout={check_out}" in url
+
+
 class TestDatesInThePath:
     """Not every site puts its dates in a query string.
 
