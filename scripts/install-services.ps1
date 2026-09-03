@@ -1,0 +1,181 @@
+#Requires -RunAsAdministrator
+<#
+    Install the stack as Windows services. Step 11 of
+    docs/DEPLOY-WINDOWS-NATIVE.md, as something you run instead of retype.
+
+    THIS IS THE STEP THAT TURNS A DEV STACK INTO A DEPLOYMENT. Everything
+    dev-start.ps1 launches is a child of the console session: log off and the
+    price checks stop, with no error anywhere.
+
+    Safe to run twice. A service that already exists is left alone rather than
+    reconfigured, so this can never half-rewrite a working deployment; remove
+    it with `nssm remove <name> confirm` first if you genuinely want it rebuilt.
+
+        .\scripts\install-services.ps1
+        .\scripts\install-services.ps1 -Nssm D:\tools\nssm.exe -WhatIf
+#>
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    # Where nssm.exe lives. The deploy doc puts it here.
+    [string] $Nssm = "C:\nssm\nssm.exe",
+
+    # Install the services but do not start them.
+    [switch] $NoStart
+)
+
+$ErrorActionPreference = "Stop"
+
+$proj = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$py   = Join-Path $proj ".venv312\Scripts"
+
+# Fail here, with the path in hand, rather than inside a service that starts
+# cleanly and then cannot find its interpreter.
+foreach ($required in @(
+    @{ Path = $Nssm;                                    What = "nssm.exe (https://nssm.cc/download)" }
+    @{ Path = (Join-Path $py "celery.exe");             What = "the 3.12 virtualenv" }
+    @{ Path = (Join-Path $py "uvicorn.exe");            What = "the 3.12 virtualenv" }
+    @{ Path = (Join-Path $proj ".local\pgsql\bin\pg_ctl.exe"); What = "the Postgres binaries" }
+    @{ Path = (Join-Path $proj ".local\redis\redis-server.exe"); What = "the Redis binaries" }
+    @{ Path = (Join-Path $proj ".local\redis.conf");     What = "the Redis config" }
+    @{ Path = (Join-Path $proj ".local\pgdata");         What = "the Postgres cluster" }
+    @{ Path = (Join-Path $proj ".env");                  What = "the environment file" }
+)) {
+    if (-not (Test-Path $required.Path)) {
+        throw "Missing $($required.What): $($required.Path)"
+    }
+}
+
+Write-Host "Project : $proj"
+Write-Host "NSSM    : $Nssm"
+Write-Host ""
+
+# Celery workers get a node name each. Without one they collide, and Celery's
+# control channel starts answering for the wrong process -- which reads as a
+# worker that looks alive in `celery inspect` and is consuming nothing.
+# %h is Celery's own placeholder for the hostname; NSSM passes the argument
+# string straight through with no shell, so it needs no escaping here.
+$workerArgs = "-A app.workers.celery_app worker --pool=solo --loglevel INFO"
+
+$services = @(
+    @{
+        Name = "HotelMonitor-Postgres"
+        Exe  = Join-Path $proj ".local\pgsql\bin\pg_ctl.exe"
+        Args = "-D `"$proj\.local\pgdata`" -l `"$proj\.local\pg.log`" start"
+        Type = "SERVICE_WIN32_OWN_PROCESS"
+    }
+    @{
+        Name = "HotelMonitor-Redis"
+        Exe  = Join-Path $proj ".local\redis\redis-server.exe"
+        Args = "`"$proj\.local\redis.conf`""
+    }
+    @{
+        Name      = "HotelMonitor-API"
+        Exe       = Join-Path $py "uvicorn.exe"
+        Args      = "app.main:app --host 127.0.0.1 --port 8000"
+        DependsOn = @("HotelMonitor-Postgres", "HotelMonitor-Redis")
+    }
+    # FOUR workers, not one. A 30-second browser fetch on a single solo worker
+    # blocks the notify queue behind it, so an alert waits on a page load.
+    @{
+        Name      = "HotelMonitor-Worker-Browser1"
+        Exe       = Join-Path $py "celery.exe"
+        Args      = "$workerArgs -Q browser -n browser1@%h"
+        DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
+    }
+    @{
+        Name      = "HotelMonitor-Worker-Browser2"
+        Exe       = Join-Path $py "celery.exe"
+        Args      = "$workerArgs -Q browser -n browser2@%h"
+        DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
+    }
+    @{
+        Name      = "HotelMonitor-Worker-Notify"
+        Exe       = Join-Path $py "celery.exe"
+        Args      = "$workerArgs -Q notify -n notify1@%h"
+        DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
+    }
+    @{
+        Name      = "HotelMonitor-Worker-Http"
+        Exe       = Join-Path $py "celery.exe"
+        Args      = "$workerArgs -Q http -n http1@%h"
+        DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
+    }
+    # EXACTLY ONE beat, always. Beat is the scheduler, not a worker: a second
+    # one does not share the load, it duplicates it -- every hotel checked
+    # twice, every alert sent twice.
+    @{
+        Name      = "HotelMonitor-Beat"
+        Exe       = Join-Path $py "celery.exe"
+        Args      = "-A app.workers.celery_app beat --loglevel INFO"
+        DependsOn = @("HotelMonitor-Redis")
+    }
+)
+
+function Invoke-Nssm {
+    param([string[]] $NssmArgs)
+    # No `2>&1` here on purpose. Windows PowerShell 5.1 wraps a native
+    # command's stderr in ErrorRecords, so with ErrorActionPreference = Stop a
+    # perfectly successful nssm call that happened to write a line of chatter
+    # would throw. The exit code is the truth; let stderr go to the console.
+    $output = & $Nssm @NssmArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "nssm $($NssmArgs -join ' ') failed (exit $LASTEXITCODE): $output"
+    }
+}
+
+foreach ($svc in $services) {
+    $name = $svc.Name
+
+    if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
+        Write-Host "$name : already installed, left alone" -ForegroundColor DarkGray
+        continue
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($name, "install service")) { continue }
+
+    Invoke-Nssm @("install", $name, $svc.Exe, $svc.Args)
+
+    # AppDirectory matters more than it looks: the worker resolves .env,
+    # alembic.ini and ARTIFACT_DIR relative to its working directory, and a
+    # service with the wrong one starts cleanly and then behaves as though the
+    # configuration is empty.
+    Invoke-Nssm @("set", $name, "AppDirectory", $proj)
+
+    if ($svc.Type) {
+        Invoke-Nssm @("set", $name, "Type", $svc.Type)
+    }
+    if ($svc.DependsOn) {
+        # Order matters on boot: the workers need the broker.
+        Invoke-Nssm (@("set", $name, "DependOnService") + $svc.DependsOn)
+    }
+
+    Write-Host "$name : installed" -ForegroundColor Green
+}
+
+if ($NoStart) {
+    Write-Host "`nInstalled but not started (-NoStart)." -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host ""
+foreach ($svc in $services) {
+    $name = $svc.Name
+    if (-not $PSCmdlet.ShouldProcess($name, "start service")) { continue }
+    try {
+        Start-Service -Name $name -ErrorAction Stop
+        Write-Host "$name : started" -ForegroundColor Green
+    } catch {
+        Write-Host "$name : FAILED to start - $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+Write-Host @"
+
+Now prove it. Log OUT of RDP entirely, wait five minutes, log back in and run:
+
+  .local\pgsql\bin\psql.exe -h 127.0.0.1 -U hotelmonitor_app -d hotelmonitor -c "select max(started_at) from check_runs;"
+
+If that timestamp advanced while you were logged out, this is a deployment.
+If it did not, the services are installed but not working, and the logs are in
+.local\ and in Event Viewer under each service name.
+"@
