@@ -34,8 +34,26 @@ USAGE
     python scripts/rediscover.py ananthyam
     python scripts/rediscover.py treebo --dry-run
     python scripts/rediscover.py --all --check-in 2026-09-10
-    python scripts/rediscover.py midvalley --retire-unseen
-    python scripts/rediscover.py midvalley --retire-unseen --force
+    python scripts/rediscover.py midvalley --retire "Itsy Hotels Kurinji Stay Inn"
+    python scripts/rediscover.py midvalley --retire "..." --force
+
+--retire DELETES a room by name, after the repair succeeds. For the rooms a
+broken config invented -- competitor hotels lifted from a cross-sell carousel,
+occupancy badges read as room names -- which otherwise sit on the dashboard
+forever, each reported sold out to the recipient list when the repaired config
+stops finding it.
+
+EVERY NAME IS TYPED OUT, and that is deliberate. An earlier version of this
+took "every room the repaired config did not read on the page" as its list,
+which sounds equivalent and is not: discovery sees ONE night, and a room that
+happens to be sold out that night reads exactly like a room that was never
+real. It deleted "Superior Double Room" and "Villa with Garden View" from a
+hotel that sells both, along with their price history, because neither was
+available on the night it looked at.
+
+So the operator names them. The safety rule underneath still applies on top of
+that: a name the repaired config DOES read back from the page is kept
+regardless, so a typo cannot delete a room that is plainly there.
 
 --force ignores the repair cooldown. A source repaired in the last six
 hours is refused otherwise, which is right for an automatic repair and
@@ -85,29 +103,6 @@ def _sources(match: str | None) -> list[tuple[int, str, str | None]]:
         needle = match.lower()
         rows = [r for r in rows if needle in r[1].lower()]
     return [(r[0], r[1], r[2]) for r in rows]
-
-
-def _existing_room_names(hotel_source_id: int) -> list[str]:
-    """Every room this hotel currently has on record.
-
-    Handed to the repair as ``collapsed_names``, which is an assertion: "these
-    came from a config I believe was wrong, check them." It is not taken at
-    face value. ``names_to_retire`` keeps only the names the repaired config
-    does NOT read back from the page, so a room that is genuinely there
-    survives no matter what is passed here -- which is what makes this safe to
-    point at a hotel whose rooms are mostly fine.
-    """
-    with sync_session() as session:
-        hotel_id = session.execute(
-            select(HotelSource.hotel_id).where(HotelSource.id == hotel_source_id)
-        ).scalar_one_or_none()
-        if hotel_id is None:
-            return []
-        return list(
-            session.scalars(
-                select(RoomType.name).where(RoomType.hotel_id == hotel_id)
-            )
-        )
 
 
 def _clear_cooldown(hotel_source_id: int) -> str | None:
@@ -169,11 +164,10 @@ def main() -> int:
              "bar is unchanged: this forces an ATTEMPT, not a result.",
     )
     parser.add_argument(
-        "--retire-unseen", action="store_true",
-        help="DELETE rooms the repaired config no longer reads on the page. "
-             "For a source whose old config invented rooms -- competitor "
-             "hotels from a cross-sell carousel, or occupancy badges -- which "
-             "otherwise sit on the dashboard forever, reported sold out.",
+        "--retire", action="append", metavar="NAME", default=[],
+        help="delete this room after a successful repair. Repeatable. For "
+             "rooms a broken config invented; a room the repaired config "
+             "reads on the page is kept regardless.",
     )
     args = parser.parse_args()
 
@@ -225,24 +219,23 @@ def main() -> int:
             if cleared:
                 print(f"  force: cleared the repair cooldown (last attempt {cleared})")
 
-        existing = _existing_room_names(hs_id) if args.retire_unseen else None
-        if existing:
-            print(f"  retire-unseen: offering {len(existing)} existing room name(s) "
-                  f"for checking against what the page now reads")
+        if args.retire:
+            print(f"  retire: {len(args.retire)} room(s) named for deletion, "
+                  f"kept if the page still shows them")
 
         result = rediscover_source(
             hs_id,
             check_in=check_in.isoformat(),
             check_out=check_out.isoformat(),
             reason="manual: scripts/rediscover.py",
-            collapsed_names=existing,
+            collapsed_names=args.retire or None,
         )
         status = result.get("status")
         print(f"  discovery: {status}"
               + (f" -- {result.get('why')}" if result.get("why") else ""))
         retired = result.get("rooms_retired") or []
         if retired:
-            print(f"    retired {len(retired)} room(s) the page does not have:")
+            print(f"    retired {len(retired)} room(s):")
             for name in retired:
                 print(f"      - {name}")
         config = result.get("config") or {}
