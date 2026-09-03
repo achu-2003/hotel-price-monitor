@@ -46,22 +46,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-hotelmonitor}
       POSTGRES_USER: ${POSTGRES_USER:-hotelmonitor_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in Coolify}
-    # ── TEMPORARY, FOR ONE MIGRATION. REMOVE AFTER. ──────────────────
-    #
-    # The database is normally reachable only from inside this compose
-    # network, which is right: nothing outside the application has any
-    # business talking to it, and an exposed Postgres is found by scanners
-    # within hours.
-    #
-    # It is published here for exactly one purpose -- taking a pg_dump from
-    # another machine during the move to the Windows Server, where the usual
-    # route (ssh to this host) is not available. 5433 rather than 5432 so it
-    # cannot collide with a Postgres already on the host.
-    #
-    # The next commit takes this back out. If you are reading this in main,
-    # that revert did not happen: remove these two lines and redeploy.
-    ports:
-      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
