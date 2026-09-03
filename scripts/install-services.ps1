@@ -19,6 +19,15 @@ param(
     # Where nssm.exe lives. The deploy doc puts it here.
     [string] $Nssm = "C:\nssm\nssm.exe",
 
+    # Where Playwright's browsers live, shared rather than per-user.
+    #
+    # Services run as LocalSystem, whose profile is
+    # C:\Windows\system32\config\systemprofile -- NOT the account that ran
+    # `playwright install`. Left to the default the worker looks there, finds
+    # nothing, and fails with "Executable doesn't exist" naming a path no one
+    # recognises. Install once into this location and point every worker at it.
+    [string] $BrowsersPath = "C:\ms-playwright",
+
     # Install the services but do not start them.
     [switch] $NoStart
 )
@@ -45,8 +54,18 @@ foreach ($required in @(
     }
 }
 
+if (-not (Test-Path (Join-Path $BrowsersPath "chromium_headless_shell-*"))) {
+    Write-Warning @"
+No headless Chromium under $BrowsersPath. The browser workers will install
+cleanly and then fail every fetch. Fix it before or after this script with:
+
+  `$env:PLAYWRIGHT_BROWSERS_PATH='$BrowsersPath'; .\.venv312\Scripts\python.exe -m playwright install chromium
+"@
+}
+
 Write-Host "Project : $proj"
 Write-Host "NSSM    : $Nssm"
+Write-Host "Browsers: $BrowsersPath"
 Write-Host ""
 
 # Celery workers get a node name each. Without one they collide, and Celery's
@@ -56,13 +75,9 @@ Write-Host ""
 # string straight through with no shell, so it needs no escaping here.
 $workerArgs = "-A app.workers.celery_app worker --pool=solo --loglevel INFO"
 
+$pgService = "HotelMonitor-Postgres"
+
 $services = @(
-    @{
-        Name = "HotelMonitor-Postgres"
-        Exe  = Join-Path $proj ".local\pgsql\bin\pg_ctl.exe"
-        Args = "-D `"$proj\.local\pgdata`" -l `"$proj\.local\pg.log`" start"
-        Type = "SERVICE_WIN32_OWN_PROCESS"
-    }
     @{
         Name = "HotelMonitor-Redis"
         Exe  = Join-Path $proj ".local\redis\redis-server.exe"
@@ -80,24 +95,28 @@ $services = @(
         Name      = "HotelMonitor-Worker-Browser1"
         Exe       = Join-Path $py "celery.exe"
         Args      = "$workerArgs -Q browser -n browser1@%h"
+        Env       = "PLAYWRIGHT_BROWSERS_PATH=$BrowsersPath"
         DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
     }
     @{
         Name      = "HotelMonitor-Worker-Browser2"
         Exe       = Join-Path $py "celery.exe"
         Args      = "$workerArgs -Q browser -n browser2@%h"
+        Env       = "PLAYWRIGHT_BROWSERS_PATH=$BrowsersPath"
         DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
     }
     @{
         Name      = "HotelMonitor-Worker-Notify"
         Exe       = Join-Path $py "celery.exe"
         Args      = "$workerArgs -Q notify -n notify1@%h"
+        Env       = "PLAYWRIGHT_BROWSERS_PATH=$BrowsersPath"
         DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
     }
     @{
         Name      = "HotelMonitor-Worker-Http"
         Exe       = Join-Path $py "celery.exe"
         Args      = "$workerArgs -Q http -n http1@%h"
+        Env       = "PLAYWRIGHT_BROWSERS_PATH=$BrowsersPath"
         DependsOn = @("HotelMonitor-Redis", "HotelMonitor-Postgres")
     }
     # EXACTLY ONE beat, always. Beat is the scheduler, not a worker: a second
@@ -123,6 +142,30 @@ function Invoke-Nssm {
     }
 }
 
+# Postgres is deliberately NOT an NSSM service.
+#
+# `pg_ctl start` launches the server and then exits, having done its job. A
+# wrapper that supervises the process it started reads that exit as a crash and
+# restarts it, which loops: the service flickers between Running and Stopped,
+# and anything with DependOnService against it is refused at random. That is
+# not hypothetical -- it is how this script failed on its first real run.
+#
+# There is a second reason no wrapper substitutes for this. postgres.exe
+# refuses to run as a user with administrative permissions, and a service
+# account is exactly that. `pg_ctl register` builds the restricted token that
+# makes the server willing to start at all, so Postgres's own service support
+# is not a convenience here; it is the only thing that works.
+if (Get-Service -Name $pgService -ErrorAction SilentlyContinue) {
+    Write-Host "$pgService : already installed, left alone" -ForegroundColor DarkGray
+} elseif ($PSCmdlet.ShouldProcess($pgService, "register postgres service")) {
+    & (Join-Path $proj ".local\pgsql\bin\pg_ctl.exe") register `
+        -N $pgService -D (Join-Path $proj ".local\pgdata") -S auto
+    if ($LASTEXITCODE -ne 0) {
+        throw "pg_ctl register failed (exit $LASTEXITCODE)"
+    }
+    Write-Host "$pgService : registered" -ForegroundColor Green
+}
+
 foreach ($svc in $services) {
     $name = $svc.Name
 
@@ -144,6 +187,13 @@ foreach ($svc in $services) {
     if ($svc.Type) {
         Invoke-Nssm @("set", $name, "Type", $svc.Type)
     }
+    if ($svc.Env) {
+        # Per-service, not `setx /M`: the Service Control Manager keeps the
+        # environment block it read at boot, so a new machine-wide variable is
+        # invisible to services until the next restart. This is applied at
+        # service start, so it works immediately.
+        Invoke-Nssm @("set", $name, "AppEnvironmentExtra", $svc.Env)
+    }
     if ($svc.DependsOn) {
         # Order matters on boot: the workers need the broker.
         Invoke-Nssm (@("set", $name, "DependOnService") + $svc.DependsOn)
@@ -158,8 +208,9 @@ if ($NoStart) {
 }
 
 Write-Host ""
-foreach ($svc in $services) {
-    $name = $svc.Name
+# Postgres first, and by name: every other service declares a dependency on
+# it, and a dependency that is not yet Running is refused, not waited for.
+foreach ($name in @($pgService) + $services.Name) {
     if (-not $PSCmdlet.ShouldProcess($name, "start service")) { continue }
     try {
         Start-Service -Name $name -ErrorAction Stop

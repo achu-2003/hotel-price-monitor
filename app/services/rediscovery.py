@@ -108,7 +108,20 @@ STATE_KEY = "auto_repair"
 #: a page whose cards collide. Every source stamped 2 was read by a scanner
 #: that could do none of that, so its stored verdict says nothing about this
 #: one -- which is the entire reason this constant exists.
-DISCOVERY_VERSION = 3
+#:
+#: Generation 4 is one change with a wide reach: a name candidate is no
+#: longer discarded for containing the words "guests" or "adults". Occupancy
+#: is part of what a room is CALLED, and the blanket match was deleting
+#: Booking.com's "Deluxe Double Room (2 Adults + 1 Child)" from
+#: consideration -- leaving the amenity badges beside it, so a property was
+#: monitored as rooms named "Room", "Room" and "Private suite", three of
+#: them collapsing onto one identity at three different prices. Alongside
+#: it: a label ending in a colon can no longer be a room name (the same
+#: property reported "Bed:", "Bedroom:" and "Beds:" for weeks), and a class
+#: that says both "roomtype" and "icon" is read as a name rather than as
+#: chrome. Every source stamped 3 was read by a scanner with all three
+#: faults, so its stored verdict says nothing about this one.
+DISCOVERY_VERSION = 4
 
 #: Where that stamp lives. Discovery-owned, so a repair overwrites it with the
 #: current generation rather than carrying an old one forward.

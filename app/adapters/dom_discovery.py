@@ -389,6 +389,15 @@ _FIND_CARDS_JS = r"""
   // with a space ("room type"), because that is what they become here.
   const tokens = (value) =>
     (value || "").toString().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  // The element's OWN classes, without its parent's. The distinction matters
+  // where one class list carries both a name word and a chrome word:
+  // Booking.com's room title is <span class="hprt-roomtype-icon-link">, which
+  // says "roomtype" AND "icon". A chip inside a "roomtype-*" wrapper is the
+  // opposite shape -- chip on itself, roomtype on the parent -- and that is
+  // what tells the two apart.
+  const ownContext = (el) =>
+    " " + tokens(el.className).concat(tokens(el.id)).join(" ") + " ";
+
   const context = (el) => {
     const own = tokens(el.className).concat(tokens(el.id));
     const parent = el.parentElement
@@ -507,8 +516,37 @@ _FIND_CARDS_JS = r"""
       // property, and a blanket ban on "view" would erase both.
       if (/^(view|select|book|choose|reserve|show|see|check|explore|details?|more)\b/i.test(t)) continue;
       // Headings and small print that happen to contain a room word.
-      if (/\b(per|left|available|select|choose|remaining|total|from|starting|guests?|adults?|nights?)\b/i.test(t)) continue;
+      //
+      // "guests" and "adults" USED to be in this list and deliberately are
+      // not any more. Occupancy is part of what a room is CALLED --
+      // Booking.com sells a "Deluxe Double Room (2 Adults + 1 Child)" -- and
+      // the blanket match deleted that name from consideration, leaving the
+      // amenity badges beside it as the only candidates on the row. The
+      // property was then monitored as rooms called "Room", "Room" and
+      // "Private suite", three of them collapsing onto one identity at
+      // three different prices.
+      //
+      // Nothing is lost by dropping them: bare occupancy small print is
+      // already refused twice over. "2 adults" begins with a digit, and
+      // neither "2 adults" nor "Max 4 guests" carries a room word, so ROOMY
+      // turns them away before this line is reached.
+      if (/\b(per|left|available|select|choose|remaining|total|from|starting|nights?)\b/i.test(t)) continue;
       if (/\b(rates?|tax|taxes|inclusive|exclusive|prices?|policy|policies|cancellation|refundable|check-?in|check-?out|capacity)\b/i.test(t)) continue;
+      // A LABEL, NOT A NAME. Text ending in a colon introduces the value
+      // beside it -- "Bed:", "Bedroom:", "Beds:" sit next to "1 single bed"
+      // in Booking.com's occupancy summary. They are short, they carry a room
+      // word, they repeat on every card, and they live in a span whose class
+      // says "title", so they score well and read exactly like names.
+      //
+      // A property was monitored for weeks as rooms called "Bed:", "Bedroom:"
+      // and "Beds:" at three different prices. Two of its five offers then
+      // collapsed into one identity -- rooms share a bed layout in a way they
+      // never share a name -- and one of each pair was dropped.
+      //
+      // The rule is general and costs nothing: nothing is called anything
+      // ending in a colon, while real names that merely mention a bed
+      // ("Cottage - King and Sofa Bed - Sitout") never end in one.
+      if (/:\s*$/.test(t)) continue;
       const where = context(el);
       const words = t.split(/\s+/).length;
       let score = (words >= 2 ? 10 : 0) + Math.min(t.length, 40);
@@ -522,7 +560,12 @@ _FIND_CARDS_JS = r"""
       // Amenity chips and feature pills, which repeat identically across every
       // card. They are often nested inside a "roomtype-*" wrapper and so
       // collect the NAME_CLASS bonus they have no claim to.
-      if (CHROME_CLASS.test(where)) score -= 25;
+      // ...unless this element's own class ALSO claims to be the name. Then
+      // the chrome word is describing an adornment of the name -- an icon
+      // beside the room title -- rather than naming a chip. Booking.com's
+      // room title scored +20 for "roomtype" and -25 for "icon", came out
+      // net negative, and lost to a "Room"/"Room"/"Room" occupancy badge.
+      if (CHROME_CLASS.test(where) && !NAME_CLASS.test(ownContext(el))) score -= 25;
       // Does this element carry a POSITIVE claim to be the name, as opposed to
       // merely having scored well? A heading is one by HTML semantics; a
       // "roomName"/"title" wrapper says so outright, unless it is really a
@@ -532,7 +575,10 @@ _FIND_CARDS_JS = r"""
       // and it deliberately does not depend on the score: scores are a ranking
       // and this is a claim of kind.
       const isHeading = /^h[1-6]$/i.test(el.tagName);
-      const trusted = isHeading || (NAME_CLASS.test(where) && !CHROME_CLASS.test(where));
+      const trusted =
+        isHeading ||
+        (NAME_CLASS.test(where) &&
+          (!CHROME_CLASS.test(where) || NAME_CLASS.test(ownContext(el))));
       candidates.push({ el, text: t, score, trusted });
       if (score > bestNameScore) {
         bestNameScore = score;
