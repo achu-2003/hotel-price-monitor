@@ -58,6 +58,9 @@ from app.core.logging import get_logger
 log = get_logger("robots")
 
 CACHE_TTL_SECONDS = 86_400
+#: How long a FAILED robots.txt fetch is remembered, process-locally.
+#: Short, because it describes this moment rather than the site's rules.
+NEGATIVE_CACHE_SECONDS = 60
 _FETCH_TIMEOUT = 10.0
 
 #: The blanket disallow synthesised when robots.txt answers 5xx. It is a
@@ -290,6 +293,19 @@ class RobotsChecker:
                     self.cache.setex(f"robots:{robots_url}", CACHE_TTL_SECONDS, text)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("robots_cache_write_failed", error=str(exc))
+        else:
+            # A host that just failed to serve robots.txt will fail again a
+            # second later, and every attempt pays the full _FETCH_TIMEOUT.
+            # During one 27-minute outage at a single property that cost 66
+            # connections and about eleven minutes of worker time, spent
+            # hammering an origin that was already struggling.
+            #
+            # Remembered PROCESS-LOCALLY only, and briefly. The shared cache
+            # holds what a site's rules are; it must never carry the fact that
+            # the site was unreachable once, to every other worker, for a day.
+            # check() fails open on None, so nothing about permission changes
+            # here -- only how often we ask.
+            self._local[robots_url] = (now + NEGATIVE_CACHE_SECONDS, None)
         return text
 
     # ── evaluation ───────────────────────────────────────────────────
