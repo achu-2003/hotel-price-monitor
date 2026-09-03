@@ -636,7 +636,27 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
             if normalised in _COMBINED_OCCUPANCY_PARAMS and value
             else None
         )
-        dates = _combined_date_pattern(value) if value and not placeholder else None
+        # ALREADY A PLACEHOLDER. This function has to be safe to run twice.
+        #
+        # It is not only called on a freshly pasted URL: a repair re-runs it
+        # over what is stored, so a URL templated by an earlier pass comes back
+        # through here. "{adults}-{children}" does not match the combined
+        # occupancy pattern -- that wants two NUMBERS -- so on the second pass
+        # it read as an ordinary value and was percent-encoded into
+        # %7Badults%7D-%7Bchildren%7D. Treebo received that literally, fell
+        # back to its own default occupancy, and quoted 3,471 for a room
+        # selling at 1,736. The URL still worked, still returned a real price,
+        # and was wrong by a factor of two.
+        already_a_placeholder = value and "{" in value and "}" in value
+        dates = (
+            _combined_date_pattern(value)
+            if value and not placeholder and not already_a_placeholder
+            else None
+        )
+        if already_a_placeholder and not placeholder:
+            placeholder_values.add(value)
+            rebuilt.append((key, value))
+            continue
         if placeholder and value:
             substituted[key] = f"{value} -> {placeholder}"
             placeholder_values.add(placeholder)

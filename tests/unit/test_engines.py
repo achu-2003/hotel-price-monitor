@@ -199,6 +199,53 @@ class TestCombinedOccupancyParameter:
         assert "utm_source=googlehotelads" in url
 
 
+class TestRunningItTwice:
+    """parameterise_url is run again over URLs it has already templated.
+
+    A repair re-parameterises what is stored before inspecting the page, so
+    the second pass sees "{adults}-{children}" where the first saw "2-0".
+    That does not match the combined-occupancy pattern -- which wants two
+    NUMBERS -- so it read as an ordinary value and was percent-encoded into
+    %7Badults%7D-%7Bchildren%7D.
+
+    Treebo received that literally, fell back to its own default occupancy and
+    quoted 3,471 for a room selling at 1,736. The URL still resolved, the
+    fetch still succeeded, and the price was wrong by a factor of two.
+    """
+
+    TREEBO = (
+        "https://www.treebo.com/hotels-in-yelagiri/treebo-midvalley-residence-yelagiri-4278/"
+        "?checkin=2026-09-03&checkout=2026-09-04&roomconfig=2-0&roomtype=maple"
+    )
+
+    def test_a_second_pass_changes_nothing(self):
+        once, _ = parameterise_url(self.TREEBO)
+        twice, _ = parameterise_url(once)
+        assert once == twice
+
+    def test_a_third_pass_changes_nothing_either(self):
+        once, _ = parameterise_url(self.TREEBO)
+        assert parameterise_url(parameterise_url(once)[0])[0] == once
+
+    def test_the_occupancy_placeholder_survives_intact(self):
+        once, _ = parameterise_url(self.TREEBO)
+        twice, _ = parameterise_url(once)
+        assert "roomconfig={adults}-{children}" in twice
+        assert "%7B" not in twice
+
+    def test_an_already_encoded_placeholder_is_repaired(self):
+        """The damage is undone by running it again, not entrenched."""
+        broken = "https://x.example/b?roomconfig=%7Badults%7D-%7Bchildren%7D"
+        fixed, _ = parameterise_url(broken)
+        assert "roomconfig={adults}-{children}" in fixed
+
+    def test_a_date_placeholder_with_a_format_survives(self):
+        """The strftime pattern carries a %, which is what encoding mangles."""
+        once, _ = parameterise_url("https://x.example/b?c=010926|020926")
+        twice, _ = parameterise_url(once)
+        assert "{check_in:%d%m%y}|{check_out:%d%m%y}" in twice
+
+
 class TestBothDatesInOneParameter:
     """`?c=010926|020926` -- a whole stay in one opaque parameter.
 
