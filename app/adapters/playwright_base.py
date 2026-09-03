@@ -56,6 +56,10 @@ from app.core.logging import get_logger
 log = get_logger("playwright")
 
 # Resource types that cost bandwidth and time but never carry a price.
+#: Chromium net errors that mean "the host never answered". Reported as a
+#: plain PlaywrightError, so they need naming to be classified honestly.
+_TIMEOUT_NET_ERRORS = ("err_timed_out", "err_connection_timed_out")
+
 _BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
 _BLOCKED_URL_FRAGMENTS = (
     "google-analytics", "googletagmanager", "doubleclick", "facebook.net",
@@ -371,6 +375,17 @@ def open_page(
             message = str(exc).lower()
             if "closed" in message or "crashed" in message:
                 raise BrowserCrashError(str(exc), context={"url": url}) from exc
+            # Chromium gives up on an unreachable host by its own internal
+            # connect timeout, well before browser_nav_timeout_ms, and reports
+            # it as a plain Error carrying net::ERR_TIMED_OUT -- not as a
+            # PlaywrightTimeout. Left to fall through, a timeout was recorded
+            # as class `network` and retried three times instead of two, so an
+            # unreachable host was hit harder than a slow one and the
+            # Attention page named the wrong cause.
+            if any(marker in message for marker in _TIMEOUT_NET_ERRORS):
+                raise TimeoutError_(
+                    f"Timed out loading {url}", context={"url": url}
+                ) from exc
             raise NetworkError(str(exc), context={"url": url}) from exc
 
         # Refusal check comes first: everything after it would be parsing a
