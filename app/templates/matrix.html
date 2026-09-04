@@ -19,13 +19,50 @@
      what has been collected. A form that claims "defaults to the coming
      weekend" while showing tonight is worse than one that says nothing. #}
   {% if default_note %}<span class="muted">{{ default_note }}</span>{% endif %}
+  {# Carried through the date/occupancy form so changing the night does not
+     silently drop the category someone is looking at. #}
+  {% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}
 </form>
+
+{#
+  ROOM CATEGORY FILTER
+  ====================
+  Room names do not line up across properties -- "Club Room", "Classic Room"
+  and "Deluxe Room" are the same tier at three different hotels -- so the
+  categories are worked out from the name (app/services/room_category.py) and
+  the chips below narrow the grid to one of them.
+
+  Links rather than a <select>: each state is a URL that can be bookmarked and
+  pasted into a message, and the page needs no JavaScript to apply it. Counts
+  are of every room priced tonight, so they do not change when a chip is
+  chosen and there is always a way back.
+#}
+{% if chips %}
+{% set qs = "check_in=%s&check_out=%s&adults=%s"|format(check_in, check_out, adults) %}
+<div class="chips chips-filter">
+  <span class="chips-label">Room category</span>
+  <a class="chip {{ 'is-on' if not category }}" href="/matrix?{{ qs }}">All</a>
+  {% for chip in chips %}
+  <a class="chip {{ 'is-on' if category == chip.slug }}"
+     href="/matrix?{{ qs }}&category={{ chip.slug }}">
+    {{ chip.label }}<span class="chip-count">{{ chip.count }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% if rows %}
 <div class="scroll-x">
 <table class="grid matrix">
   <thead>
-    <tr><th>Hotel</th><th class="num">Cheapest</th><th>Rooms</th></tr>
+    {# The cheapest column means the cheapest of what is SHOWN, so under a
+       filter it is the cheapest room of that category and the heading has to
+       say so -- otherwise it reads as the property's floor rate. #}
+    <tr>
+      <th>Hotel</th>
+      <th class="num">{{ 'Cheapest ' ~ category_label if category_label else 'Cheapest' }}</th>
+      <th>{{ category_label if category_label else 'Rooms' }}</th>
+    </tr>
   </thead>
   <tbody>
     {% for row in rows %}
@@ -40,7 +77,8 @@
           {% for cell in row.cells %}
           <span class="cell {{ 'cell-changed' if cell.changed_recently else '' }}
                        {{ 'cell-soldout' if not cell.is_available else '' }}"
-                title="Last checked {{ cell.last_checked_at|localtime('%d %b %H:%M') }}">
+                title="{{ cell.category_label }} · last checked {{ cell.last_checked_at|localtime('%d %b %H:%M') }}"
+                data-category="{{ cell.category }}">
             <span class="cell-room">{{ cell.room_name }}</span>
             <span class="cell-price">
               {% if cell.is_available %}{{ money(cell.price, cell.currency) }}
@@ -68,6 +106,14 @@
     Prices are the last confirmed value per offer, not the latest raw reading.
   </span>
 </div>
+{% elif filtered_out %}
+{# The night has prices; the category has none. Saying "nothing collected"
+   here would send someone off to debug a fetcher that is working fine. #}
+<p class="muted">
+  No {{ category_label }} is priced for this night. The chips above list the
+  categories that are, and a room lands in one by its name — a room nobody
+  recognises here is usually a room whose name says less than it could.
+</p>
 {% else %}
 <p class="muted">
   Nothing has been collected for these dates and occupancy yet. Prices appear

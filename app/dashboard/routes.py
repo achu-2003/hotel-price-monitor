@@ -63,6 +63,7 @@ from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
+from app.services.room_category import CATEGORIES, classify, is_category, label_for
 
 router = APIRouter(include_in_schema=False)
 
@@ -575,6 +576,62 @@ async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
     return weekend.check_in, weekend.check_out, "Defaults to the coming weekend."
 
 
+def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
+    """Hotels with their room cells, plus how many rooms each category has.
+
+    THE COUNTS ARE OF EVERY ROOM, THE CELLS ARE OF THE CHOSEN ONES
+    ==============================================================
+    Both come out of one pass over the same rows, and they deliberately
+    disagree: a filter chip has to keep saying "Suite 7" while the page is
+    filtered to classic rooms, or choosing a category would empty every other
+    chip and there would be no way back except the browser's Back button.
+
+    A hotel with no room in the chosen category is absent from the result
+    rather than present and empty. Its row would say nothing except that the
+    filter is on, which the chips already say, and the comparison reads better
+    as the list of properties that actually sell this category.
+
+    ``cheapest`` is the cheapest of the cells that SURVIVED the filter, so
+    filtering to "Classic Room" answers "who is cheapest on entry-level
+    tonight" rather than repeating the property's overall floor.
+    """
+    grouped: dict[int, dict] = {}
+    counts: dict[str, int] = {}
+
+    for series, hotel, room_name in rows:
+        slug = classify(room_name)
+        counts[slug] = counts.get(slug, 0) + 1
+        if category is not None and slug != category:
+            continue
+
+        entry = grouped.setdefault(
+            hotel.id,
+            {"hotel": hotel, "cells": [], "cheapest": None},
+        )
+        entry["cells"].append(
+            {
+                "room_name": room_name,
+                "offer_key": series.offer_key,
+                "category": slug,
+                "category_label": label_for(slug),
+                "price": series.current_price,
+                "currency": series.currency,
+                "is_available": series.is_available,
+                "changed_recently": (
+                    series.last_changed_at is not None
+                    and series.last_changed_at >= recent_cutoff
+                ),
+                "last_checked_at": series.last_checked_at,
+            }
+        )
+
+    for entry in grouped.values():
+        prices = [c["price"] for c in entry["cells"] if c["is_available"] and c["price"]]
+        entry["cheapest"] = min(prices) if prices else None
+
+    return grouped, counts
+
+
 @router.get("/matrix", response_class=HTMLResponse)
 async def matrix(
     request: Request,
@@ -583,6 +640,7 @@ async def matrix(
     check_in: BlankableDate = None,
     check_out: BlankableDate = None,
     adults: BlankableAdults = None,
+    category: str | None = None,
 ):
     """All hotels x rooms for one night. The comparison screen.
 
@@ -608,6 +666,13 @@ async def matrix(
     if adults is None:
         adults = 2
 
+    # A category the code does not have -- an empty string from the "All" chip,
+    # a slug from an older bookmark, a typo in a shared URL -- shows everything
+    # rather than 422s or shows nothing. The chips below then make the real
+    # choices visible, which a validation error would not.
+    if not is_category(category):
+        category = None
+
     default_note = None
     if check_in is None or check_out is None:
         check_in, check_out, default_note = await _default_night(session, user, adults)
@@ -629,38 +694,37 @@ async def matrix(
     ).all()
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
-    grouped: dict[int, dict] = {}
-    for series, hotel, room_name in rows:
-        entry = grouped.setdefault(
-            hotel.id,
-            {"hotel": hotel, "cells": [], "cheapest": None},
-        )
-        entry["cells"].append(
-            {
-                "room_name": room_name,
-                "offer_key": series.offer_key,
-                "price": series.current_price,
-                "currency": series.currency,
-                "is_available": series.is_available,
-                "changed_recently": (
-                    series.last_changed_at is not None
-                    and series.last_changed_at >= recent_cutoff
-                ),
-                "last_checked_at": series.last_checked_at,
-            }
-        )
+    grouped, counts = _matrix_groups(rows, recent_cutoff, category)
 
-    for entry in grouped.values():
-        prices = [c["price"] for c in entry["cells"] if c["is_available"] and c["price"]]
-        entry["cheapest"] = min(prices) if prices else None
+    # One chip per category that has a room on this night, in the order of the
+    # sheet this page replaced. A category nothing is sold under is left out
+    # rather than shown at zero: a dead chip is a control that does nothing,
+    # and a row of them would bury the ones that work.
+    # The chosen one is kept even at zero, so a link somebody shared for a
+    # category nothing is sold under tonight still shows WHICH filter is on.
+    # Without it the page reads as broken: an empty grid and no chip lit.
+    chips = [
+        {"slug": c.slug, "label": c.label, "count": counts.get(c.slug, 0)}
+        for c in CATEGORIES
+        if counts.get(c.slug) or c.slug == category
+    ]
+
+    # Rooms exist for this night, but none in the chosen category. That is a
+    # different sentence from "nothing has been collected", and saying the
+    # wrong one sends someone off to debug a fetcher that is working.
+    filtered_out = bool(rows) and not grouped
 
     # Which nights DO have prices, for the empty state. "Nothing here" is a
     # dead end; "nothing here, and these are the nights that have something"
     # is the answer to the question the empty page provokes -- and on a
     # deployment whose targets all run at zero lead time, it is also the
     # explanation for why every other date is blank.
+    #
+    # Not asked when the filter is what emptied the page: this night HAS
+    # prices, so a list of other nights to try would be answering a question
+    # nobody asked, and it costs a query to be wrong.
     collected: list = []
-    if not grouped:
+    if not grouped and not filtered_out:
         collected = (
             await session.execute(
                 select(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
@@ -677,6 +741,10 @@ async def matrix(
         check_in=check_in,
         check_out=check_out,
         adults=adults,
+        category=category,
+        category_label=label_for(category) if category else None,
+        chips=chips,
+        filtered_out=filtered_out,
         default_note=default_note,
         collected=collected,
     )

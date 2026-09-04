@@ -354,6 +354,27 @@ a.tile:hover { text-decoration: none; border-color: var(--accent); box-shadow: v
   padding: 4px 12px; font-size: 12px; box-shadow: var(--shadow); color: var(--ink-2);
 }
 
+/* A chip that is a link is a control, so it has to look pressable and it has
+   to show which one is pressed. The chosen one inverts rather than merely
+   tinting: on a page whose rows are already tinted by ownership, a pale
+   highlight is not reliably the loudest thing on screen. */
+.chips-filter { align-items: center; }
+.chips-label {
+  font-size: 11px; font-weight: 650; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted); margin-right: 2px;
+}
+a.chip { text-decoration: none; }
+a.chip:hover { border-color: var(--accent-2); color: var(--ink); }
+a.chip.is-on {
+  background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 600;
+}
+.chip-count {
+  display: inline-block; margin-left: 6px; padding: 0 5px; min-width: 16px;
+  border-radius: 999px; background: var(--line-soft); color: var(--muted);
+  font-size: 11px; font-variant-numeric: tabular-nums; text-align: center;
+}
+a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
+
 /* Present only when non-zero, so its presence is the signal and it can afford
    to be loud. Red text on the gradient bar is unreadable, so up there it
    becomes a solid chip instead. */
