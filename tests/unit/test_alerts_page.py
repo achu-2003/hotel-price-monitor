@@ -514,3 +514,88 @@ class TestTheTwoWaysOfAddingSomebodySitSideBySide:
 
         assert check.errors == []
         assert check.stack == []
+
+
+class TestSomebodyHasToHearWhenMonitoringBreaks:
+    """The only switch on this page that is not about price moves.
+
+    Every other misconfiguration here announces itself eventually -- an alert
+    arrives late, or to the wrong person, and somebody says so. This one is
+    discovered by nobody. With no ops contact the alert that a scraper has
+    stopped is composed, finds no recipient, writes a line to a log file and is
+    dropped, while the dashboard goes on showing yesterday's prices.
+
+    It had already happened on this deployment -- "Price monitoring has gone
+    quiet on 24 sources", addressed to no one -- and the control had been
+    dropped from the page entirely, so there was no way to fix it from the app.
+    """
+
+    def test_the_switch_is_on_the_page(self):
+        assert 'name="receives_ops_alerts"' in render()
+
+    def test_it_reflects_a_recipient_who_already_has_it(self):
+        page = render(recipients=[_recipient(receives_ops_alerts=True)])
+        box = page.split('name="receives_ops_alerts"')[1][:160]
+        assert "checked" in box
+
+    def test_the_page_says_so_when_nobody_is_listening(self):
+        assert "Nobody is told when monitoring breaks" in render()
+
+    def test_it_stops_saying_so_once_somebody_is(self):
+        page = render(recipients=[_recipient(receives_ops_alerts=True)])
+        assert "Nobody is told when monitoring breaks" not in page
+
+    def test_a_contact_with_no_address_does_not_count(self):
+        # Ops alerts are email-only: a business-initiated WhatsApp template is
+        # the wrong carrier for "your monitoring is down". Ticking the box on a
+        # phone-only contact reaches nobody, so it must not silence the notice.
+        page = render(recipients=[_recipient(email=None, receives_ops_alerts=True)])
+        assert "Nobody is told when monitoring breaks" in page
+
+    def test_and_that_person_is_told_why_on_their_own_row(self):
+        page = render(recipients=[_recipient(email=None, receives_ops_alerts=True)])
+        assert "has no email address" in page
+
+    def test_an_inactive_contact_does_not_count_either(self):
+        page = render(recipients=[_recipient(is_active=False, receives_ops_alerts=True)])
+        assert "Nobody is told when monitoring breaks" in page
+
+
+class TestTheDeleteOnASavedNumber:
+    """A saved row carries what the x needs to delete it for real.
+
+    Without the id on the row the button has nothing to address, and it falls
+    back to what it used to do: take the row off the screen and leave the
+    number receiving until somebody remembers to press Save.
+    """
+
+    def _row(self, page):
+        return page.split('class="alert-number-row"')[1][:400] if             'class="alert-number-row"' in page else ""
+
+    def test_a_saved_row_carries_its_id(self):
+        page = render(alert_numbers=[
+            SimpleNamespace(id=4, name="Front office", phone_e164="+919876543210")
+        ])
+        assert 'data-recipient-id="4"' in page
+
+    def test_it_carries_whose_number_it_is_for_the_confirmation(self):
+        page = render(alert_numbers=[
+            SimpleNamespace(id=4, name="Front office", phone_e164="+919876543210")
+        ])
+        assert 'data-name="Front office"' in page
+
+    def test_an_empty_starter_row_carries_no_id(self):
+        # Nothing saved yet, so nothing to delete -- the x must stay a plain
+        # form control rather than firing a request at a row that does not
+        # exist on the server. Scoped to the numbers form: recipients further
+        # down the page carry the same attribute for their own buttons.
+        page = render(alert_numbers=[])
+        form = page.split("alert-numbers-form")[1].split("</form>")[0]
+        assert "data-recipient-id" not in form
+
+    def test_the_template_row_cloned_by_add_carries_no_id_either(self):
+        page = render(alert_numbers=[
+            SimpleNamespace(id=4, name="Front office", phone_e164="+919876543210")
+        ])
+        template = page.split("alert-number-row-template")[1][:500]
+        assert "data-recipient-id" not in template

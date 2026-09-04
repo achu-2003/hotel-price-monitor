@@ -52,10 +52,21 @@ class _AlertNumberSession:
         return _Scalars()
 
     async def scalar(self, statement):
-        # The "find by phone" lookup. The compiled parameters carry the number.
-        wanted = statement.compile().params.get("phone_e164_1")
+        # Two lookups reach here. The save handler asks by phone; the delete
+        # handler asks by id, and only ever among rows that are still alert
+        # numbers -- which is the filter the route relies on to refuse an
+        # ordinary recipient, so the stand-in has to apply it too.
+        params = statement.compile().params
+        wanted_phone = params.get("phone_e164_1")
+        if wanted_phone is not None:
+            for r in self.recipients:
+                if r.phone_e164 == wanted_phone:
+                    return r
+            return None
+
+        wanted_id = params.get("id_1")
         for r in self.recipients:
-            if r.phone_e164 == wanted:
+            if r.id == wanted_id and r.alerts_all_hotels and r.is_active:
                 return r
         return None
 
@@ -221,3 +232,98 @@ def test_a_number_that_is_not_e164_is_refused(client):
     )
 
     assert response.status_code == 422
+
+
+def _saved_number(session, phone="+919876543210", name="Front office"):
+    """A number already on the list, as the page would show it."""
+    recipient = Recipient(name=name, phone_e164=phone)
+    recipient.is_active = True
+    recipient.alerts_all_hotels = True
+    recipient.bypass_throttle = True
+    session.add(recipient)
+    return recipient
+
+
+class TestDeletingOneNumber:
+    """The x on a saved row, which used only to hide it.
+
+    Removing a number was two actions with a gap between them: the row left the
+    screen at once and the number kept receiving until Save was pressed. The
+    screen said done and the system disagreed, in the direction that keeps
+    messaging somebody who was meant to be stopped.
+    """
+
+    def test_it_stops_receiving(self, client, session):
+        number = _saved_number(session)
+        response = client.delete(f"/api/v1/alert-numbers/{number.id}")
+
+        assert response.status_code == 200, response.text
+        assert number.alerts_all_hotels is False
+        assert number.bypass_throttle is False
+        assert number.is_active is False
+
+    def test_the_row_survives_so_the_history_does(self, client, session):
+        # Deactivated, not deleted -- "what did we send that number last month"
+        # has to keep an answer, and re-adding the number must reconnect to
+        # this row rather than fork a second recipient with the same digits.
+        number = _saved_number(session)
+        client.delete(f"/api/v1/alert-numbers/{number.id}")
+
+        assert number in session.recipients
+        assert number.phone_e164 == "+919876543210"
+
+    def test_it_leaves_the_other_numbers_alone(self, client, session):
+        keep = _saved_number(session, "+919000000001", "Reception")
+        drop = _saved_number(session, "+919000000002", "Night manager")
+
+        client.delete(f"/api/v1/alert-numbers/{drop.id}")
+
+        assert keep.alerts_all_hotels is True
+        assert keep.is_active is True
+
+    def test_the_response_is_the_list_that_is_left(self, client, session):
+        keep = _saved_number(session, "+919000000001", "Reception")
+        drop = _saved_number(session, "+919000000002", "Night manager")
+
+        body = client.delete(f"/api/v1/alert-numbers/{drop.id}").json()
+
+        assert [n["phone_e164"] for n in body["numbers"]] == [keep.phone_e164]
+
+    def test_it_is_committed_not_merely_staged(self, client, session):
+        number = _saved_number(session)
+        client.delete(f"/api/v1/alert-numbers/{number.id}")
+        assert session.committed is True
+
+    def test_it_is_audited_with_the_row_it_touched(self, client, session):
+        number = _saved_number(session)
+        client.delete(f"/api/v1/alert-numbers/{number.id}")
+
+        assert len(session.audits) == 1
+        audit = session.audits[0]
+        for required in ("user", "action", "entity", "entity_id"):
+            assert required in audit, f"record_audit was called without {required!r}"
+        assert audit["entity_id"] == str(number.id)
+
+
+class TestWhatItRefuses:
+    def test_an_unknown_id_is_not_found(self, client):
+        assert client.delete("/api/v1/alert-numbers/999").status_code == 404
+
+    def test_an_ordinary_recipient_cannot_be_stopped_through_this_route(
+        self, client, session
+    ):
+        # A contact with assignments and an email is not an alert number.
+        # Without the filter this would be a second, differently-audited way to
+        # deactivate anybody on the system, reachable by guessing an integer.
+        person = Recipient(name="Priya", phone_e164="+919111111111")
+        person.is_active = True
+        person.alerts_all_hotels = False
+        session.add(person)
+
+        assert client.delete(f"/api/v1/alert-numbers/{person.id}").status_code == 404
+        assert person.is_active is True
+
+    def test_a_number_already_stopped_is_not_found_twice(self, client, session):
+        number = _saved_number(session)
+        assert client.delete(f"/api/v1/alert-numbers/{number.id}").status_code == 200
+        assert client.delete(f"/api/v1/alert-numbers/{number.id}").status_code == 404

@@ -1081,16 +1081,59 @@
       });
     }
 
-    rows.addEventListener("click", function (event) {
+    /* The x on a SAVED row deletes that number, there and then.
+     *
+     * It used to only take the row off the screen, leaving the actual deletion
+     * to the Save button. That reads as done -- the row is gone -- so anybody
+     * who navigated away at that point had changed nothing, and a number they
+     * believed they had stopped went on receiving every price change on every
+     * hotel. The screen and the truth disagreed, silently, in the direction
+     * that costs money.
+     *
+     * A row that has never been saved has no recipient id and nothing to
+     * delete, so it keeps the old behaviour: removed from the form, or
+     * emptied when it is the only one left.
+     */
+    rows.addEventListener("click", async function (event) {
       const button = event.target.closest(".alert-number-remove");
       if (!button) return;
       const row = button.closest(".alert-number-row");
-      if (rows.querySelectorAll(".alert-number-row").length === 1) {
-        row.querySelectorAll("input").forEach(function (input) { input.value = ""; });
-      } else {
-        row.remove();
+      const recipientId = row.dataset.recipientId;
+
+      function dropRow() {
+        if (rows.querySelectorAll(".alert-number-row").length === 1) {
+          row.querySelectorAll("input").forEach(function (i) { i.value = ""; });
+          delete row.dataset.recipientId;
+        } else {
+          row.remove();
+        }
+        refresh();
       }
-      refresh();
+
+      if (!recipientId) {
+        dropRow();
+        return;
+      }
+
+      const who = row.dataset.name || "this number";
+      if (!window.confirm(
+        "Stop sending to " + who + "?\n\n" +
+        "It stops receiving immediately. What was already sent to it stays in " +
+        "the delivery history on Alerts, and adding the number again later " +
+        "reconnects to the same record."
+      )) return;
+
+      const status = form.querySelector(".form-status");
+      button.disabled = true;
+      say(status, "Removing " + who + "…", "");
+      const result = await api("/api/v1/alert-numbers/" + recipientId, "DELETE");
+      if (!result.ok) {
+        button.disabled = false;
+        say(status, problemText(result), "error");
+        return;
+      }
+      dropRow();
+      say(status, who + " will not be messaged again.", "ok");
     });
 
     refresh();

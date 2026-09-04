@@ -629,6 +629,54 @@ async def list_alert_numbers(session: DbSession, _user: CurrentUser):
     return _alert_numbers_out((await session.scalars(_alert_numbers_query())).all())
 
 
+@router.delete("/alert-numbers/{recipient_id}", response_model=AlertNumbersOut)
+async def delete_alert_number(
+    recipient_id: int, request: Request, session: DbSession, admin: AdminUser
+):
+    """Stop one number, without touching the rest of the list.
+
+    The bulk PUT can already do this -- drop a row, save the list -- and that
+    is two steps with a gap in the middle. The gap is the problem: the row
+    disappears from the form the moment the x is pressed, which looks like the
+    number has been removed, and anybody who navigates away before saving has
+    changed nothing at all. A number somebody believes they stopped is still
+    being messaged.
+
+    Same outcome as dropping it from the PUT, deliberately: **deactivated, not
+    deleted**. The row and its delivery history stay, so "what did we send that
+    number last month" still has an answer, and re-adding the same number later
+    reconnects to this row rather than forking a second recipient with the same
+    digits. Only the sending stops.
+
+    Scoped to numbers this endpoint owns. ``alerts_all_hotels`` is what makes a
+    recipient an alert number, so a recipient id that is not one gets a 404 --
+    otherwise this would be a second, unaudited way to deactivate any recipient
+    on the system, reachable by guessing an integer.
+    """
+    recipient = await session.scalar(
+        _alert_numbers_query().where(Recipient.id == recipient_id)
+    )
+    if recipient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No alert number with that id.",
+        )
+
+    before = {"name": recipient.name, "phone_e164": recipient.phone_e164}
+    recipient.alerts_all_hotels = False
+    recipient.bypass_throttle = False
+    recipient.is_active = False
+
+    await record_audit(
+        session, user=admin, action="delete", entity="alert_numbers",
+        entity_id=str(recipient.id), before=before, after=None, request=request,
+    )
+    await session.commit()
+
+    log.info("alert_number_removed", recipient_id=recipient.id)
+    return _alert_numbers_out((await session.scalars(_alert_numbers_query())).all())
+
+
 @router.put("/alert-numbers", response_model=AlertNumbersOut)
 async def replace_alert_numbers(
     payload: AlertNumbersIn, request: Request, session: DbSession, admin: AdminUser

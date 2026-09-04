@@ -130,7 +130,15 @@
     <form class="stack alert-numbers-form" data-max="{{ max_alert_numbers }}">
       <div class="alert-number-rows">
         {% for existing in alert_numbers %}
-        <div class="alert-number-row">
+        {# data-recipient-id marks a row that EXISTS on the server. It is what
+           tells the x apart from the x on a row somebody has just added: one
+           has a number to stop, the other has nothing to undo yet. #}
+        {# Same rule the name box uses two lines down: a number saved before
+           the name was required is named for its own digits, and repeating
+           those back reads as the operator having typed them twice. Blank
+           here just makes the confirmation say "this number". #}
+        <div class="alert-number-row" data-recipient-id="{{ existing.id }}"
+             data-name="{{ existing.name if existing.name != existing.phone_e164 else '' }}">
           <label>Number <span class="row-number">{{ loop.index }}</span>
             <input name="phone" data-phone data-default-cc="+91" maxlength="24"
                    placeholder="9876543210"
@@ -144,8 +152,12 @@
             <input name="label" maxlength="120" placeholder="Priya, front office"
                    value="{{ existing.name if existing.name != existing.phone_e164 else '' }}">
           </label>
+          {# Deletes for real, on click, rather than staging a change the Save
+             button has to finish. The row vanishing while the number kept
+             receiving was the whole complaint. #}
           <button type="button" class="alert-number-remove"
-                  title="Remove this number" aria-label="Remove this number">×</button>
+                  title="Delete this number"
+                  aria-label="Delete this number">×</button>
         </div>
         {% endfor %}
         {% if not alert_numbers %}
