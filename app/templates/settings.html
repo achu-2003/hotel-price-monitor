@@ -335,6 +335,16 @@
         <td>
           {% if recipient.is_active %}<span class="pill pill-ok">active</span>
           {% else %}<span class="pill pill-off">inactive</span>{% endif %}
+          {# Only somebody who is both appears here at all -- a plain alert
+             number is not in this table. Said on the row, because otherwise
+             their WhatsApp is decided in a panel this screen never mentions
+             and the assignments below look like the whole story. #}
+          {% if recipient.alerts_all_hotels and recipient.is_active %}
+          <span class="pill pill-warn"
+                title="Also an alert number: gets every change on every hotel, whatever is assigned below">
+            alert number
+          </span>
+          {% endif %}
         </td>
         <td>
           {# The flex row goes on a div inside the cell: a td told to be a flex
@@ -563,7 +573,7 @@
                   <h3 class="danger-head">Delete this person</h3>
                   <p class="muted">
                     For someone who has left, rather than someone who should
-                    stop hearing about prices for a while â€” deactivating does
+                    stop hearing about prices for a while — deactivating does
                     that, and keeps everything.
                     {% if links %}
                     Removes them from {{ links|length }}

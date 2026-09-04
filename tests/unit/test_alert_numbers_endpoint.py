@@ -203,7 +203,10 @@ def test_a_number_dropped_from_the_list_stops_but_survives(client, session):
     assert response.status_code == 200
     assert existing in session.recipients          # not deleted
     assert existing.is_active is False             # but silenced
-    assert existing.alerts_all_hotels is False
+    # Still marked as a number. Nothing reads the flag without is_active, and
+    # it is the only record that this row was never a person -- without it the
+    # settings page lists a removed number as a recipient.
+    assert existing.alerts_all_hotels is True
 
 
 def test_more_than_five_numbers_is_refused(client):
@@ -258,9 +261,10 @@ class TestDeletingOneNumber:
         response = client.delete(f"/api/v1/alert-numbers/{number.id}")
 
         assert response.status_code == 200, response.text
-        assert number.alerts_all_hotels is False
         assert number.bypass_throttle is False
         assert number.is_active is False
+        # Kept: see the PUT test above. Inactive is what stops the sending.
+        assert number.alerts_all_hotels is True
 
     def test_the_row_survives_so_the_history_does(self, client, session):
         # Deactivated, not deleted -- "what did we send that number last month"

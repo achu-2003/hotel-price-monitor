@@ -1376,6 +1376,47 @@ async def notifications_page(
     )
 
 
+def _people_not_just_numbers(recipients, assignments) -> list:
+    """The recipients table's rows: the people, not the alert numbers.
+
+    A NUMBER IS NOT A PERSON, AND THE TABLE MUST NOT LIST IT AS ONE
+    ===============================================================
+    Both panels write to ``recipients`` -- an alert number is a recipient
+    wearing ``alerts_all_hotels``, which is what lets it reuse the digest, the
+    dedupe and the delivery history. So a number typed into the box at the top
+    of the page also arrived in the table below it: a second row for something
+    already listed six inches higher, with an empty "Hotels covered" column
+    and the ``none`` badge on it.
+
+    That badge means *this person receives nothing*, and on an alert number it
+    is the exact opposite of the truth -- it receives everything, on every
+    hotel, including hotels added later. The one row on the page that cannot
+    be silent was the one flagged as silent.
+
+    The exception is somebody who is both: registered here, assigned to
+    hotels, and later added upstairs as a number too. They still have
+    assignments that only this table can edit, and dropping their row would
+    hide a person who is being messaged behind a panel that cannot show a
+    single one of their hotels. So the rule is about what the row IS rather
+    than which flag it carries -- no assignment of its own means it is only a
+    number -- and settings.html marks the ones that are both.
+
+    A REMOVED NUMBER IS STILL NOT A PERSON
+    ======================================
+    Removal deactivates rather than deletes, so the delivery history stays
+    answerable and re-adding the number reconnects to the same row. It leaves
+    ``alerts_all_hotels`` set, and this reads the flag without asking whether
+    the row is active -- otherwise a number somebody added and then removed
+    arrived in this table as an inactive recipient with no email, no hotels
+    and the ``none`` badge, which is how a list of people fills up with the
+    ghosts of numbers.
+    """
+    return [
+        r for r in recipients
+        if assignments.get(r.id) or not r.alerts_all_hotels
+    ]
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user: DashUser, session: DbSession):
     """Who the system may tell, and how to reach them."""
@@ -1445,6 +1486,8 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         )
     ).all():
         assignments.setdefault(link.recipient_id, []).append((link, hotel_name))
+
+    recipients = _people_not_just_numbers(recipients, assignments)
 
     hotels = (
         await session.scalars(

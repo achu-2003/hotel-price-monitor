@@ -599,12 +599,21 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
 
 
 # -- WhatsApp alert numbers ------------------------------------------
-#: The marker for a number added on the Alerts page.
+#: The marker for a number added on the Settings page.
 #:
 #: ``alerts_all_hotels`` doubles as coverage and as identity: a recipient with
 #: it set follows every hotel, and is exactly what this endpoint manages. A
 #: separate "is a quick number" column would have to be kept in step with it
 #: and could disagree.
+#:
+#: WHICH IS WHY REMOVAL LEAVES IT SET, and clears ``is_active`` instead.
+#: Every reader of the flag -- this query, and the dispatcher's
+#: ``_all_hotel_recipient_ids`` -- requires BOTH, so an inactive row sends
+#: nothing and appears in no list here. Clearing it as well erased the only
+#: record of what the row was, and a number somebody added and removed came
+#: back on the settings page as an ordinary recipient: no email, no hotels,
+#: the ``none`` badge beside it, and nothing on the screen explaining where it
+#: had come from.
 def _alert_numbers_query():
     return (
         select(Recipient)
@@ -663,7 +672,10 @@ async def delete_alert_number(
         )
 
     before = {"name": recipient.name, "phone_e164": recipient.phone_e164}
-    recipient.alerts_all_hotels = False
+    # ``alerts_all_hotels`` is deliberately left set: it is what says this row
+    # is a number rather than a person, and something has to remember that
+    # once the row is switched off. Inactive is what stops the sending -- both
+    # the dispatcher and the query above require the flag AND is_active.
     recipient.bypass_throttle = False
     recipient.is_active = False
 
@@ -700,8 +712,8 @@ async def replace_alert_numbers(
     for recipient in existing:
         wanted = submitted.pop(recipient.phone_e164, None)
         if wanted is None:
-            # Off the list. Keep the row and its history; stop the sending.
-            recipient.alerts_all_hotels = False
+            # Off the list. Keep the row, its history and the flag that says
+            # what it is; stop the sending. See the note on the query above.
             recipient.bypass_throttle = False
             recipient.is_active = False
             continue

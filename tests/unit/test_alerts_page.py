@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.dashboard.routes import templates
+from app.dashboard.routes import _people_not_just_numbers, templates
 
 
 class _Request:
@@ -40,6 +40,7 @@ def _recipient(**overrides):
         "quiet_hours_start": None,
         "quiet_hours_end": None,
         "receives_ops_alerts": False,
+        "alerts_all_hotels": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -599,3 +600,78 @@ class TestTheDeleteOnASavedNumber:
         ])
         template = page.split("alert-number-row-template")[1][:500]
         assert "data-recipient-id" not in template
+
+
+class TestANumberIsNotAPerson:
+    """The alert-numbers box must not populate the recipients table.
+
+    Both write to the same table -- an alert number is a recipient wearing
+    ``alerts_all_hotels`` -- so a number typed at the top of the page arrived
+    as a row at the bottom of it too, with an empty "Hotels covered" column
+    and the ``none`` badge, which says this person receives nothing. On an
+    alert number that is the exact opposite of the truth: it receives every
+    change on every hotel, including hotels added later.
+    """
+
+    def test_a_number_added_upstairs_is_not_listed_as_a_recipient(self):
+        number = _recipient(id=9, name="Front office", email=None,
+                            alerts_all_hotels=True)
+
+        assert _people_not_just_numbers([number], {}) == []
+
+    def test_an_ordinary_recipient_is_kept(self):
+        person = _recipient(id=1)
+
+        assert _people_not_just_numbers([person], {}) == [person]
+
+    def test_somebody_who_is_both_keeps_their_row(self):
+        """Their hotels can only be edited here.
+
+        Dropping the row would hide a person who is being messaged behind a
+        panel that cannot show a single one of their assignments.
+        """
+        both = _recipient(id=1, alerts_all_hotels=True)
+
+        kept = _people_not_just_numbers([both], {1: [(_link(), "Sunrise Resort")]})
+
+        assert kept == [both]
+
+    def test_a_removed_number_does_not_come_back_as_a_recipient(self):
+        """The complaint that produced this rule.
+
+        A number was added, then removed, and appeared in the table below as
+        an inactive recipient: no email, no hotels, the "none" badge, and
+        nothing on the screen saying where it had come from. Removal
+        deactivates rather than deletes -- the delivery history has to stay
+        answerable -- so the flag is what remembers the row was never a
+        person, and it is read here whether the row is active or not.
+        """
+        retired = _recipient(id=9, name="eeereer", email=None,
+                             is_active=False, alerts_all_hotels=True)
+
+        assert _people_not_just_numbers([retired], {}) == []
+
+    def test_an_ordinary_recipient_who_was_deactivated_is_still_listed(self):
+        """Somebody switched off is still somebody, and switching them back on
+        is only possible from the row this would have hidden."""
+        person = _recipient(id=2, is_active=False)
+
+        assert _people_not_just_numbers([person], {}) == [person]
+
+    def test_the_row_of_somebody_who_is_both_says_so(self):
+        page = render(recipients=[_recipient(id=1, alerts_all_hotels=True)])
+
+        assert "alert number" in recipients_table(page)
+
+    def test_an_ordinary_row_carries_no_such_badge(self):
+        assert "alert number" not in recipients_table(render())
+
+
+def recipients_table(page: str) -> str:
+    """Just the table.
+
+    The panel above it is headed "WhatsApp alert numbers", so a search of the
+    whole page finds that heading and passes whatever it was asked.
+    """
+    start = page.index("grid-recipients")
+    return page[start:page.index("</table>", start)]
