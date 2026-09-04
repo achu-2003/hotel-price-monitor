@@ -143,8 +143,8 @@ class Candidate:
 
     @property
     def is_verified(self) -> bool:
-        """At least half the prices appear on the page, and the rooms have
-        distinct names.
+        """At least half the prices appear on the page, no two sampled cards
+        collide at different prices, and the rooms have distinct names.
 
         Half rather than all for the prices: a page often shows only the
         cheapest rate per room, or hides sold-out rooms, so demanding every
@@ -189,6 +189,8 @@ class Candidate:
         """
         if not self.sample_prices or self.corroborated * 2 < len(self.sample_prices):
             return False
+        if self.collapses_distinct_prices:
+            return False
         identities = self.sample_identities
         if (
             not self.name_trusted
@@ -197,6 +199,47 @@ class Candidate:
         ):
             return False
         return True
+
+    @property
+    def collapses_distinct_prices(self) -> bool:
+        """Will two of these cards be filed as one offer, at different prices?
+
+        The repetition rule above forgives a trusted element, and it is right
+        to: one room sold on three rate plans really does print its name three
+        times, and refusing that would reject a working site. What that
+        reasoning misses is that the forgiveness is only safe when something
+        SEPARATES the cards afterwards. Where a plan selector was found, it
+        does. Where none was, three cards reading "Deluxe Room" are three
+        offers with one key, and two of them are dropped on the way in.
+
+        Trust cannot see the difference, because trust is about where the text
+        came from and this is about what the text does. A booking engine
+        heading each of its two cards with the rate plan -- "Room Only Monsoon
+        Offer" on both -- is a heading, is trusted, and names both rooms
+        identically at two different prices.
+
+        Prices are what make it decidable. Cards that collide at the SAME price
+        cost nothing: the survivor carries the number the others would have.
+        Cards that collide at different prices are a real loss, and the fetch
+        says so in as many words -- "shared an identity with another offer in
+        the same fetch AT A DIFFERENT PRICE". This asks the question at
+        discovery time, in the same terms, so a config that would earn that
+        error every half hour is never written in the first place.
+
+        Silent when the two lists cannot be paired. Blank names and unparseable
+        prices are dropped independently upstream, so unequal lengths mean the
+        entries no longer describe the same cards, and a collision inferred
+        from a misalignment would be an invention.
+        """
+        identities = self.sample_identities
+        prices = self.sample_prices
+        if len(identities) < 2 or len(identities) != len(prices):
+            return False
+        seen: dict[str, Decimal] = {}
+        for identity, price in zip(identities, prices):
+            if seen.setdefault(identity, price) != price:
+                return True
+        return False
 
     @property
     def sample_identities(self) -> list[str]:

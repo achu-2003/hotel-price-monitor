@@ -134,14 +134,21 @@ class TestTheGuardThatShouldHaveCaughtIt:
     """
 
     @staticmethod
-    def _candidate(names: list[str], *, trusted: bool) -> Candidate:
+    def _candidate(
+        names: list[str], *, trusted: bool, one_price: bool = False
+    ) -> Candidate:
+        prices = (
+            [Decimal(1000)] * len(names)
+            if one_price
+            else [Decimal(1000 + i) for i in range(len(names))]
+        )
         return Candidate(
             source_url="https://www.swiftbook.io/inst/",
             rooms_path="div.col-lg-12.col-md-12.d-flex",
             fields={"room_name": "label.fs12", "price": "div.current-price"},
             kind="dom",
             sample_names=names,
-            sample_prices=[Decimal(1000 + i) for i in range(len(names))],
+            sample_prices=prices,
             room_count=len(names),
             corroborated=len(names),
             name_trusted=trusted,
@@ -159,7 +166,24 @@ class TestTheGuardThatShouldHaveCaughtIt:
 
         The other silent wrongness: rejecting this names the rooms after their
         board basis instead.
+
+        With one price across the plans, which is what makes the repetition
+        harmless -- the cards key alike, and the survivor carries the number
+        the others would have.
         """
         plans = ["Deluxe Room", "Deluxe Room", "Deluxe Room"]
-        assert self._candidate(plans, trusted=True).is_verified is True
-        assert self._candidate(plans, trusted=False).is_verified is False
+        assert self._candidate(plans, trusted=True, one_price=True).is_verified is True
+        assert self._candidate(plans, trusted=False, one_price=True).is_verified is False
+
+    def test_but_not_when_the_plans_carry_different_prices(self):
+        """Trust says where the text came from, not what it does.
+
+        Three cards, one heading, three prices, and nothing found to tell them
+        apart: two of the three are dropped as duplicate keys on every fetch,
+        and the run reports an offer that "shared an identity with another
+        offer in the same fetch AT A DIFFERENT PRICE" for as long as the config
+        lives. A candidate that has already earned that error is not a
+        candidate.
+        """
+        plans = ["Deluxe Room", "Deluxe Room", "Deluxe Room"]
+        assert self._candidate(plans, trusted=True).is_verified is False

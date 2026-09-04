@@ -448,7 +448,7 @@ class TestRepeatedNamesAreJudgedBySource:
 class TestVerificationUsesBothFacts:
     """`is_verified` is the last gate before a config is stored."""
 
-    def _candidate(self, names, *, trusted):
+    def _candidate(self, names, *, trusted, prices=("3200", "3800")):
         from decimal import Decimal
 
         from app.adapters.discovery import Candidate
@@ -459,8 +459,8 @@ class TestVerificationUsesBothFacts:
             fields={"room_name": "div.x", "price": "span.y"},
             kind="dom",
             sample_names=list(names),
-            sample_prices=[Decimal("3200"), Decimal("3800")],
-            corroborated=2,
+            sample_prices=[Decimal(p) for p in prices],
+            corroborated=len(prices),
             name_trusted=trusted,
         )
 
@@ -471,8 +471,34 @@ class TestVerificationUsesBothFacts:
             ["King Size Bed", "King Size Bed"], trusted=False
         ).is_verified
 
-    def test_a_trusted_repeat_is_accepted(self):
-        assert self._candidate(["Deluxe Room", "Deluxe Room"], trusted=True).is_verified
+    def test_a_trusted_repeat_at_one_price_is_accepted(self):
+        """One room on two rate plans, both at 3,200. They collide, and the
+        collision costs nothing: whichever survives carries the same number."""
+        assert self._candidate(
+            ["Deluxe Room", "Deluxe Room"], trusted=True, prices=("3200", "3200")
+        ).is_verified
+
+    def test_a_trusted_repeat_at_two_prices_is_refused(self):
+        """The MGM booking engine: an h3 heading the scan trusts, carrying the
+        RATE PLAN -- "Room Only Monsoon Offer" on both cards -- at two
+        different prices. Trusted, corroborated, and guaranteed to file two
+        offers under one key, so the fetch drops one and says so every half
+        hour. Refusing here is refusing to write that config at all."""
+        assert not self._candidate(
+            ["Room Only Monsoon Offer", "Room Only Monsoon Offer"],
+            trusted=True,
+            prices=("3200", "3800"),
+        ).is_verified
+
+    def test_a_plan_selector_that_separates_them_rescues_the_candidate(self):
+        """Same two cards, but the scan also found something that tells them
+        apart. The offers key as (name, plan), nothing collapses, and the
+        candidate is good again."""
+        candidate = self._candidate(
+            ["Deluxe Room", "Deluxe Room"], trusted=True, prices=("3200", "3800")
+        )
+        candidate.sample_plans = ["Room Only", "With Breakfast"]
+        assert candidate.is_verified
 
     def test_distinct_names_are_accepted_either_way(self):
         assert self._candidate(["Suite", "Villa"], trusted=False).is_verified
