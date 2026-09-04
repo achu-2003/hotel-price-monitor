@@ -251,6 +251,36 @@
     };
   });
 
+  /*
+   * The irreversible half of the pair above. Deactivating keeps the person and
+   * their log; this removes both, so the dialog spells out what goes rather
+   * than asking "are you sure?" about an amount nobody can see.
+   *
+   * No typed-name gate, unlike a hotel purge: that erases months of collected
+   * prices, which is the product and cannot be re-gathered. This erases one
+   * contact and the record of what was sent to them, which is smaller, and the
+   * reversible alternative is the button directly above it.
+   */
+  bindAction("button.delete-recipient", function (button) {
+    const hotels = Number(button.dataset.hotels || 0);
+    const sent = Number(button.dataset.sent || 0);
+    const goes = [];
+    if (hotels) goes.push(hotels + (hotels === 1 ? " hotel assignment" : " hotel assignments"));
+    if (sent) goes.push(sent + (sent === 1 ? " sent message" : " sent messages"));
+
+    return {
+      path: "/api/v1/recipients/" + button.dataset.recipientId,
+      method: "DELETE",
+      confirm:
+        "Delete " + button.dataset.name + " permanently?\n\n" +
+        (goes.length
+          ? "This also deletes their " + goes.join(" and ") + ".\n\n"
+          : "") +
+        "Nothing can bring this back. To stop the messages without losing " +
+        "anything, use Deactivate instead.",
+    };
+  });
+
   bindAction("button.resume-target", function (button) {
     // Closing the circuit also clears the failure counter and makes the target
     // due immediately — see the API handler.

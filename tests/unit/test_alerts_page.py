@@ -67,6 +67,9 @@ def render(**overrides) -> str:
         "recipients": [_recipient()],
         "assignments": {1: [(_link(), "Sunrise Resort")]},
         "hotels": [SimpleNamespace(id=7, name="Sunrise Resort")],
+        # How much has been sent to each person, which the delete
+        # confirmation names before it destroys it.
+        "sent_counts": {1: 48},
         "channels": ["email", "whatsapp"],
         "default_quiet": (time(22, 0), time(7, 0)),
         "notifications": [],
@@ -160,6 +163,43 @@ class TestUnassignedRecipients:
         page = render()
         assert "Sunrise Resort" in page
         assert "This person receives nothing" not in page
+
+
+class TestRemovingSomebody:
+    """Two ways to stop telling a person things, and only one is reversible.
+
+    Deactivating keeps the row and the delivery log; deleting takes both. The
+    page has to make that difference visible BEFORE the click, because after
+    it there is nothing left to look at.
+    """
+
+    def test_both_are_offered(self):
+        page = render()
+        assert "toggle-recipient" in page
+        assert "delete-recipient" in page
+
+    def test_the_delete_says_what_goes_with_the_person(self):
+        """A confirmation that cannot say how much it destroys is asking
+        somebody to agree to an unknown."""
+        page = render(sent_counts={1: 48})
+        assert "48 messages" in page
+        assert "delete-recipient" in page and 'data-sent="48"' in page
+
+    def test_it_points_at_the_reversible_option(self):
+        assert "deactivating does" in render()
+
+    def test_a_person_nothing_was_ever_sent_to_claims_no_messages(self):
+        page = render(sent_counts={})
+        assert "messages already" not in page
+        assert 'data-sent="0"' in page
+
+    def test_the_count_reaches_the_button_the_dialog_reads(self):
+        """The dialog is built from the data attributes, so a count that
+        renders in the paragraph but not on the button is a dialog that
+        undersells what the click will do."""
+        page = render(sent_counts={1: 3})
+        assert 'data-sent="3"' in page
+        assert 'data-hotels="1"' in page
 
 
 class TestChannelsOffered:
@@ -264,7 +304,7 @@ class TestPermissions:
         "marker",
         ["Add a recipient", "create-recipient", "assign-hotel",
          "toggle-recipient", "unassign-hotel", "test-notify",
-         "assign-all-hotels"],
+         "assign-all-hotels", "delete-recipient"],
     )
     def test_every_mutating_control_is_admin_only(self, marker):
         assert marker in render()

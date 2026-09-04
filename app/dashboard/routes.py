@@ -1365,6 +1365,21 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
 
     recipients = (await session.scalars(select(Recipient).order_by(Recipient.name))).all()
 
+    # How much has been sent to each person, for the delete confirmation.
+    #
+    # Deleting a recipient takes their delivery history with it -- the FK is
+    # NOT NULL with ON DELETE CASCADE, so it cannot be orphaned and kept -- and
+    # a confirmation that cannot say how much that is asks people to agree to
+    # an unknown. One grouped count for the page, not one per row.
+    sent_counts = dict(
+        (
+            await session.execute(
+                select(Notification.recipient_id, func.count(Notification.id))
+                .group_by(Notification.recipient_id)
+            )
+        ).all()
+    )
+
     # The WhatsApp alert numbers, which are recipients wearing the
     # alerts_all_hotels flag rather than a separate kind of thing -- so they
     # reuse the digest, the dedupe and the delivery history on /notifications.
@@ -1400,6 +1415,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         request, user, session, "settings.html",
         alert_defaults=alert_defaults,
         recipients=recipients, assignments=assignments, hotels=hotels,
+        sent_counts=sent_counts,
         channels=registry.available_channels(),
         default_quiet=(settings.quiet_hours_start, settings.quiet_hours_end),
         alert_numbers=alert_numbers,

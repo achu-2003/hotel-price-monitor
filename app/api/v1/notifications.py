@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.api.deps import (
     AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
@@ -100,6 +100,83 @@ async def update_recipient(
     )
     await session.commit()
     return RecipientOut.model_validate(recipient)
+
+
+@router.delete("/recipients/{recipient_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_recipient(
+    recipient_id: int, request: Request, session: DbSession, admin: AdminUser
+):
+    """Remove a person entirely. Not reversible.
+
+    WHY THIS IS A REAL DELETE, WHERE A HOTEL'S IS NOT
+    =================================================
+    ``DELETE /hotels/{id}`` deactivates, because a hotel's history is the
+    product: what a competitor charged last March is still the answer to a
+    question somebody asks. A recipient's history is a delivery log about a
+    PERSON, and when the receptionist who was on this list leaves, keeping
+    their name, their number and every message ever sent to them forever is
+    not evidence anyone wanted -- it is a former employee's contact details
+    living on in a system nobody thinks to prune.
+
+    So both answers are offered, side by side on the settings page, and the
+    reversible one stays the easy one:
+
+      Deactivate (PATCH is_active)  stops delivery, keeps the person and the log
+      Delete     (this)             removes the person, the log goes with them
+
+    WHAT GOES WITH THEM
+    ===================
+    Their hotel assignments, and every notification ever sent to them --
+    ``notifications.recipient_id`` is NOT NULL with ON DELETE CASCADE, so the
+    delivery history cannot be orphaned and kept. That is why the count is
+    read first and written into the audit trail: after the row is gone, the
+    audit entry is the only remaining record that this person existed, who
+    removed them, and how much was sent to them before that.
+
+    Deleting an alert number is allowed and behaves sensibly: ``PUT
+    /alert-numbers`` matches on the phone number, so re-adding it afterwards
+    creates a fresh row rather than resurrecting a half-deleted one.
+    """
+    recipient = await get_object_or_404(session, Recipient, recipient_id, "Recipient")
+
+    messages = await session.scalar(
+        select(func.count(Notification.id)).where(
+            Notification.recipient_id == recipient_id
+        )
+    ) or 0
+    assignments = await session.scalar(
+        select(func.count(HotelRecipient.id)).where(
+            HotelRecipient.recipient_id == recipient_id
+        )
+    ) or 0
+
+    # Recorded BEFORE the row goes, so the trail keeps the name and the numbers
+    # after there is nothing left to look up. record_audit scrubs the payload,
+    # so the address is recorded as having existed rather than in full.
+    await record_audit(
+        session, user=admin, action="delete", entity="recipient",
+        entity_id=recipient_id,
+        before={
+            "name": recipient.name,
+            "email": recipient.email,
+            "phone_e164": recipient.phone_e164,
+            "alerts_all_hotels": recipient.alerts_all_hotels,
+        },
+        after={"assignments_deleted": assignments, "messages_deleted": messages},
+        request=request,
+    )
+
+    # A Core DELETE rather than session.delete(): the ORM would lazy-load
+    # ``hotel_links`` to walk the cascade, which an async session cannot do
+    # implicitly. The database's own ON DELETE CASCADE covers the assignments
+    # and the delivery history.
+    await session.execute(delete(Recipient).where(Recipient.id == recipient_id))
+    await session.commit()
+
+    log.info(
+        "recipient_deleted", recipient_id=recipient_id, name=recipient.name,
+        assignments=assignments, messages=messages,
+    )
 
 
 @router.post(

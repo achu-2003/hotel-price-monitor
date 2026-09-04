@@ -477,8 +477,11 @@
                   </span>
                 </form>
 
-                {# Deactivating stops delivery without deleting the history of
-                   what was already sent to them. #}
+                {#
+                  Two ways to stop telling someone things, kept next to each
+                  other because they answer different questions. Deactivating
+                  is for "not for now"; deleting is for a person who has left.
+                #}
                 {% if recipient.is_active %}
                 <button class="toggle-recipient" data-recipient-id="{{ recipient.id }}"
                         data-active="false" data-name="{{ recipient.name }}">
@@ -490,6 +493,36 @@
                   Reactivate
                 </button>
                 {% endif %}
+
+                {# ``or {}`` so a caller that renders this template without the
+                   counts gets a delete button that says less, rather than a
+                   500 on the whole settings page. #}
+                {% set sent = (sent_counts or {}).get(recipient.id, 0) %}
+                <div class="danger-zone">
+                  <h3 class="danger-head">Delete this person</h3>
+                  <p class="muted">
+                    For someone who has left, rather than someone who should
+                    stop hearing about prices for a while â€” deactivating does
+                    that, and keeps everything.
+                    {% if links %}
+                    Removes them from {{ links|length }}
+                    hotel{{ '' if links|length == 1 else 's' }}.
+                    {% endif %}
+                    {% if sent %}
+                    The {{ sent }} message{{ '' if sent == 1 else 's' }} already
+                    sent to them go too: a delivery log cannot outlive the
+                    person it is about.
+                    {% endif %}
+                    Nothing here can bring it back.
+                  </p>
+                  <button class="danger delete-recipient"
+                          data-recipient-id="{{ recipient.id }}"
+                          data-name="{{ recipient.name }}"
+                          data-hotels="{{ links|length }}"
+                          data-sent="{{ sent }}">
+                    Delete permanently
+                  </button>
+                </div>
               </div>
               {% endif %}
 
