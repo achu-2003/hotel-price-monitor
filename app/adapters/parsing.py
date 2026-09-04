@@ -87,6 +87,28 @@ _TAX_EXCLUSIVE_MARKERS = (
     "excl tax", "before tax", "plus tax", "plus taxes", "+ tax", "+ taxes",
     "tax extra", "taxes extra", "extra taxes",
 )
+
+# The same statement made with the amount in it: "+ Rs 1,836 taxes & fees".
+#
+# The literal markers above cannot see this. They look for "+ taxes", and an
+# OTA that prints the figure it is about to add puts the number in between --
+# so the most explicit way a page can say "this headline is pre-tax", with the
+# tax spelled out beside it, was the one phrasing that read as silence. The
+# headline was then filed as the all-in price and the stated tax discarded,
+# on every card of every site that words it this way.
+#
+# A currency symbol is optional because plenty of cards write it once, on the
+# headline, and leave the tax bare. The trailing word is required: it is what
+# separates a tax line from "TV + 13 more".
+_TAX_ADDED_RE = re.compile(
+    r"""(?:\+|\bplus\b)\s*                     # the addition itself
+        (?:₹|rs\.?|inr|\$|usd|€|£)?\s*          # currency, if it repeats it
+        (?P<amount>\d[\d,.]*\d|\d)\s*           # the amount
+        (?:&\s*)?
+        (?:tax(?:es)?|fees?|gst|vat)\b                # what it is
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 _TAX_INCLUSIVE_MARKERS = (
     "inclusive of tax", "including tax", "including taxes", "incl. tax",
     "incl tax", "tax included", "taxes included", "all inclusive",
@@ -246,6 +268,28 @@ def looks_urgency(text: str) -> bool:
     return any(w in lowered for w in ("left", "remaining", "last", "only"))
 
 
+def parse_added_taxes(text: str | None) -> Decimal | None:
+    """The tax a card says it will ADD to its headline: "+ Rs 1,836 taxes".
+
+    Returns ``None`` when the page states no such figure -- which is most of
+    them. This is the amount a page volunteers, never a computed one: a tax
+    derived by subtracting two numbers we scraped separately would be a guess
+    dressed as a fact, and it would be wrong the first time a card showed a
+    discount instead of a tax.
+
+    Bounds-checked like every other parse, and against the price bounds rather
+    than a tax-shaped range, because a selector that has drifted onto the rate
+    is exactly what this has to refuse. Zero is allowed: a page saying "+ Rs 0
+    taxes" is stating something true.
+    """
+    if not text:
+        return None
+    match = _TAX_ADDED_RE.search(" ".join(text.split()))
+    if not match:
+        return None
+    return parse_price_or_none(match.group("amount"), field_name="taxes_fees")
+
+
 def declared_tax_basis(text: str | None) -> str | None:
     """Which side of the tax a page says its headline price is on.
 
@@ -262,7 +306,10 @@ def declared_tax_basis(text: str | None) -> str | None:
     if not text:
         return None
     lowered = " ".join(text.lower().split())
-    exclusive = any(marker in lowered for marker in _TAX_EXCLUSIVE_MARKERS)
+    exclusive = (
+        any(marker in lowered for marker in _TAX_EXCLUSIVE_MARKERS)
+        or _TAX_ADDED_RE.search(lowered) is not None
+    )
     inclusive = any(marker in lowered for marker in _TAX_INCLUSIVE_MARKERS)
     if exclusive and not inclusive:
         return "exclusive"

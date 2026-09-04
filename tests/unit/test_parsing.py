@@ -15,6 +15,7 @@ from app.adapters.parsing import (
     declared_tax_basis,
     detect_currency,
     looks_sold_out,
+    parse_added_taxes,
     parse_price,
     parse_price_or_none,
     parse_rooms_left,
@@ -212,3 +213,64 @@ class TestDeclaredTaxBasis:
     def test_line_breaks_and_spacing_do_not_hide_the_phrase(self):
         card = "Room Rates\n  Exclusive   of Tax\nRs 3,200.00"
         assert declared_tax_basis(card) == "exclusive"
+
+
+class TestATaxStatedWithItsAmount:
+    """"₹9,995 + ₹2,019 taxes & fees" — the phrasing every OTA card uses.
+
+    The literal markers look for "+ taxes", and a card that prints the figure
+    it is adding puts the number in between, so the most explicit statement a
+    page can make was the one that read as silence. The headline then went in
+    as the all-in price with the stated tax discarded, and a dashboard showed
+    a pre-tax rate as if it were the bill.
+    """
+
+    # Verbatim from a Cleartrip room card.
+    CARD = (
+        "1/4 Nandhavanam Room Double Bed · 500 sq.ft · 2 Adults Blanket Water "
+        "bottle Attached washroom Room with Breakfast & Dinner Cancellation "
+        "charges apply ₹10,995 + ₹2,019 taxes & fees night ₹11,219 2% off Book"
+    )
+
+    def test_the_card_is_read_as_a_pre_tax_rate(self):
+        assert declared_tax_basis(self.CARD) == "exclusive"
+
+    def test_the_stated_tax_is_kept(self):
+        assert parse_added_taxes(self.CARD) == D("2019")
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("/ night + ₹1,836 taxes & fees", D("1836")),
+            ("+ Rs 450 tax", D("450")),
+            ("plus ₹1,08,363 taxes", D("108363")),
+            ("₹5,000 + 900 GST", D("900")),
+            ("+ ₹250 fees", D("250")),
+        ],
+    )
+    def test_it_reads_the_amount_whatever_the_wording(self, text, expected):
+        assert parse_added_taxes(text) == expected
+        assert declared_tax_basis(text) == "exclusive"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # The trailing word is what makes it a tax line. Without it this
+            # is an amenity count, and reading 13 as a tax would put a
+            # nonsense figure on the row.
+            "Blackout curtains Flat-screen TV Feather pillow TV + 13 more",
+            "Deluxe Room ₹3,200 per night",
+            "",
+        ],
+    )
+    def test_it_refuses_anything_that_is_not_a_stated_tax(self, text):
+        assert parse_added_taxes(text) is None
+
+    def test_none_is_not_a_string(self):
+        assert parse_added_taxes(None) is None
+
+    def test_a_card_stating_both_still_declares_nothing(self):
+        # The existing rule survives the new phrasing: a page describing two
+        # different figures has not told us which one we scraped.
+        both = "₹3,200 + ₹576 taxes; ₹3,776 inclusive of tax"
+        assert declared_tax_basis(both) is None

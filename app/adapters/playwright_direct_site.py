@@ -51,6 +51,7 @@ from app.adapters.parsing import (
     declared_tax_basis,
     detect_currency,
     looks_sold_out,
+    parse_added_taxes,
     parse_price,
     parse_price_or_none,
     parse_rooms_left,
@@ -471,6 +472,15 @@ class PlaywrightDirectSiteAdapter:
         taxes_text = _price_text_in(card, selectors.get("taxes_fees"))
         exclusive = parse_price_or_none(exclusive_text, field_name="price_exclusive")
         taxes = parse_price_or_none(taxes_text, field_name="taxes_fees")
+
+        # No tax selector configured, but the card may still state the figure
+        # in words beside the rate: "Rs 9,995 + Rs 1,836 taxes & fees". Reading
+        # it costs nothing and is the difference between a row that says what a
+        # night costs and one that shows a pre-tax number as if it were the
+        # bill. Only ever a fallback -- a selector aimed at the tax element is
+        # a better answer than a sentence, and keeps precedence.
+        if taxes is None:
+            taxes = parse_added_taxes(card_text)
 
         # One scraped number has to be filed as one component or the other, and
         # the card usually says which: "Room Rates Exclusive of Tax Rs 3,200".

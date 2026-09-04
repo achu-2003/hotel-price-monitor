@@ -183,7 +183,17 @@
     {% endif %}
   </h2>
   <table class="grid">
-    <thead><tr><th>Room</th><th class="num">Guests</th><th class="num">Price</th><th>Last checked</th></tr></thead>
+    {# Which side of the tax these numbers sit on, said in the header. The
+       column used to be labelled "Price" alone, and a pre-tax rate under that
+       heading reads as the bill -- the gap between the two is a fifth of the
+       number on a card that charges 18%. #}
+    <thead><tr><th>Room</th><th class="num">Guests</th>
+      <th class="num">Price
+        {% if prices[0][0].last_price_basis.value == 'exclusive' %}
+        <span class="muted">excl. tax</span>
+        {% endif %}
+      </th>
+      <th>Last checked</th></tr></thead>
     <tbody>
       {% for series, room_name in prices %}
       <tr>
