@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+{% block title %}Settings · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+<p class="muted">
+  Who the system is allowed to tell, and how to reach them. Nothing here
+  changes what is monitored — that lives on each hotel's page. What was
+  actually delivered is on Alerts.
+</p>
+
+{# Sensitivity first: it decides WHETHER anybody is told, and the panels below
+   only decide who. An operator arriving because they are getting too many
+   messages is looking for this, not for the recipient list. #}
+<section>
+  <h2>Alert sensitivity</h2>
+  <p class="muted">
+    How big a price move has to be before anyone is told. Applies to every
+    hotel that has not set its own on its hotel page.
+  </p>
+
+  <form class="panel stack alert-defaults-form">
+    <div class="field-row">
+      <label>
+        Tell me when a price moves by at least
+        <span class="prefix">₹</span>
+        <input type="number" name="min_delta_abs" min="0" step="1"
+               value="{{ alert_defaults.min_delta_abs | round(0, 'floor') | int }}" required>
+      </label>
+    </div>
+
+    <label class="stack-field">
+      Confirm over
+      <input type="number" name="confirm_checks" min="1" max="10" step="1"
+             value="{{ alert_defaults.confirm_checks }}" required>
+      consecutive checks before sending
+      <span class="muted">
+        — a single odd reading is not a price change, and this is what stops
+        one becoming a message.
+      </span>
+    </label>
+
+    <div class="actions">
+      <button type="submit">Save sensitivity</button>
+      <span class="form-status" role="status"></span>
+    </div>
+  </form>
+</section>
+
+{% if not channels %}
+{# Nothing below can send. Said once, at the top, rather than as a surprise
+   after someone has filled the form in. #}
+<p class="note">
+  <strong>No channel is configured on this deployment.</strong> Recipients can
+  be registered, but nothing will reach them until SMTP or Resend is set up for
+  email, or the Meta access token and approved template for WhatsApp.
+</p>
+{% endif %}
+
+{# The two ways of adding somebody, side by side: the quick one and the
+   considered one. Stacked, the second sat below a fold and read as a
+   different subject; paired, the choice between them is the first thing on
+   the page. #}
+<section class="setup-pair">
+  <div class="setup-col">
+  <h2>WhatsApp alert numbers</h2>
+  <p class="muted">
+    Up to {{ max_alert_numbers }} numbers that get <strong>every price change,
+    on every hotel</strong> — including hotels added later, with no assignment
+    to keep up to date. The shortcut for "just WhatsApp me when anything
+    moves"; recipients are for anything more selective.
+  </p>
+  {% if is_admin %}
+  {# Closed until somebody opens it. Both panels used to spring open when
+     their list was empty, as a nudge to fill it in, and it reads as the
+     opposite: a panel already expanded looks like one you have just
+     clicked, so the page arrives looking half-used. The summary says how
+     many are configured, which does the nudging without the noise. #}
+  <details class="panel" id="alert-numbers">
+    <summary>
+      {% if alert_numbers %}
+        Alert numbers ({{ alert_numbers|length }} of {{ max_alert_numbers }})
+      {% else %}
+        Add alert numbers — none set, nobody is getting everything
+      {% endif %}
+    </summary>
+
+    {% if "whatsapp" not in channels %}
+    {# Said here as well as at the top: somebody arriving straight at this
+       panel needs to know the numbers will sit inert, not that they typed
+       something wrong. #}
+    <p class="note">
+      <strong>WhatsApp is not sending yet.</strong> Numbers save fine and are
+      kept, but nothing reaches them until the provider is configured and the
+      template is approved. See the runbook.
+    </p>
+    {% endif %}
+
+    {# One row to begin with, and a button for the next. Five empty rows up
+       front implied five were expected; most deployments want one or two. #}
+    <form class="stack alert-numbers-form" data-max="{{ max_alert_numbers }}">
+      <div class="alert-number-rows">
+        {% for existing in alert_numbers %}
+        <div class="alert-number-row">
+          <label>Number <span class="row-number">{{ loop.index }}</span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210"
+                   value="{{ existing.phone_e164 or '' }}">
+          </label>
+          {# NOT "Label (optional)". Optional is how a list of five anonymous
+             numbers happens, and the first question asked of one that should
+             stop receiving is whose it is. The delivery history on Alerts
+             prints this name rather than the digits, too. #}
+          <label>Whose number
+            <input name="label" maxlength="120" placeholder="Priya, front office"
+                   value="{{ existing.name if existing.name != existing.phone_e164 else '' }}">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+        {% endfor %}
+        {% if not alert_numbers %}
+        <div class="alert-number-row">
+          <label>Number <span class="row-number">1</span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210">
+          </label>
+          <label>Whose number
+            <input name="label" maxlength="120" placeholder="Priya, front office">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+        {% endif %}
+      </div>
+
+      {# Cloned by the Add button. Kept in the markup rather than built as a
+         string in JS so the two row shapes cannot drift apart. #}
+      <template class="alert-number-row-template">
+        <div class="alert-number-row">
+          <label>Number <span class="row-number"></span>
+            <input name="phone" data-phone data-default-cc="+91" maxlength="24"
+                   placeholder="9876543210">
+          </label>
+          <label>Whose number
+            <input name="label" maxlength="120" placeholder="Priya, front office">
+          </label>
+          <button type="button" class="alert-number-remove"
+                  title="Remove this number" aria-label="Remove this number">×</button>
+        </div>
+      </template>
+
+      <div class="alert-number-actions">
+        <button type="button" class="alert-number-add">+ Add another number</button>
+        <span class="muted alert-number-count"></span>
+      </div>
+
+      <span class="muted">
+        9876543210, 098765 43210 or +91 98765 43210 — all fine; each is
+        rewritten to +919876543210 when you leave the field. Remove a row with
+        × to stop that number: it stops receiving immediately, and its delivery
+        history below is kept.
+      </span>
+      <span class="muted">
+        These bypass quiet hours and the hourly cap, so they arrive at any
+        hour. A hotel's simultaneous changes are still batched into one
+        message, and each message is billed by WhatsApp.
+      </span>
+
+      <button type="submit">Save alert numbers</button>
+      <p class="form-status" hidden></p>
+    </form>
+  </details>
+  {% endif %}
+  </div>
+
+  <div class="setup-col">
+  <h2>Recipients</h2>
+  <p class="muted">
+    A recipient is a person; an <em>assignment</em> is the hotel they watch.
+    Registering someone sends them nothing on its own — the dispatcher looks up
+    assignments, so a recipient covering no hotels is silently inert. Expand a
+    row below to assign one.
+  </p>
+  {% if is_admin %}
+  <details class="panel" id="add-recipient">
+    <summary>
+      {% if recipients %}
+        Add a recipient
+      {% else %}
+        Add a recipient — none registered yet
+      {% endif %}
+    </summary>
+    <form class="stack create-recipient">
+      <label>Name
+        <input name="name" required maxlength="120" placeholder="Priya, front office">
+      </label>
+      <label>Email
+        <input name="email" type="email" maxlength="255" placeholder="priya@example.com">
+      </label>
+      <label>Phone
+        <input name="phone_e164" data-phone data-default-cc="+91" maxlength="24"
+               placeholder="9876543210">
+        <span class="muted">
+          9876543210, 098765 43210 or +91 98765 43210 — all fine. It is
+          rewritten to +919876543210 when you leave the field, because that is
+          the only form the Cloud API accepts. Used for WhatsApp; there is no
+          SMS channel. Worth recording even before WhatsApp is switched on.
+        </span>
+      </label>
+      <span class="muted">
+        One of the two is enough to register someone, but each channel needs
+        its own: email needs the address, WhatsApp needs the number.
+      </span>
+
+      <button type="submit">Create recipient</button>
+      <p class="form-status" hidden></p>
+      {# Contact details only. Which hotels they watch, on which channel, and
+         the quiet window all live on the person's own row below — settings
+         someone tunes later and rarely at the moment of typing in a phone
+         number. #}
+      <span class="muted">
+        Registers the person. Expand their row to choose the hotels they watch
+        — nothing is sent to them until at least one is assigned. Quiet hours
+        default to
+        {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+        and can be changed there too.
+      </span>
+    </form>
+  </details>
+  {% endif %}
+  </div>
+</section>
+
+{# The list itself is full width: it has six columns and already needs a
+   horizontal scroller at this width, so half the page would guarantee one. #}
+<section>
+  {# Declared lanes, obeyed. Without them one recipient covering eight hotels
+     sized the "hotels covered" column by its own 130-character line and pushed
+     Status and the test buttons off the right edge of the page. #}
+  <div class="scroll-x">
+  <table class="grid grid-recipients">
+    <colgroup>
+      <col class="col-name"><col class="col-reach"><col class="col-quiet">
+      <col class="col-covered"><col class="col-status"><col class="col-actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Name</th><th>Reachable at</th><th>Quiet hours</th>
+        <th>Hotels covered</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for recipient in recipients %}
+      {% set links = assignments.get(recipient.id, []) %}
+      <tr>
+        <td>
+          <button type="button" class="row-expand" aria-expanded="false"
+                  aria-controls="recipient-{{ recipient.id }}">
+            <span class="row-caret" aria-hidden="true">▸</span>
+            <strong>{{ recipient.name }}</strong>
+          </button>
+        </td>
+        <td class="muted">
+          {# Both addresses on one line: which channels can reach this person
+             is the question this column exists to answer. #}
+          {{ recipient.email or '—' }}<br>
+          {{ recipient.phone_e164 or '—' }}
+        </td>
+        <td class="muted nowrap">
+          {% if recipient.quiet_hours_start %}
+            {{ recipient.quiet_hours_start|localtime('%H:%M') }}–{{ recipient.quiet_hours_end|localtime('%H:%M') }}
+          {% else %}
+            <span title="Falls back to the deployment default">
+              default {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+            </span>
+          {% endif %}
+        </td>
+        <td>
+          {% if links %}
+            {{ links|length }}
+            {# One line, clipped to the column, with the whole list in the
+               row's own panel. The names are a reminder of who is covered;
+               the count above them is the number that matters. #}
+            <span class="muted truncate covered-names"
+                  title="{{ links|map(attribute='1')|join(', ') }}">
+              {{ links|map(attribute='1')|join(', ') }}
+            </span>
+          {% else %}
+            {# The failure this page exists to make visible. #}
+            <span class="pill pill-warn" title="This person receives nothing">none</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if recipient.is_active %}<span class="pill pill-ok">active</span>
+          {% else %}<span class="pill pill-off">inactive</span>{% endif %}
+        </td>
+        <td>
+          {# The flex row goes on a div inside the cell: a td told to be a flex
+             container stops filling the row's height and draws its bottom
+             border across the middle of any row that wrapped. #}
+          <div class="row-actions">
+          {% if is_admin %}
+          {# Exercising the provider before a real price move depends on it:
+             an access token that expired last week looks exactly like a quiet
+             market until somebody presses one of these. Only the channels this
+             deployment can send on are offered, and the button is dead when
+             the address it would use is missing -- said in the tooltip,
+             because a button that fails on click teaches nothing. #}
+          {% for channel in channels %}
+          {% set address = recipient.email if channel == 'email' else recipient.phone_e164 %}
+          <button class="test-notify" data-recipient-id="{{ recipient.id }}"
+                  data-channel="{{ channel }}"
+                  {% if not address %}disabled
+                  title="No {{ 'email address' if channel == 'email' else 'phone number' }} on file"
+                  {% else %}title="Send one test {{ channel }} message now"{% endif %}>
+            Test {{ channel }}
+          </button>
+          {% endfor %}
+          {% endif %}
+          </div>
+        </td>
+      </tr>
+      <tr class="row-detail" id="recipient-{{ recipient.id }}" hidden>
+        <td colspan="6">
+          <div class="row-panel">
+            <div class="row-panel-cols">
+              <div>
+                <h3>Hotels covered</h3>
+                {% if links %}
+                <table class="grid subgrid">
+                  <thead>
+                    <tr><th>Hotel</th><th>Channels</th><th>Told about</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {% for link, hotel_name in links %}
+                    <tr>
+                      <td>{{ hotel_name }}</td>
+                      <td class="muted">{{ link.channels|join(', ') }}</td>
+                      <td class="muted">
+                        {# "anything" rather than an empty cell: no threshold on
+                           the assignment means every confirmed move reaches
+                           them, which is a decision and not a missing value. #}
+                        {% if link.min_delta_abs or link.min_delta_pct -%}
+                          {%- if link.min_delta_abs %}₹{{ link.min_delta_abs|round(0, 'floor')|int }}{% endif -%}
+                          {%- if link.min_delta_abs and link.min_delta_pct %} and {% endif -%}
+                          {%- if link.min_delta_pct %}{{ link.min_delta_pct|round(0, 'floor')|int }}%{% endif -%}
+                        {%- else %}anything{% endif %}
+                      </td>
+                      <td>
+                        {% if is_admin %}
+                        <button class="unassign-hotel"
+                                data-hotel-id="{{ link.hotel_id }}"
+                                data-recipient-id="{{ recipient.id }}"
+                                data-hotel-name="{{ hotel_name }}">Remove</button>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% else %}
+                <p class="muted">
+                  No hotel is assigned. Nothing will ever be sent to this
+                  person until one is — the dispatcher reads the assignments,
+                  not the recipient list.
+                </p>
+                {% endif %}
+
+                {% if is_admin %}
+                <form class="stack assign-hotel" data-recipient-id="{{ recipient.id }}">
+                  <label>Hotel
+                    <select name="hotel_id">
+                      <option value="">Choose a hotel…</option>
+                      {% for hotel in hotels %}
+                      <option value="{{ hotel.id }}">{{ hotel.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+
+                  {# Only what this deployment can actually send on. Offering
+                     WhatsApp before the access token exists produces an
+                     assignment that looks saved and fails at the first price
+                     move, which is the worst moment to find out. #}
+                  <fieldset class="channel-set">
+                    <legend>Channels</legend>
+                    {% for channel in channels %}
+                    <label class="tight">
+                      <input type="checkbox" name="channels" value="{{ channel }}"
+                             {% if channel == 'email' %}checked{% endif %}>
+                      {{ channel }}
+                    </label>
+                    {% endfor %}
+                  </fieldset>
+
+                  <div class="field-row">
+                    <label class="tight">₹ at least
+                      <input type="number" name="min_delta_abs" min="0" step="1">
+                    </label>
+                    <label class="tight">and at least
+                      <input type="number" name="min_delta_pct" min="0" max="100" step="0.5">
+                    </label>
+                    <span class="muted">%</span>
+                  </div>
+                  <span class="muted">
+                    Left blank, this assignment inherits the deployment default
+                    at the top of the page. Both floors have to be cleared
+                    before a move is worth a message.
+                  </span>
+
+                  <div class="actions">
+                    <button type="submit">Assign</button>
+                    {# One at a time is thirty clicks on a portfolio this size,
+                       and the endpoint takes one hotel per call -- so the loop
+                       lives in the browser rather than in a bulk endpoint that
+                       could not be audited per hotel. #}
+                    <button type="button" class="assign-all-hotels"
+                            data-recipient-id="{{ recipient.id }}"
+                            data-name="{{ recipient.name }}">Assign to every hotel</button>
+                  </div>
+                  <p class="form-status" hidden></p>
+                </form>
+                {% endif %}
+              </div>
+
+              {% if is_admin %}
+              <div>
+                <h3>Contact details</h3>
+                <form class="stack api-form"
+                      data-endpoint="/api/v1/recipients/{{ recipient.id }}"
+                      data-method="PATCH">
+                  <label>Name
+                    <input name="name" maxlength="120" value="{{ recipient.name }}">
+                  </label>
+                  <label>Email
+                    <input name="email" type="email" maxlength="255"
+                           value="{{ recipient.email or '' }}">
+                  </label>
+                  <label>Phone
+                    <input name="phone_e164" data-phone data-default-cc="+91"
+                           maxlength="24" value="{{ recipient.phone_e164 or '' }}">
+                  </label>
+                  <label>Timezone
+                    <input name="timezone" maxlength="60"
+                           value="{{ recipient.timezone or '' }}">
+                    <span class="muted">The clock the quiet window is read in.</span>
+                  </label>
+
+                  <div class="field-row">
+                    <label class="tight">Quiet from
+                      <input type="time" name="quiet_hours_start"
+                             value="{{ recipient.quiet_hours_start|localtime('%H:%M') if recipient.quiet_hours_start else '' }}">
+                    </label>
+                    <label class="tight">until
+                      <input type="time" name="quiet_hours_end"
+                             value="{{ recipient.quiet_hours_end|localtime('%H:%M') if recipient.quiet_hours_end else '' }}">
+                    </label>
+                  </div>
+                  <span class="muted">
+                    A message raised inside the window is held, not dropped,
+                    and goes out when the window ends. Left blank, the
+                    deployment default of
+                    {{ default_quiet[0]|localtime('%H:%M') }}–{{ default_quiet[1]|localtime('%H:%M') }}
+                    applies.
+                  </span>
+                  <span class="muted">
+                    Worth checking against the delivery history on Alerts. An
+                    address that quietly bounces, or a number that was never a
+                    WhatsApp contact, is a channel that reports nothing and
+                    can fail for a week without anyone finding out.
+                  </span>
+                  <button type="submit">Save</button>
+                  <p class="form-status" hidden></p>
+                  <span class="muted">
+                    A blank field is left as it was — clearing an address is a
+                    deactivation, below.
+                  </span>
+                </form>
+
+                {# Deactivating stops delivery without deleting the history of
+                   what was already sent to them. #}
+                {% if recipient.is_active %}
+                <button class="toggle-recipient" data-recipient-id="{{ recipient.id }}"
+                        data-active="false" data-name="{{ recipient.name }}">
+                  Deactivate
+                </button>
+                {% else %}
+                <button class="toggle-recipient" data-recipient-id="{{ recipient.id }}"
+                        data-active="true" data-name="{{ recipient.name }}">
+                  Reactivate
+                </button>
+                {% endif %}
+              </div>
+              {% endif %}
+
+            </div>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No recipients — nothing will be sent to anyone.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+</section>
+{% endblock %}

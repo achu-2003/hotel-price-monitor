@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, time
 from decimal import Decimal
 
-from pydantic import EmailStr, Field, model_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 
 from app.db.models.enums import NotificationStatus
 from app.schemas.common import ORMModel
@@ -141,13 +141,34 @@ MAX_ALERT_NUMBERS = 5
 
 
 class AlertNumberIn(ORMModel):
-    """One phone number on the Alerts page."""
+    """One phone number on the Settings page, and whose it is."""
 
     phone_e164: str = Field(
         pattern=r"^\+[1-9]\d{7,14}$",
         description="E.164 with the country code, e.g. +919876543210.",
     )
-    name: str | None = Field(default=None, max_length=120)
+    #: REQUIRED, where it used to be optional and fell back to the digits.
+    #: This is now the only list of who gets told anything, and the first
+    #: question asked of a row in it is whose number that is -- a list of five
+    #: unnamed numbers cannot be pruned by anyone who did not type it. The
+    #: delivery history on /notifications prints this name too.
+    name: str = Field(
+        min_length=1, max_length=120,
+        description="Whose number it is, e.g. 'Priya, front office'.",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _named(cls, value: str) -> str:
+        """Spaces are not a name.
+
+        ``min_length`` counts characters, so a field holding three spaces
+        satisfies it and stores a row whose name renders as nothing at all.
+        """
+        name = value.strip()
+        if not name:
+            raise ValueError("Say whose number this is.")
+        return name
 
 
 class AlertNumbersIn(ORMModel):

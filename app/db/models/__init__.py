@@ -15,7 +15,12 @@ from app.db.models.enums import (
     UserRole,
 )
 from app.db.models.hotel import Hotel, HotelSource, RoomType, RoomTypeAlias, Source
-from app.db.models.monitoring import CheckRun, MonitoringError, MonitorTarget
+from app.db.models.monitoring import (
+    AlertDefaults,
+    CheckRun,
+    MonitoringError,
+    MonitorTarget,
+)
 from app.db.models.notification import HotelRecipient, Notification, Recipient
 from app.db.models.price import (
     OFFER_KEY_LEN,
@@ -27,6 +32,7 @@ from app.db.models.price import (
 from app.db.models.user import AuditLog, SourceCredential, User
 
 __all__ = [
+    "AlertDefaults",
     "OFFER_KEY_LEN",
     "AuditLog",
     "ChangeDirection",

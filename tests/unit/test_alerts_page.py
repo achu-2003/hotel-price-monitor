@@ -1,4 +1,9 @@
-"""The Alerts page: registering a recipient, and who they actually cover.
+"""Settings: registering a recipient, and who they actually cover.
+
+These panels lived on Alerts until the delivery history -- the thing
+somebody opens when a hotel says it never heard -- ended up below three
+hundred lines of setup forms. The setup moved to /settings; the history
+stayed. One test here still renders the history, and says so.
 
 The distinction these pin down is the one that costs money. Creating a
 ``recipients`` row tells nobody anything -- the dispatcher reads
@@ -21,7 +26,7 @@ from app.dashboard.routes import templates
 class _Request:
     """Enough of a Request for base.html, which only reads the path."""
 
-    url = SimpleNamespace(path="/notifications")
+    url = SimpleNamespace(path="/settings")
 
 
 def _recipient(**overrides):
@@ -70,9 +75,76 @@ def render(**overrides) -> str:
         # passes; override to render the panel with numbers already saved.
         "alert_numbers": [],
         "max_alert_numbers": 5,
+        # Alert sensitivity. cheapest/dearest are the portfolio's extremes,
+        # which the panel uses to show what the floors mean in practice.
+        "alert_defaults": SimpleNamespace(
+            min_delta_abs=Decimal("50.00"),
+            min_delta_pct=Decimal("2.00"),
+            confirm_checks=2,
+            cheapest_room=Decimal("1736"),
+            dearest_room=Decimal("16950"),
+        ),
+    }
+    context.update(overrides)
+    return templates.get_template("settings.html").render(**context)
+
+
+def render_history(**overrides) -> str:
+    """The Alerts page, which kept the delivery history and nothing else."""
+    context = {
+        "request": SimpleNamespace(url=SimpleNamespace(path="/notifications")),
+        "user": SimpleNamespace(username="ops", full_name="Ops"),
+        "is_admin": True,
+        "attention": {"total": 0},
+        "notifications": [],
+        "hours": 168,
     }
     context.update(overrides)
     return templates.get_template("notifications.html").render(**context)
+
+
+class TestAlertSensitivity:
+    """One number: how far a price has to move before anybody is told.
+
+    The comparison engine also carries a percentage floor and requires BOTH to
+    be cleared. It is deliberately not on this page: an operator asking for
+    "tell me about 100 rupees" and getting silence on a 25,000 rupee suite --
+    because 0.4% is under a 2% floor -- has been told something untrue by a
+    form. Saving here sets the percentage to zero, so the rupee amount is the
+    whole rule and the page means what it says.
+    """
+
+    def test_the_amount_is_editable(self):
+        assert 'name="min_delta_abs"' in render()
+
+    def test_the_percentage_is_not_offered(self):
+        """Two floors, one box, is how a setting becomes a lie."""
+        assert 'name="min_delta_pct"' not in alert_sensitivity_panel(render())
+
+    def test_the_confirm_count_is_editable(self):
+        """The debounce that stops one odd reading becoming a message."""
+        assert 'name="confirm_checks"' in render()
+
+    def test_the_stored_amount_is_shown_not_a_placeholder(self):
+        assert 'value="50"' in render()
+
+    def test_a_portfolio_with_no_prices_yet_still_renders(self):
+        """A fresh deployment has no series, so both extremes are None."""
+        page = render(alert_defaults=SimpleNamespace(
+            min_delta_abs=Decimal("50.00"), min_delta_pct=Decimal("2.00"),
+            confirm_checks=2, cheapest_room=None, dearest_room=None))
+        assert 'name="min_delta_abs"' in page
+
+
+def alert_sensitivity_panel(page: str) -> str:
+    """Just that panel.
+
+    The recipients table further down carries its own per-assignment
+    thresholds, percentage included, and a naive search of the whole page
+    would find those and pass a test that means nothing.
+    """
+    start = page.index("alert-defaults-form")
+    return page[start:page.index("</form>", start)]
 
 
 class TestUnassignedRecipients:
@@ -211,7 +283,7 @@ class TestDeliveryHistory:
             error_detail=None,
             subject="Sunrise Resort: Deluxe Room down ₹300",
         )
-        page = render(notifications=[(notification, "Priya", "Sunrise Resort")])
+        page = render_history(notifications=[(notification, "Priya", "Sunrise Resort")])
         assert "held →" in page
         assert "queued" in page
 
@@ -278,11 +350,11 @@ class TestAlertNumbersGrowOnDemand:
 
         assert "alert-number-row-template" in page
 
-    def test_a_number_used_as_its_own_label_is_not_repeated_in_the_label_box(self):
-        """Saving without a label names the recipient after the number.
+    def test_a_number_used_as_its_own_name_is_not_repeated_in_the_name_box(self):
+        """Numbers saved before the name was required are named for their digits.
 
-        Echoing that back into the Label field would make it look like the
-        operator had typed the number twice.
+        Echoing that back would look like the operator had typed the number
+        twice, and would answer a question the field now insists on asking.
         """
         page = render(
             alert_numbers=[_recipient(id=1, name="+919000000001",
@@ -290,6 +362,34 @@ class TestAlertNumbersGrowOnDemand:
         )
 
         assert page.count("+919000000001") == 1
+
+
+class TestEveryNumberSaysWhoseItIs:
+    """Two fields, both of them answers: the number, and whose it is.
+
+    The second was "Label (optional)", and optional is how a list of five
+    anonymous numbers happens -- unprunable by anyone who did not type it,
+    because the first question asked of a number that should stop receiving is
+    whose it is. The API refuses one without a name; these pin the form that
+    feeds it.
+    """
+
+    def test_the_field_asks_whose_number_it_is(self):
+        assert "Whose number" in alert_number_rows(render())
+
+    def test_it_is_not_offered_as_an_optional_label(self):
+        rows = alert_number_rows(render())
+
+        assert "Label" not in rows
+        assert "(optional)" not in rows
+
+    def test_the_cloned_row_asks_the_same_question(self):
+        """The Add button clones the template; a row that lost the field there
+        would be submitted nameless and refused by the API."""
+        page = render()
+        template = page[page.index("alert-number-row-template"):]
+
+        assert "Whose number" in template
 
 
 class TestTheTwoWaysOfAddingSomebodySitSideBySide:

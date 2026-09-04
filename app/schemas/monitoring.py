@@ -191,3 +191,33 @@ class ManualOfferIn(ORMModel):
 class ManualEntryIn(ORMModel):
     hotel_source_id: int
     offers: list[ManualOfferIn] = Field(min_length=1, max_length=200)
+
+
+class AlertDefaultsIn(ORMModel):
+    """The deployment-wide alert sensitivity.
+
+    The bounds are the same ones ``MonitorTargetUpdate`` applies to a per-hotel
+    override, so a value acceptable in one place is acceptable in the other.
+
+    ``min_delta_abs`` of 0 is allowed and means "no rupee floor" -- the
+    percentage alone then decides. That is a legitimate setting for a portfolio
+    of similarly-priced rooms, and refusing it would be second-guessing.
+    """
+
+    min_delta_abs: Decimal = Field(ge=0, le=1_000_000)
+    min_delta_pct: Decimal = Field(ge=0, le=100)
+    confirm_checks: int = Field(ge=1, le=10)
+
+
+class AlertDefaultsOut(AlertDefaultsIn):
+    """What is stored, plus what it would mean for a room at either extreme.
+
+    A form with two boxes does not convey that BOTH have to be cleared, and
+    that is the part people get wrong: 50 rupees on a 1,700 rupee room alerts,
+    50 rupees on a 17,000 rupee suite does not. The page shows the arithmetic
+    rather than explaining the rule.
+    """
+
+    cheapest_room: Decimal | None = None
+    dearest_room: Decimal | None = None
+

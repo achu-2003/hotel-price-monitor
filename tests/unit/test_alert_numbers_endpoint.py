@@ -120,7 +120,10 @@ def test_the_audit_entry_is_well_formed(client, session):
     Asserting on the keyword names is the cheap version of the check that was
     missing: the original bug was a missing required argument, not a wrong value.
     """
-    client.put("/api/v1/alert-numbers", json={"numbers": [{"phone_e164": "+919876543210"}]})
+    client.put(
+        "/api/v1/alert-numbers",
+        json={"numbers": [{"phone_e164": "+919876543210", "name": "Front office"}]},
+    )
 
     assert len(session.audits) == 1
     audit = session.audits[0]
@@ -130,7 +133,10 @@ def test_the_audit_entry_is_well_formed(client, session):
 
 def test_a_saved_number_follows_every_hotel_and_skips_the_throttle(client, session):
     """The two flags are what make it an alert number rather than a contact."""
-    client.put("/api/v1/alert-numbers", json={"numbers": [{"phone_e164": "+919876543210"}]})
+    client.put(
+        "/api/v1/alert-numbers",
+        json={"numbers": [{"phone_e164": "+919876543210", "name": "Front office"}]},
+    )
 
     saved = session.recipients[0]
     assert saved.alerts_all_hotels is True
@@ -138,10 +144,38 @@ def test_a_saved_number_follows_every_hotel_and_skips_the_throttle(client, sessi
     assert saved.is_active is True
 
 
-def test_a_number_with_no_label_is_named_after_itself(client, session):
-    client.put("/api/v1/alert-numbers", json={"numbers": [{"phone_e164": "+919876543210"}]})
+def test_the_name_typed_on_the_page_is_what_is_stored(client, session):
+    client.put(
+        "/api/v1/alert-numbers",
+        json={"numbers": [{"phone_e164": "+919876543210", "name": "Priya, front office"}]},
+    )
 
-    assert session.recipients[0].name == "+919876543210"
+    assert session.recipients[0].name == "Priya, front office"
+
+
+def test_a_number_with_nobody_attached_to_it_is_refused(client, session):
+    """It used to be named after its own digits, which reads as configured.
+
+    Settings is now the only list of who gets told anything, and the first
+    question asked of a row in it is whose number that is. A list of five
+    unnamed numbers cannot be pruned by anyone who did not type it.
+    """
+    response = client.put(
+        "/api/v1/alert-numbers", json={"numbers": [{"phone_e164": "+919876543210"}]}
+    )
+
+    assert response.status_code == 422
+    assert session.recipients == []
+
+
+def test_a_name_of_only_spaces_is_refused(client):
+    """max_length counts characters; three spaces render as nothing."""
+    response = client.put(
+        "/api/v1/alert-numbers",
+        json={"numbers": [{"phone_e164": "+919876543210", "name": "   "}]},
+    )
+
+    assert response.status_code == 422
 
 
 def test_a_number_dropped_from_the_list_stops_but_survives(client, session):
@@ -162,7 +196,7 @@ def test_a_number_dropped_from_the_list_stops_but_survives(client, session):
 
 
 def test_more_than_five_numbers_is_refused(client):
-    numbers = [{"phone_e164": f"+91987654321{i}"} for i in range(6)]
+    numbers = [{"phone_e164": f"+91987654321{i}", "name": f"Person {i}"} for i in range(6)]
 
     response = client.put("/api/v1/alert-numbers", json={"numbers": numbers})
 
@@ -173,8 +207,8 @@ def test_the_same_number_twice_is_refused(client):
     """It would be messaged twice for every single price change."""
     response = client.put(
         "/api/v1/alert-numbers",
-        json={"numbers": [{"phone_e164": "+919876543210"},
-                          {"phone_e164": "+919876543210"}]},
+        json={"numbers": [{"phone_e164": "+919876543210", "name": "Front office"},
+                          {"phone_e164": "+919876543210", "name": "Manager"}]},
     )
 
     assert response.status_code == 422
@@ -182,7 +216,8 @@ def test_the_same_number_twice_is_refused(client):
 
 def test_a_number_that_is_not_e164_is_refused(client):
     response = client.put(
-        "/api/v1/alert-numbers", json={"numbers": [{"phone_e164": "9876543210"}]}
+        "/api/v1/alert-numbers",
+        json={"numbers": [{"phone_e164": "9876543210", "name": "Front office"}]},
     )
 
     assert response.status_code == 422

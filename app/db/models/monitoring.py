@@ -204,3 +204,55 @@ class MonitoringError(Base):
 
     def __repr__(self) -> str:
         return f"<MonitoringError {self.error_class} hotel={self.hotel_id}>"
+
+
+class AlertDefaults(Base, TimestampMixin):
+    """How big a move has to be before anybody is told, deployment-wide.
+
+    ONE ROW, ENFORCED
+    =================
+    There is exactly one deployment-wide default, so the table holds exactly
+    one row and the primary key is pinned to 1. A second row would be a second
+    answer to a question with one answer, and whichever the query happened to
+    return first would quietly become the policy.
+
+    WHY NOT AN ENVIRONMENT VARIABLE
+    ===============================
+    These started in Settings, and the values there are still the fallback for
+    a deployment that has never saved any. But sensitivity is not deployment
+    configuration -- it is an operating decision, made by the person watching
+    the alerts, usually right after being woken by one. Requiring an edit to
+    .env and a restart of five services put that decision behind the one door
+    they cannot open.
+
+    BOTH FLOORS, NOT EITHER
+    =======================
+    A move must clear the rupee amount AND the percentage -- see
+    ``comparison.Thresholds``. That is not obvious from a form with two boxes,
+    and it matters: 50 rupees on a 1,700 rupee room is 2.9% and alerts, while
+    50 rupees on a 17,000 rupee suite is 0.3% and does not. The page says so
+    beside the fields, because somebody setting "tell me about 50 rupees" and
+    hearing nothing about an expensive room will conclude the system is broken.
+    """
+
+    __tablename__ = "alert_defaults"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="alert_defaults_is_a_singleton"),
+        CheckConstraint("min_delta_abs >= 0", name="alert_defaults_abs_not_negative"),
+        CheckConstraint(
+            "min_delta_pct >= 0 AND min_delta_pct <= 100",
+            name="alert_defaults_pct_in_range",
+        ),
+        CheckConstraint(
+            "confirm_checks >= 1 AND confirm_checks <= 10",
+            name="alert_defaults_confirm_in_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    min_delta_abs: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    min_delta_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    #: How many consecutive checks must agree before a move is announced. The
+    #: debounce that stops a single odd read becoming an alert.
+    confirm_checks: Mapped[int] = mapped_column(Integer, nullable=False)
+

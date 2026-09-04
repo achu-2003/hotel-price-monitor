@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.adapters import registry
 from app.api.deps import (
@@ -22,6 +22,7 @@ from app.api.deps import (
 )
 from app.core.logging import get_logger
 from app.db.models import (
+    AlertDefaults,
     CheckRun,
     DateStrategy,
     CheckRunStatus,
@@ -29,16 +30,20 @@ from app.db.models import (
     Hotel,
     HotelSource,
     MonitorTarget,
+    PriceSeries,
     Source,
 )
 from app.schemas.common import AcceptedRun, Page
 from app.schemas.monitoring import (
+    AlertDefaultsIn,
+    AlertDefaultsOut,
     CheckRunOut,
     ManualEntryIn,
     MonitorTargetCreate,
     MonitorTargetOut,
     MonitorTargetUpdate,
 )
+from app.services import monitoring
 from app.services.dates import local_today, resolve_stay_window
 from app.services.ownership import scope_hotels
 
@@ -456,3 +461,97 @@ async def manual_entry(
     return AcceptedRun(
         check_run_id=check_run_id, poll_url=f"/api/v1/check-runs/{check_run_id}"
     )
+
+
+# -- alert sensitivity -----------------------------------------------
+async def _alert_defaults_out(session, row: AlertDefaults) -> AlertDefaultsOut:
+    """The stored values, with the cheapest and dearest room in the portfolio.
+
+    Those two numbers are the point of the panel. Both floors have to be
+    cleared, so a rupee amount that is loud on the cheapest room can be
+    completely silent on the dearest, and the only way to know is to see them.
+    """
+    extremes = (
+        await session.execute(
+            select(func.min(PriceSeries.last_price), func.max(PriceSeries.last_price))
+            .where(PriceSeries.last_price.is_not(None))
+        )
+    ).one()
+    return AlertDefaultsOut(
+        min_delta_abs=row.min_delta_abs,
+        min_delta_pct=row.min_delta_pct,
+        confirm_checks=row.confirm_checks,
+        cheapest_room=extremes[0],
+        dearest_room=extremes[1],
+    )
+
+
+@router.get("/alert-defaults", response_model=AlertDefaultsOut)
+async def read_alert_defaults(session: DbSession, _user: CurrentUser):
+    """How big a move has to be, for any hotel that has not overridden it."""
+    row = await session.get(AlertDefaults, 1)
+    if row is None:
+        # The window between deploying this code and running its migration.
+        # Answer with what the comparison engine is actually using rather than
+        # a 404, which would read as "this deployment has no sensitivity".
+        current = monitoring.default_thresholds()
+        row = AlertDefaults(
+            id=1,
+            min_delta_abs=current.min_delta_abs,
+            min_delta_pct=current.min_delta_pct,
+            confirm_checks=current.confirm_checks,
+        )
+    return await _alert_defaults_out(session, row)
+
+
+@router.put("/alert-defaults", response_model=AlertDefaultsOut)
+async def replace_alert_defaults(
+    payload: AlertDefaultsIn, request: Request, session: DbSession, admin: AdminUser
+):
+    """Change the deployment-wide sensitivity.
+
+    Takes effect within a minute -- see ``_DEFAULTS_TTL_SECONDS`` -- without a
+    restart, which is the entire reason this is a table rather than an
+    environment variable. Hotels carrying their own override are unaffected;
+    this is only what the rest fall back to.
+    """
+    row = await session.get(AlertDefaults, 1)
+    before = None
+    if row is None:
+        row = AlertDefaults(id=1)
+        session.add(row)
+    else:
+        before = {
+            "min_delta_abs": str(row.min_delta_abs),
+            "min_delta_pct": str(row.min_delta_pct),
+            "confirm_checks": row.confirm_checks,
+        }
+
+    row.min_delta_abs = payload.min_delta_abs
+    row.min_delta_pct = payload.min_delta_pct
+    row.confirm_checks = payload.confirm_checks
+
+    await record_audit(
+        session, user=admin, action="update", entity="alert_defaults",
+        entity_id="1", before=before,
+        after={
+            "min_delta_abs": str(payload.min_delta_abs),
+            "min_delta_pct": str(payload.min_delta_pct),
+            "confirm_checks": payload.confirm_checks,
+        },
+        request=request,
+    )
+    await session.commit()
+    await session.refresh(row)
+
+    # The workers cache this for a minute each. Clearing it here only helps the
+    # process that served the request -- the others age out on their own -- but
+    # it makes the dashboard's own reads agree with the form immediately.
+    monitoring.forget_stored_defaults()
+
+    log.info("alert_defaults_updated",
+             min_delta_abs=str(row.min_delta_abs),
+             min_delta_pct=str(row.min_delta_pct),
+             confirm_checks=row.confirm_checks)
+    return await _alert_defaults_out(session, row)
+

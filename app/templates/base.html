@@ -1,7 +1,7 @@
 {#
   Layout for every dashboard page.
 
-  FOUR NAV ITEMS, NOT EIGHT
+  FIVE NAV ITEMS, NOT EIGHT
   =========================
   Three of the originals were scaffolding for problems that no longer exist:
 
@@ -13,6 +13,10 @@
     under Attention.
   * "Unmatched" and "Health" were two lists of the same thing: work waiting for
     a person. They are one page now.
+
+  Settings is the fifth: recipients and alert numbers were on Alerts, which
+  put three hundred lines of setup above the delivery history somebody
+  opens when a hotel says it never heard.
 
   Attention appears ONLY when there is something to do. A permanent tab reading
   zero every day teaches people to stop looking at it, so it earns its place by
@@ -45,6 +49,7 @@
     <a href="/changes"       class="{{ 'active' if path.startswith('/changes') }}">Changes</a>
     <a href="/hotels"        class="{{ 'active' if path.startswith('/hotels') }}">Hotels</a>
     <a href="/notifications" class="{{ 'active' if path.startswith('/notifications') }}">Alerts</a>
+    <a href="/settings"      class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
     {% if attention and attention.total %}
     <a href="/attention" class="nav-alert {{ 'active' if path.startswith('/attention') }}">
       Attention <span class="nav-count">{{ attention.total }}</span>

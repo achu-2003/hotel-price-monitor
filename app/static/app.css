@@ -1134,3 +1134,59 @@ a.hcard:hover {
 @media (max-width: 900px) {
   .setup-pair { flex-direction: column; gap: 0; }
 }
+
+
+/* -- alert sensitivity ------------------------------------------------
+   This panel is a full-width section, not one of the narrow forms .stack is
+   sized for -- the sentence it is built from does not survive a 460px column.
+   Three inherited rules have to be turned off by name rather than by avoiding
+   the classes, because .panel and .stack carry the framing and the spacing
+   that make it look like everything else. */
+form.alert-defaults-form,
+form.target-sensitivity { max-width: none; }
+
+/* .stack label stacks its caption above its control, which is right for a
+   form and wrong for a sentence: "at least ₹ [50] and [2] %" is one line. */
+.field-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+}
+.field-row label,
+.stack .field-row label {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.field-row input[type="number"] { width: 6.5em; }
+
+/* Same treatment for the confirm-count line, which is also a sentence. */
+.stack-field,
+.stack .stack-field {
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.stack-field input[type="number"] { width: 5em; }
+.stack-field .muted { flex: 1 1 100%; font-size: 12px; }
+
+/* An override that is switched off still shows the numbers it would inherit,
+   so the panel reads as "this is what you would get" rather than going blank.
+   Dimmed, because they are not this hotel's values. */
+.sensitivity-fields.is-inherited { opacity: 0.55; }
+
+.checkbox,
+.stack .checkbox { flex-direction: row; align-items: flex-start; gap: 8px; font-size: 14px; }
+.checkbox input { margin-top: 3px; }
+
+.actions { display: flex; align-items: center; gap: var(--s3); }
+
+@media (max-width: 640px) {
+  .field-row { flex-direction: column; align-items: stretch; }
+}

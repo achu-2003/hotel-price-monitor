@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
+from types import SimpleNamespace
+
 import jwt
 from fastapi import APIRouter, Cookie, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -40,6 +42,7 @@ from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.security import decode_token
 from app.db.models import (
+    AlertDefaults,
     ChangeDirection,
     CheckRun,
     CircuitState,
@@ -61,6 +64,7 @@ from app.db.models.price import SUPPRESSION_LABELS
 from app.notifications import registry
 from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
+from app.services import monitoring as monitoring_service
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
 from app.services.room_category import CATEGORIES, classify, is_category, label_for
@@ -862,8 +866,21 @@ async def hotel_detail(
     all_sources = (await session.scalars(select(Source).order_by(Source.code))).all()
     attached_ids = {hs.source_id for hs, _ in sources}
 
+    # The deployment default, so the per-hotel panel can show what this hotel
+    # would inherit if its override were switched off.
+    stored_defaults = await session.get(AlertDefaults, 1)
+    if stored_defaults is None:
+        current = monitoring_service.default_thresholds()
+        stored_defaults = SimpleNamespace(
+            min_delta_abs=current.min_delta_abs,
+            min_delta_pct=current.min_delta_pct,
+            confirm_checks=current.confirm_checks,
+        )
+    alert_defaults = stored_defaults
+
     return await _render(
         request, user, session, "hotel_detail.html",
+        alert_defaults=alert_defaults,
         hotel=hotel, sources=sources, rooms=rooms, targets=targets,
         prices=prices, runs=runs, now=datetime.now(UTC),
         all_sources=all_sources, attached_ids=attached_ids,
@@ -1281,6 +1298,13 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
 async def notifications_page(
     request: Request, user: DashUser, session: DbSession, hours: int = 168
 ):
+    """What was actually sent.
+
+    Who receives alerts moved to /settings. The two were one page while there
+    were only a handful of recipients, and the delivery history -- the thing
+    somebody opens when a hotel says it never heard -- sat below three hundred
+    lines of setup forms they were not looking for.
+    """
     if user is None:
         return _redirect_to_login(request)
 
@@ -1298,11 +1322,52 @@ async def notifications_page(
             .limit(300)
         )
     ).all()
+
+    return await _render(
+        request, user, session, "notifications.html",
+        notifications=rows, hours=hours,
+    )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, user: DashUser, session: DbSession):
+    """Who the system may tell, and how to reach them."""
+    if user is None:
+        return _redirect_to_login(request)
+
+    # Alert sensitivity, and the two prices that make it concrete. Both floors
+    # have to be cleared, so the same rupee amount is loud on a cheap room and
+    # silent on an expensive one -- the panel shows what it means here rather
+    # than explaining the rule in the abstract.
+    stored = await session.get(AlertDefaults, 1)
+    if stored is None:
+        current = monitoring_service.default_thresholds()
+        stored = AlertDefaults(
+            id=1,
+            min_delta_abs=current.min_delta_abs,
+            min_delta_pct=current.min_delta_pct,
+            confirm_checks=current.confirm_checks,
+        )
+    cheapest, dearest = (
+        await session.execute(
+            select(func.min(PriceSeries.last_price), func.max(PriceSeries.last_price))
+            .join(Hotel, Hotel.id == PriceSeries.hotel_id)
+            .where(PriceSeries.last_price.is_not(None), Hotel.owner_user_id == user.id)
+        )
+    ).one()
+    alert_defaults = SimpleNamespace(
+        min_delta_abs=stored.min_delta_abs,
+        min_delta_pct=stored.min_delta_pct,
+        confirm_checks=stored.confirm_checks,
+        cheapest_room=cheapest,
+        dearest_room=dearest,
+    )
+
     recipients = (await session.scalars(select(Recipient).order_by(Recipient.name))).all()
 
     # The WhatsApp alert numbers, which are recipients wearing the
     # alerts_all_hotels flag rather than a separate kind of thing -- so they
-    # reuse the digest, the dedupe and the delivery history below.
+    # reuse the digest, the dedupe and the delivery history on /notifications.
     alert_numbers = [r for r in recipients if r.alerts_all_hotels and r.is_active]
 
     # Who each person actually covers. A recipient with no assignment receives
@@ -1332,9 +1397,9 @@ async def notifications_page(
     # and fails at the first price move, which is the worst moment to find out.
     settings = get_settings()
     return await _render(
-        request, user, session, "notifications.html",
-        notifications=rows, recipients=recipients, hours=hours,
-        assignments=assignments, hotels=hotels,
+        request, user, session, "settings.html",
+        alert_defaults=alert_defaults,
+        recipients=recipients, assignments=assignments, hotels=hotels,
         channels=registry.available_channels(),
         default_quiet=(settings.quiet_hours_start, settings.quiet_hours_end),
         alert_numbers=alert_numbers,

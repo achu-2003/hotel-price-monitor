@@ -262,6 +262,58 @@
     </tbody>
   </table>
 
+  {% if is_admin and targets %}
+  {# Sensitivity per hotel, because the deployment default cannot be right for
+     everything: rooms here run from the cheapest to the dearest in the
+     portfolio, and a rupee floor that is meaningful at one end is noise or
+     silence at the other. Left alone, a target inherits the default and this
+     panel never needs opening. #}
+  <details class="panel">
+    <summary>Alert sensitivity for this hotel</summary>
+    {% for target in targets %}
+    <form class="stack target-sensitivity" data-target-id="{{ target.id }}">
+      <p class="muted">
+        {% if target.date_strategy.value == 'fixed' %}
+          {{ target.fixed_check_in }} → {{ target.fixed_check_out }}
+        {% else %}
+          {{ 'tonight' if target.lead_time_days == 0 else '+%dd'|format(target.lead_time_days) }},
+          {{ target.length_of_stay_nights }}n
+        {% endif %}
+        · {{ target.adults }} adults
+      </p>
+
+      <label class="checkbox">
+        <input type="checkbox" name="own_sensitivity"
+               {% if target.min_delta_abs is not none or target.min_delta_pct is not none
+                     or target.confirm_checks is not none %}checked{% endif %}>
+        Use its own amount instead of the deployment default
+        ({{ money(alert_defaults.min_delta_abs) }} over
+        {{ alert_defaults.confirm_checks }} checks)
+      </label>
+
+      <div class="field-row sensitivity-fields">
+        <label>Tell me when a price here moves by at least ₹
+          <input type="number" name="min_delta_abs" min="0" step="1"
+                 value="{{ (target.min_delta_abs if target.min_delta_abs is not none
+                            else alert_defaults.min_delta_abs) | round(0, 'floor') | int }}">
+        </label>
+        <label>over
+          <input type="number" name="confirm_checks" min="1" max="10" step="1"
+                 value="{{ target.confirm_checks if target.confirm_checks is not none
+                           else alert_defaults.confirm_checks }}">
+          checks
+        </label>
+      </div>
+
+      <div class="actions">
+        <button type="submit">Save</button>
+        <span class="form-status" role="status"></span>
+      </div>
+    </form>
+    {% endfor %}
+  </details>
+  {% endif %}
+
   {% if is_admin and has_source %}
   <details class="panel">
     <summary>Watch another stay window</summary>

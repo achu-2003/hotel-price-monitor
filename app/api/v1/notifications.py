@@ -580,8 +580,10 @@ async def replace_alert_numbers(
             recipient.bypass_throttle = False
             recipient.is_active = False
             continue
-        if wanted.name:
-            recipient.name = wanted.name
+        # Unconditional: the name is required now, so an empty one cannot
+        # arrive, and a rename typed into the row is the operator editing who
+        # the number belongs to.
+        recipient.name = wanted.name
         kept.append(recipient)
 
     for phone, wanted in submitted.items():
@@ -593,9 +595,12 @@ async def replace_alert_numbers(
             select(Recipient).where(Recipient.phone_e164 == phone).limit(1)
         )
         if recipient is None:
-            recipient = Recipient(name=wanted.name or phone, phone_e164=phone)
+            recipient = Recipient(name=wanted.name, phone_e164=phone)
             session.add(recipient)
-        elif wanted.name:
+        else:
+            # A number coming back after removal, or one that already existed
+            # for another reason. The name typed now is the current answer to
+            # "whose number is this", so it wins over whatever was on the row.
             recipient.name = wanted.name
 
         recipient.is_active = True

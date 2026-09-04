@@ -24,6 +24,8 @@ re-enable it once it recovers.
 """
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -335,38 +337,95 @@ def record_error(
     return row
 
 
+#: How long a read of the stored defaults is reused, in seconds.
+#:
+#: These are consulted once per offer, so reading the row every time would put
+#: a query in the hottest loop in the system for a value that changes when
+#: somebody edits a form. A minute is short enough that a change takes effect
+#: while the person who made it is still looking at the page, and long enough
+#: that a fetch of forty rooms does not make forty queries.
+_DEFAULTS_TTL_SECONDS = 60.0
+
+#: (expires_at, thresholds). Module-level, so each worker process keeps its
+#: own -- there is nothing to coordinate, they all read the same row.
+_cached_defaults: tuple[float, Thresholds] | None = None
+
+
+def forget_stored_defaults() -> None:
+    """Drop the cache. Called after a write, so an edit is not waited out."""
+    global _cached_defaults
+    _cached_defaults = None
+
+
 def default_thresholds(settings: Settings | None = None) -> Thresholds:
-    """The global alert sensitivity, for callers with no target in hand."""
+    """The global alert sensitivity, for callers with no target in hand.
+
+    Read from ``alert_defaults`` -- one row, edited from Settings -- and only
+    from the environment when that table has no row yet, which is the window
+    between deploying this code and running its migration. A deployment that
+    tuned DEFAULT_MIN_DELTA_ABS keeps exactly that value either way: the
+    migration seeds the row from the environment it finds.
+
+    Never raises. A database that cannot be read here would otherwise take
+    down a fetch that had already succeeded, to decide how sensitive an alert
+    should be -- so the environment answers and the check goes on.
+    """
+    global _cached_defaults
+
+    now = time.monotonic()
+    if _cached_defaults is not None and _cached_defaults[0] > now:
+        return _cached_defaults[1]
+
     settings = settings or get_settings()
-    return Thresholds(
+    thresholds = Thresholds(
         min_delta_abs=Decimal(str(settings.default_min_delta_abs)),
         min_delta_pct=Decimal(str(settings.default_min_delta_pct)),
         confirm_checks=settings.default_confirm_checks,
     )
+
+    try:
+        from app.db.models import AlertDefaults
+        from app.db.session import sync_session
+
+        with sync_session() as session:
+            row = session.get(AlertDefaults, 1)
+            if row is not None:
+                thresholds = Thresholds(
+                    min_delta_abs=row.min_delta_abs,
+                    min_delta_pct=row.min_delta_pct,
+                    confirm_checks=row.confirm_checks,
+                )
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        log.warning("alert_defaults_unreadable", error=str(exc)[:200])
+
+    _cached_defaults = (now + _DEFAULTS_TTL_SECONDS, thresholds)
+    return thresholds
 
 
 def build_thresholds(target: MonitorTarget, settings: Settings | None = None) -> Thresholds:
     """Per-target alert sensitivity, falling back to the global defaults.
 
     Sensitivity belongs on the target because a ₹200 move matters at a ₹2,000
-    hotel and is noise at a ₹20,000 one.
+    hotel and is noise at a ₹20,000 one. A target that states nothing inherits
+    the deployment default, which is editable on the Settings page -- so the
+    common case needs no per-hotel decision at all.
     """
-    settings = settings or get_settings()
+    fallback = default_thresholds(settings)
     return Thresholds(
         min_delta_abs=(
             target.min_delta_abs
             if target.min_delta_abs is not None
-            else Decimal(str(settings.default_min_delta_abs))
+            else fallback.min_delta_abs
         ),
         min_delta_pct=(
             target.min_delta_pct
             if target.min_delta_pct is not None
-            else Decimal(str(settings.default_min_delta_pct))
+            else fallback.min_delta_pct
         ),
         confirm_checks=(
             target.confirm_checks
             if target.confirm_checks is not None
-            else settings.default_confirm_checks
+            else fallback.confirm_checks
         ),
     )
 

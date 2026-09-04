@@ -910,6 +910,92 @@
     });
   }
 
+  // -- alert sensitivity ---------------------------------------------
+  // One number: how many rupees a price has to move before anybody is told.
+  //
+  // The comparison engine also carries a percentage floor and requires BOTH
+  // to be cleared. Leaving a percentage in place while only the rupee amount
+  // is editable makes the visible setting a lie -- 100 rupees would be silent
+  // on a 25,000 rupee suite, because 0.4% is under a 2% floor, and nothing on
+  // the page would say why. So saving here sets the percentage to zero and
+  // the rupee amount decides on its own.
+  document.querySelectorAll("form.alert-defaults-form").forEach(function (form) {
+    const status = form.querySelector(".form-status");
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const number = function (name) {
+        const input = form.querySelector("input[name=" + name + "]");
+        return input ? Number(input.value) : null;
+      };
+      say(status, "Saving...", "");
+      const result = await api("/api/v1/alert-defaults", "PUT", {
+        min_delta_abs: number("min_delta_abs"),
+        min_delta_pct: 0,
+        confirm_checks: number("confirm_checks"),
+      });
+      if (!result.ok) {
+        say(status, problemText(result), "error");
+        return;
+      }
+      // "Within a minute" rather than "saved": the workers cache this, so a
+      // change is not instant and saying so prevents a second save when the
+      // next alert still uses the old figure.
+      say(status, "Saved — in effect within a minute.", "ok");
+    });
+  });
+
+  // -- per-hotel alert sensitivity -----------------------------------
+  // Not the generic api-form: clearing an override means sending null, and
+  // that handler omits empty fields rather than sending them. An omitted
+  // field is "leave it alone" to a PATCH, so a hotel could be given its own
+  // sensitivity and never handed back to the default again.
+  document.querySelectorAll("form.target-sensitivity").forEach(function (form) {
+    const status = form.querySelector(".form-status");
+    const own = form.querySelector("input[name=own_sensitivity]");
+    const fields = form.querySelector(".sensitivity-fields");
+
+    function reflect() {
+      if (!fields) return;
+      const using = own && own.checked;
+      fields.classList.toggle("is-inherited", !using);
+      fields.querySelectorAll("input").forEach(function (input) {
+        input.disabled = !using;
+      });
+    }
+    if (own) own.addEventListener("change", reflect);
+    reflect();
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const using = own && own.checked;
+      const value = function (name) {
+        const input = form.querySelector("input[name=" + name + "]");
+        return input && input.value !== "" ? Number(input.value) : null;
+      };
+      // Nulls, explicitly, when the box is unchecked: that is what hands the
+      // hotel back to the deployment default.
+      const payload = using
+        ? {
+            min_delta_abs: value("min_delta_abs"),
+            // Zero, not null: null would inherit the deployment percentage and
+            // silently raise the bar this hotel was just given.
+            min_delta_pct: 0,
+            confirm_checks: value("confirm_checks"),
+          }
+        : { min_delta_abs: null, min_delta_pct: null, confirm_checks: null };
+
+      say(status, "Saving...", "");
+      const result = await api(
+        "/api/v1/monitor-targets/" + form.dataset.targetId, "PATCH", payload);
+      if (!result.ok) {
+        say(status, problemText(result), "error");
+        return;
+      }
+      say(status, using ? "Saved — this hotel uses its own." : "Saved — back to the default.", "ok");
+    });
+  });
+
   // -- WhatsApp alert numbers ----------------------------------------
   // The whole list is PUT on every save, never a delta: a cleared row is how
   // "stop this number" is expressed, and it only reads as removal if the
@@ -991,20 +1077,36 @@
       const numbers = [];
       const seen = {};
       let duplicate = null;
+      let unnamed = null;
+      let numberless = null;
       form.querySelectorAll(".alert-number-row").forEach(function (row) {
         const phone = row.querySelector("input[name=phone]").value.trim();
-        if (!phone) return;
+        const label = row.querySelector("input[name=label]").value.trim();
+        // A name typed with no number is not an empty row: somebody meant to
+        // add that person and the digits never landed. Silently dropping it
+        // saves a list they believe has one more entry than it does.
+        if (!phone) {
+          if (label) numberless = label;
+          return;
+        }
+        if (!label) { unnamed = phone; return; }
         if (seen[phone]) { duplicate = phone; return; }
         seen[phone] = true;
-        const label = row.querySelector("input[name=label]").value.trim();
-        const entry = { phone_e164: phone };
-        if (label) entry.name = label;
-        numbers.push(entry);
+        numbers.push({ phone_e164: phone, name: label });
       });
 
       // Caught here as well as on the server, because the server's version
-      // rejects the whole save and this one names the offending number while
-      // the operator is still looking at the rows.
+      // rejects the whole save and these name the offending row while the
+      // operator is still looking at it.
+      if (unnamed) {
+        say(status, "Say whose number " + unnamed + " is — the list is unusable "
+                  + "later if nobody can tell whose is whose.", "error");
+        return;
+      }
+      if (numberless) {
+        say(status, "No number for " + numberless + ".", "error");
+        return;
+      }
       if (duplicate) {
         say(status, duplicate + " is entered twice. Each number may appear once.", "error");
         return;
