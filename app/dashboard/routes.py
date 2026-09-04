@@ -487,6 +487,94 @@ async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
 
 
 # -- price matrix ----------------------------------------------------
+async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
+    """The night the comparison screen opens on, and the sentence saying why.
+
+    A NIGHT ONE HOTEL HAS IS NOT A NIGHT WORTH COMPARING
+    ====================================================
+    This used to be ``MAX(check_in)`` over everything collected, which is the
+    right answer only while every hotel is priced for the same nights. It is
+    not, and the exception is a feature: when a hotel is sold out for the
+    night that was asked for, the fetcher rolls forward and prices the NEXT
+    night too, filed under its own dates (see ``_with_rollover`` in
+    app/workers/tasks_fetch.py).
+
+    That roll-forward night is then the newest ``check_in`` in the table, and
+    it belongs to the one hotel that happened to be full. On 4 Sep the matrix
+    opened on 5 Sep and showed a single property -- Sterling, the only hotel
+    with no rooms for tonight -- while the ten hotels priced for tonight, the
+    comparison the page exists to make, sat one date-picker click away with
+    nothing on the page to suggest it.
+
+    So the default is the most recent night that was actually MONITORED: a
+    night some check run for one of this account's hotels asked about. A
+    rolled night was never asked about by anybody, so it stops being the
+    default while staying perfectly reachable by typing the date.
+
+    Deliberately not "the night with the most hotels on it". A hotel whose
+    fetch failed this morning would drop today below yesterday's count and
+    swing the whole page back a day -- stale prices, presented as current,
+    because one property was briefly unreachable.
+    """
+    owned = owned_hotel_ids(user)
+    collected = (
+        select(PriceSeries.check_in, PriceSeries.check_out)
+        .where(
+            PriceSeries.adults == adults,
+            PriceSeries.hotel_id.in_(owned),
+        )
+        .order_by(PriceSeries.check_in.desc())
+    )
+    # Correlated on the two date columns of the row being considered: "was
+    # this night ever asked about, for a hotel of yours?"
+    #
+    # OUTER, and null targets count. A price typed into the dashboard by hand
+    # files a check run with no monitor target at all (the manual-entry
+    # endpoint in app/api/v1/targets.py), because nothing scheduled it -- an
+    # operator did. Joining through the target dropped every one of those, so
+    # a hotel with no booking engine, whose prices only ever arrive by hand,
+    # would have had its nights treated exactly like a roll-forward: never the
+    # default, however recent. Manual entry is the fallback this system
+    # promises those hotels, not a second-class reading.
+    #
+    # A target-less run cannot be traced back to a hotel, so it cannot be
+    # ownership-scoped. It does not need to be: the night it nominates still
+    # has to appear in THIS account's price rows above to be chosen at all, so
+    # the worst it can do is agree with a night the account already has.
+    monitored = (
+        select(CheckRun.id)
+        .outerjoin(MonitorTarget, MonitorTarget.id == CheckRun.monitor_target_id)
+        .outerjoin(HotelSource, HotelSource.id == MonitorTarget.hotel_source_id)
+        .where(
+            CheckRun.check_in == PriceSeries.check_in,
+            CheckRun.check_out == PriceSeries.check_out,
+            or_(
+                CheckRun.monitor_target_id.is_(None),
+                HotelSource.hotel_id.in_(owned),
+            ),
+        )
+        .exists()
+    )
+
+    latest = (await session.execute(collected.where(monitored).limit(1))).first()
+    if latest is not None:
+        return latest.check_in, latest.check_out, "Showing the most recent night monitored."
+
+    # No collected night can be traced to a run at all -- history older than
+    # the check-run table, or a restored database that brought the prices and
+    # not the runs. The old behaviour is still the best available answer, and
+    # showing a rolled night beats showing none.
+    latest = (await session.execute(collected.limit(1))).first()
+    if latest is not None:
+        return latest.check_in, latest.check_out, "Showing the most recent night collected."
+
+    # Nothing has ever been collected, so there is no evidence to prefer. The
+    # weekend is as good a first guess as any, and the empty state below
+    # explains itself.
+    weekend = next_weekend(local_today())
+    return weekend.check_in, weekend.check_out, "Defaults to the coming weekend."
+
+
 @router.get("/matrix", response_class=HTMLResponse)
 async def matrix(
     request: Request,
@@ -508,7 +596,8 @@ async def matrix(
     itself had chosen.
 
     A default is a guess at what someone wants to see. Guessing at data that
-    exists beats guessing at data that would be more interesting.
+    exists beats guessing at data that would be more interesting. Which night
+    exactly, and why not simply the newest one, is ``_default_night`` above.
     """
     if user is None:
         return _redirect_to_login(request)
@@ -521,27 +610,7 @@ async def matrix(
 
     default_note = None
     if check_in is None or check_out is None:
-        latest = (
-            await session.execute(
-                select(PriceSeries.check_in, PriceSeries.check_out)
-                .where(
-                    PriceSeries.adults == adults,
-                    PriceSeries.hotel_id.in_(owned_hotel_ids(user)),
-                )
-                .order_by(PriceSeries.check_in.desc())
-                .limit(1)
-            )
-        ).first()
-        if latest is not None:
-            check_in, check_out = latest
-            default_note = "Showing the most recent night collected."
-        else:
-            # Nothing has ever been collected, so there is no evidence to
-            # prefer. The weekend is as good a first guess as any, and the
-            # empty state below explains itself.
-            weekend = next_weekend(local_today())
-            check_in, check_out = weekend.check_in, weekend.check_out
-            default_note = "Defaults to the coming weekend."
+        check_in, check_out, default_note = await _default_night(session, user, adults)
 
     rows = (
         await session.execute(
