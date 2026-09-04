@@ -277,6 +277,29 @@ span.truncate { display: block; }
    needs; it still stretches to fill anything wider. */
 .scroll-x > .grid { width: 100%; min-width: min-content; }
 
+/* -- a list that stops after twelve rows -----------------------------
+ *
+ * Changes and the delivery history both fetch up to three hundred rows, and
+ * three hundred rows is a page whose own filters scroll off the top the
+ * moment somebody starts reading. Worse, the row that matters is nearly
+ * always in the first few: both lists are newest first.
+ *
+ * So the box keeps twelve in view and takes the rest to its own scrollbar.
+ * Nothing is dropped -- the same rows are there, in the same order.
+ *
+ * The exact height is set in JS from the rows themselves, because these rows
+ * wrap: a long room name, a stay window, a provider's error text. A height in
+ * pixels would cut one of them in half on the day it wrapped. The max-height
+ * here is the fallback a browser with no JS gets -- about twelve one-line
+ * rows, and never the whole three hundred.
+ */
+.scroll-rows { overflow-y: auto; max-height: 33rem; }
+.scroll-rows > .grid { width: 100%; min-width: min-content; }
+/* The header has to survive the scroll. Without this, everything from row
+   thirteen down is nine unlabelled columns, and "Was" and "Now" are two
+   rupee amounts in no stated order. */
+.scroll-rows thead th { position: sticky; top: 0; z-index: 2; }
+
 /* The confirmation time, under the time the price actually moved. Smaller and
    on its own line: it is context for the number above it, not a second
    number to read. */

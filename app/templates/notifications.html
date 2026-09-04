@@ -18,7 +18,9 @@
   <h2>Delivery history</h2>
   {# Lanes here too. Detail carries a whole subject line, and left to size
      itself it widened the table past the window and scrolled the page. #}
-  <div class="scroll-x">
+  {# Twelve rows, then a scrollbar: the history is newest first, and the
+     message somebody came here to check is in the first few. #}
+  <div class="scroll-x scroll-rows" data-rows="12">
   <table class="grid grid-history">
     <colgroup>
       <col class="col-when"><col class="col-to"><col class="col-hotel">

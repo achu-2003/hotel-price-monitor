@@ -43,6 +43,9 @@
   {% endif %}
 </form>
 
+{# Twelve rows, then a scrollbar. The filters above stay on screen, which
+   is what somebody narrowing a three-hundred-row window is reaching for. #}
+<div class="scroll-rows" data-rows="12">
 <table class="grid">
   <thead>
     <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Compared</th><th class="num">Was</th><th class="num">Now</th><th class="num">Change</th><th>Alert</th></tr>
@@ -121,4 +124,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

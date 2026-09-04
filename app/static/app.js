@@ -1137,4 +1137,42 @@
     });
   });
 
+  // -- lists that stop after N rows ----------------------------------
+  // The height comes from the rows, not from a number of pixels: these tables
+  // wrap, so the twelfth row is not at a predictable offset and a fixed height
+  // shows eleven and a half rows on the day somebody's room name got longer.
+  //
+  // Measured by adding up the heights rather than by comparing positions,
+  // because a position inside a box that is already scrolled is relative to
+  // where the reader left it -- which made the box shrink a little every time
+  // the window was resized mid-list.
+  document.querySelectorAll("[data-rows]").forEach(function (box) {
+    const wanted = Number(box.dataset.rows || 0);
+    if (!wanted) return;
+
+    function fit() {
+      const rows = box.querySelectorAll("tbody tr");
+      // Shorter than the cap already: no scrollbar, and no empty band under
+      // the last row either.
+      if (rows.length <= wanted) {
+        box.style.maxHeight = "none";
+        return;
+      }
+      const head = box.querySelector("thead");
+      let height = head ? head.offsetHeight : 0;
+      for (let i = 0; i < wanted; i += 1) height += rows[i].offsetHeight;
+      box.style.maxHeight = height + "px";
+    }
+
+    fit();
+
+    // Rows rewrap when the window narrows, and a height measured at the old
+    // width then hides part of the twelfth row.
+    let pending = null;
+    window.addEventListener("resize", function () {
+      window.clearTimeout(pending);
+      pending = window.setTimeout(fit, 150);
+    });
+  });
+
 })();
