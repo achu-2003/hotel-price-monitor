@@ -55,8 +55,25 @@ from app.notifications.render import render_digest
 
 log = get_logger("tasks.notify")
 
-_MAX_SEND_ATTEMPTS = 3
-_SEND_BACKOFF = (60, 300, 900)
+#: How many times a RETRYABLE send is tried, and how long to wait between.
+#:
+#: The old budget was three attempts over 60, 300 and 900 seconds -- twenty-one
+#: minutes -- and that is shorter than the outages this actually has to
+#: survive. A DNS failure lasting half an hour burned all three attempts and
+#: filed the alert as permanently failed: eight of them in one morning here,
+#: four email and four WhatsApp, every one reading
+#: "[Errno 11001] getaddrinfo failed" -- a router, not a rejection.
+#:
+#: Extended to five attempts across about four hours, which covers an outage
+#: long enough for somebody to have gone home. Nothing else changes: only
+#: errors the provider marked ``retryable`` are retried at all, so a rejected
+#: address or a bad template still fails on the first attempt, and every
+#: attempt is still counted and recorded on the row.
+#:
+#: The last entry is reused if attempts ever exceed the tuple, so the two do
+#: not have to be kept the same length by hand.
+_MAX_SEND_ATTEMPTS = 5
+_SEND_BACKOFF = (60, 300, 900, 3600, 10800)
 
 
 @shared_task(name="notify.dispatch_changes", ignore_result=True)

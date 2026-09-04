@@ -261,6 +261,51 @@ async def _render(
 
 
 # -- login -----------------------------------------------------------
+
+#: How far behind the newest row a series may be before it is read as absent
+#: rather than merely checked on a different schedule.
+UNLISTED_AFTER = timedelta(minutes=15)
+
+
+def unlisted_offer_keys(
+    series_rows, *, tolerance: timedelta = UNLISTED_AFTER
+) -> set[str]:
+    """Rooms the source has stopped listing, among rooms shown as unavailable.
+
+    A room the hotel declares sold out and a room that has vanished from the
+    page are both ``is_available=false``, and both used to render as "sold out
+    - Last checked 11:22" with a clock that receded further every day. They
+    call for different responses. One is inventory doing its job. The other is
+    a room nothing is looking at any more, and a stale timestamp beside it
+    reads as monitoring having broken.
+
+    The signal is already in the table. Once absence is confirmed the series is
+    marked unavailable, and the absence sweep only considers AVAILABLE series
+    -- which is what stops it oscillating -- so the row is never touched again
+    and its ``last_checked_at`` stops while its neighbours move on. Being
+    behind the newest row is therefore exactly "was not in the most recent
+    fetch".
+
+    Two things keep it from over-claiming. The tolerance, because targets for
+    the same night at different occupancies are separate page loads minutes
+    apart and none of that is a room going missing. And the restriction to rows
+    already shown as unavailable, which bounds the worst case: a wrong guess
+    relabels a sold-out room. It can never invent one, and never touches a room
+    that is on sale.
+    """
+    checked = [s.last_checked_at for s in series_rows if s.last_checked_at is not None]
+    if not checked:
+        return set()
+    newest = max(checked)
+    return {
+        s.offer_key
+        for s in series_rows
+        if not s.is_available
+        and s.last_checked_at is not None
+        and s.last_checked_at < newest - tolerance
+    }
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, user: DashUser, next: str = "/"):
     if user is not None:
@@ -841,6 +886,8 @@ async def hotel_detail(
         )
     ).all()
 
+    unlisted_keys = unlisted_offer_keys([row[0] for row in prices])
+
     # Whether anything was ever collected for another night, so a hotel that has
     # stopped collecting says so instead of falling back to the first-run setup
     # path and looking like it was never configured.
@@ -882,7 +929,7 @@ async def hotel_detail(
         request, user, session, "hotel_detail.html",
         alert_defaults=alert_defaults,
         hotel=hotel, sources=sources, rooms=rooms, targets=targets,
-        prices=prices, runs=runs, now=datetime.now(UTC),
+        prices=prices, unlisted_keys=unlisted_keys, runs=runs, now=datetime.now(UTC),
         all_sources=all_sources, attached_ids=attached_ids,
         today=today, had_past_prices=had_past_prices,
         known_engines=known_engines(),

@@ -39,6 +39,7 @@ def _recipient(**overrides):
         "is_active": True,
         "quiet_hours_start": None,
         "quiet_hours_end": None,
+        "receives_ops_alerts": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)

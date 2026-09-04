@@ -201,6 +201,12 @@
         <td class="num">{{ series.adults }}A</td>
         <td class="num strong">
           {% if series.is_available %}{{ money(series.current_price, series.currency) }}
+          {% elif series.offer_key in unlisted_keys %}
+          {# Off the page, not sold out. The hotel is not saying this room is
+             full; it has stopped offering it, and nothing is watching it any
+             more. Shown as its own state so the stale clock beside it is
+             explained rather than alarming. #}
+          <span class="pill pill-off" title="This room is no longer on the source's page">not listed</span>
           {% else %}<span class="pill pill-soldout">sold out</span>{% endif %}
           {% if series.pending_price %}
           {# Moved enough to matter, not yet confirmed across the required
@@ -210,7 +216,13 @@
           </span>
           {% endif %}
         </td>
-        <td class="muted nowrap">{{ series.last_checked_at|localtime('%d %b %H:%M') }}</td>
+        <td class="muted nowrap">
+          {% if series.offer_key in unlisted_keys %}
+          last seen {{ series.last_checked_at|localtime('%d %b %H:%M') }}
+          {% else %}
+          {{ series.last_checked_at|localtime('%d %b %H:%M') }}
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

@@ -57,6 +57,35 @@
 </p>
 {% endif %}
 
+{# THE ONE THAT CANNOT ANNOUNCE ITSELF
+   ===================================
+   Every other misconfiguration on this page is discovered by a price move
+   arriving late, or not arriving. This one is discovered by nothing. When no
+   recipient is set to hear about broken monitoring, the alert that a scraper
+   has stopped is composed, finds nobody to send it to, writes
+   "no_ops_contacts_configured" to a log file and is dropped -- while the
+   dashboard goes on showing yesterday's prices as though they were today's.
+
+   It has already happened here: "Price monitoring has gone quiet on 24
+   sources", logged on 26 August, addressed to no one.
+
+   So the absence is stated on the page rather than in a file. Email only,
+   which is why the address is part of the test -- a contact with the box
+   ticked and no address is not a contact. #}
+{% set ops_contacts = recipients
+     | selectattr('is_active')
+     | selectattr('receives_ops_alerts')
+     | selectattr('email')
+     | list %}
+{% if not ops_contacts %}
+<p class="note">
+  <strong>Nobody is told when monitoring breaks.</strong> If every source
+  stopped returning prices tonight, this page and the dashboard would look
+  exactly as they do now. Expand a recipient below who has an email address
+  and tick <em>Tell them when monitoring breaks</em>.
+</p>
+{% endif %}
+
 {# The two ways of adding somebody, side by side: the quick one and the
    considered one. Stacked, the second sat below a fold and read as a
    different subject; paired, the choice between them is the first thing on
@@ -468,6 +497,26 @@
                     address that quietly bounces, or a number that was never a
                     WhatsApp contact, is a channel that reports nothing and
                     can fail for a week without anyone finding out.
+                  </span>
+
+                  {# A different question from "which price moves reach them".
+                     This one is about the monitor itself going quiet, and it
+                     is the only switch on this page that decides whether
+                     anybody hears about a scraper that has stopped. #}
+                  <label class="checkline">
+                    <input type="checkbox" name="receives_ops_alerts" value="true"
+                           {% if recipient.receives_ops_alerts %}checked{% endif %}>
+                    Tell them when monitoring breaks
+                  </label>
+                  <span class="muted">
+                    Sent when a source stops returning prices — not when a
+                    price changes. Email only: an alert that the monitor is
+                    down is not something a WhatsApp business template can
+                    carry, so a contact with no address here is skipped.
+                    {% if not recipient.email %}
+                    <strong>This person has no email address, so this will not
+                    reach them.</strong>
+                    {% endif %}
                   </span>
                   <button type="submit">Save</button>
                   <p class="form-status" hidden></p>

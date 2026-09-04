@@ -24,6 +24,7 @@ re-enable it once it recovers.
 """
 from __future__ import annotations
 
+import random
 import time
 
 from dataclasses import dataclass
@@ -233,22 +234,55 @@ def _circuit_allows(target: MonitorTarget, now: datetime) -> bool:
     return True
 
 
+#: How far past its interval a group may be pushed, as a fraction of that
+#: interval. Small on purpose: 5% of thirty minutes is at most ninety seconds,
+#: which costs about 2% of the checks in a day and is enough to pull a batch
+#: apart within a few cycles.
+_SPREAD_FRACTION = 0.05
+
+
 def schedule_next_run(
     session: Session, target_ids: list[int], now: datetime | None = None
 ) -> None:
-    """Push these targets forward by their interval.
+    """Push these targets forward by their interval, plus a little.
 
     Called at DISPATCH time, not at completion. If it waited for the fetch to
     finish, a task that hung would leave its target permanently due and the
     dispatcher would enqueue it again every 60 seconds — the lock would absorb
     the damage, but the queue would fill with skipped work.
+
+    WHY THE INTERVAL ALONE IS NOT ENOUGH
+    ====================================
+    A single ``now`` for the whole batch gave every target the same
+    ``next_run_at`` to the microsecond. Nothing pulls them apart again, so one
+    moment of alignment -- a restart, an outage, the day the deployment was
+    seeded -- locks every hotel into the same second of every interval for as
+    long as the deployment lives. Ten hotels here all read
+    ``15:52:20.505328``.
+
+    ``dispatch_jitter_seconds`` hides it today by staggering the ENQUEUE, but
+    it is a fixed window: the fetches still all begin inside it, and once the
+    number of hotels exceeds what the browser workers can finish in that
+    window the surplus tasks pass their ``expires`` deadline and are dropped
+    by the broker. A dropped task writes no check_run and no error, so
+    coverage would thin out with nothing on any screen to say so.
+
+    So the spacing is put where it lasts, on the schedule itself. Each call
+    draws ONE offset and gives it to every target it was passed, which matters:
+    the dispatcher calls this once per group, and a group is the set of targets
+    that share a single page load. Spreading targets WITHIN a group would turn
+    one fetch into several -- the opposite of the intent.
     """
     now = now or datetime.now(UTC)
     targets = session.execute(
         select(MonitorTarget).where(MonitorTarget.id.in_(target_ids))
     ).scalars().all()
+
+    # Drawn once, applied to all of them. See the docstring.
+    spread = random.random() * _SPREAD_FRACTION
     for target in targets:
-        target.next_run_at = now + timedelta(minutes=target.interval_minutes)
+        interval = timedelta(minutes=target.interval_minutes)
+        target.next_run_at = now + interval + interval * spread
 
 
 def record_success(
