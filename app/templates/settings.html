@@ -1,5 +1,93 @@
 {% extends "base.html" %}
-{% block title %}Settings · Hotel Price Monitor{% endblock %}
+{% block title %}Settings · Hotel Price Monitor
+{#
+  STORED HISTORY
+  ==============
+  Last, and after everything that decides what the system DOES, because this
+  section only decides what it REMEMBERS. It is also the only destructive
+  control on the page, and a danger zone sitting above the ordinary settings
+  invites the mis-click it exists to make deliberate.
+
+  The numbers are rendered by the server, not fetched by the script. A button
+  that appears before the counts it is about is a button people press without
+  them.
+
+  Guarded on ``history`` for the reason ``sent_counts`` is guarded further
+  down: a caller that renders this template without the measurement gets a
+  page missing one section, rather than a 500 on the whole of Settings. There
+  is no safe way to draw a delete button whose counts are unknown, so when
+  they are absent the button is not drawn at all.
+#}
+{% if history %}
+<section>
+  <h2>Stored history</h2>
+  <p class="muted">
+    Every check, every price move and every message is written down, and none
+    of it is read after the week it happened. This keeps
+    {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}
+    and discards the rest, automatically on the 1st of each month. Nothing
+    monitored changes: the hotels, their booking links, the selectors, the
+    schedules and the recipients are all untouched, and so is the last price
+    of each room, which is what tomorrow's comparison is made against.
+  </p>
+
+  <div class="panel stack" id="stored-history">
+    <table class="grid">
+      <thead>
+        <tr><th>What</th><th class="num">Older than {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}</th><th class="num">Stored</th></tr>
+      </thead>
+      <tbody>
+        {% for table in history.tables %}
+        <tr>
+          <td>{{ table.label }}</td>
+          <td class="num">{{ "{:,}".format(table.expired) }}</td>
+          <td class="num muted">{{ "{:,}".format(table.total) }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td>
+            raw readings
+            {% if history.observations_expired and not history.partitions_droppable %}
+            <span class="muted">
+              — none can be reclaimed yet: readings are stored a calendar month
+              at a time and a month is dropped whole or not at all.
+            </span>
+            {% endif %}
+          </td>
+          <td class="num">{{ "{:,}".format(history.observations_expired) }}</td>
+          <td class="num muted">
+            {{ history.partitions_droppable }}
+            month{{ '' if history.partitions_droppable == 1 else 's' }} droppable
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="muted">
+      Nothing here can be brought back. Anything older than
+      {{ history.cutoff.strftime('%d %b %Y') }} goes.
+    </p>
+
+    <div class="actions">
+      <button class="danger clean-history"
+              data-expired="{{ history.total_expired }}"
+              data-keep-months="{{ history.keep_months }}"
+              data-cutoff="{{ history.cutoff.strftime('%d %b %Y') }}"
+              {% if not history.total_expired %}disabled{% endif %}>
+        {% if history.total_expired %}
+        Delete {{ "{:,}".format(history.total_expired) }} old
+        row{{ '' if history.total_expired == 1 else 's' }} now
+        {% else %}
+        Nothing older than {{ history.keep_months }}
+        month{{ '' if history.keep_months == 1 else 's' }}
+        {% endif %}
+      </button>
+      <span class="form-status" role="status"></span>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
 
 {% block content %}
 <h1>Settings</h1>
@@ -681,4 +769,92 @@
   </div>
 
 </section>
+
+{#
+  STORED HISTORY
+  ==============
+  Last, and after everything that decides what the system DOES, because this
+  section only decides what it REMEMBERS. It is also the only destructive
+  control on the page, and a danger zone sitting above the ordinary settings
+  invites the mis-click it exists to make deliberate.
+
+  The numbers are rendered by the server, not fetched by the script. A button
+  that appears before the counts it is about is a button people press without
+  them.
+
+  Guarded on ``history`` for the reason ``sent_counts`` is guarded further up:
+  a caller that renders this template without the measurement gets a page
+  missing one section rather than a 500 on the whole of Settings. There is no
+  safe way to draw a delete button whose counts are unknown, so when they are
+  absent the button is not drawn at all.
+#}
+{% if history %}
+<section>
+  <h2>Stored history</h2>
+  <p class="muted">
+    Every check, every price move and every message is written down, and none
+    of it is read after the week it happened. This keeps
+    {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}
+    and discards the rest, automatically on the 1st of each month. Nothing
+    monitored changes: the hotels, their booking links, the selectors, the
+    schedules and the recipients are all untouched, and so is the last price
+    of each room, which is what tomorrow's comparison is made against.
+  </p>
+
+  <div class="panel stack" id="stored-history">
+    <table class="grid">
+      <thead>
+        <tr><th>What</th><th class="num">Older than {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}</th><th class="num">Stored</th></tr>
+      </thead>
+      <tbody>
+        {% for table in history.tables %}
+        <tr>
+          <td>{{ table.label }}</td>
+          <td class="num">{{ "{:,}".format(table.expired) }}</td>
+          <td class="num muted">{{ "{:,}".format(table.total) }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td>
+            raw readings
+            {% if history.observations_expired and not history.partitions_droppable %}
+            <span class="muted">
+              — none can be reclaimed yet: readings are stored a calendar month
+              at a time and a month is dropped whole or not at all.
+            </span>
+            {% endif %}
+          </td>
+          <td class="num">{{ "{:,}".format(history.observations_expired) }}</td>
+          <td class="num muted">
+            {{ history.partitions_droppable }}
+            month{{ '' if history.partitions_droppable == 1 else 's' }} droppable
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="muted">
+      Nothing here can be brought back. Anything older than
+      {{ history.cutoff.strftime('%d %b %Y') }} goes.
+    </p>
+
+    <div class="actions">
+      <button class="danger clean-history"
+              data-expired="{{ history.total_expired }}"
+              data-keep-months="{{ history.keep_months }}"
+              data-cutoff="{{ history.cutoff.strftime('%d %b %Y') }}"
+              {% if not history.total_expired %}disabled{% endif %}>
+        {% if history.total_expired %}
+        Delete {{ "{:,}".format(history.total_expired) }} old
+        row{{ '' if history.total_expired == 1 else 's' }} now
+        {% else %}
+        Nothing older than {{ history.keep_months }}
+        month{{ '' if history.keep_months == 1 else 's' }}
+        {% endif %}
+      </button>
+      <span class="form-status" role="status"></span>
+    </div>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

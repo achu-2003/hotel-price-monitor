@@ -517,14 +517,14 @@ a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
 .cell-price { font-weight: 650; font-variant-numeric: tabular-nums; }
 .cell-changed { border-color: var(--accent); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent-2); }
 .cell-soldout { background: var(--line-soft); color: var(--muted); }
-/* The basis marker, on the cells that disagree with the rest of the column.
-   Small and quiet: it qualifies a number rather than competing with it. */
-.cell-basis { font-size: 10px; color: var(--muted); font-style: italic; }
 /* The rolled night, beside the sold-out cell rather than under it: the roll is
    the answer to "then where are this hotel's prices", and an answer belongs
    next to the question. */
 .onward { align-self: center; font-size: 12px; color: var(--muted); text-decoration: none; }
 .onward:hover { color: var(--accent); text-decoration: underline; }
+/* The basis marker, on the cells that disagree with the rest of the column.
+   Small and quiet: it qualifies a number rather than competing with it. */
+.cell-basis { font-size: 10px; color: var(--muted); font-style: italic; }
 
 /* -- forms ----------------------------------------------------------- */
 .filters {
@@ -939,6 +939,76 @@ code {
 }
 .row-panel .stack { max-width: none; margin-top: var(--s4); }
 .row-panel .filters { margin-bottom: 0; padding: var(--s3); }
+
+/* .stack is 460px wide because a stack is normally a column of form fields,
+   and a form field wider than that is harder to read, not easier. The stored
+   history panel is a stack of a TABLE, and squeezed into a form's width its
+   two-word row labels wrapped onto two lines each while three quarters of the
+   section sat empty beside them. */
+#stored-history { max-width: none; }
+#stored-history .grid { margin-bottom: 0; }
+
+/* Same 460px cap, same reason it is wrong here: this panel is four paragraphs
+   of explanation, not a column of inputs, and squeezed into a form's width it
+   ran to fourteen short lines down the left of an otherwise empty section.
+   The prose keeps a reading measure of its own -- full width on a wide screen
+   would be a 180-character line, which is worse than the narrow column. */
+#price-display { max-width: none; }
+#price-display > span,
+#price-display > p { max-width: 92ch; }
+
+/* -- a switch -------------------------------------------------------- */
+/*
+ * One control that IS the setting, rather than a checkbox plus a Save. It
+ * carries role="switch" and aria-checked, and the track position is the only
+ * thing on screen that states which way it is set -- so the knob has to move
+ * far enough to be read at a glance, and the off state has to look off rather
+ * than merely paler.
+ *
+ * Every rule below that looks redundant is undoing the page's own `button`
+ * style, which is a white-on-teal gradient pill with a shadow. Left in place
+ * it would paint the switch as an ordinary submit button and the track would
+ * sit inside it like a decoration.
+ */
+.switch-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+.switch {
+  display: inline-flex; align-items: center; gap: var(--s3);
+  padding: 0; border: 0;
+  background: none; box-shadow: none;
+  color: var(--ink); font-weight: 600;
+  white-space: normal;
+}
+.switch:hover { filter: none; box-shadow: none; }
+.switch:active { transform: none; filter: none; }
+.switch:focus-visible { outline: 2px solid var(--brand-2); outline-offset: 3px; border-radius: var(--radius-sm); }
+
+.switch-track {
+  position: relative; flex: 0 0 auto;
+  width: 42px; height: 24px; border-radius: 999px;
+  background: #cfd6d2;
+  border: 1px solid #b9c2bd;
+  transition: background .16s ease, border-color .16s ease;
+}
+.switch-knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(22,33,30,.35);
+  transition: transform .16s ease;
+}
+.switch[aria-checked="true"] .switch-track {
+  background: var(--brand-2);
+  border-color: var(--brand-1);
+}
+.switch[aria-checked="true"] .switch-knob { transform: translateX(18px); }
+
+/* Dimmed while the save is in flight, so a second click on a switch that has
+   already been pressed is visibly not doing anything. */
+.switch:disabled { opacity: .55; cursor: default; }
+.switch:disabled .switch-track { transition: none; }
+
+.switch-text { font-size: 14px; }
 
 /* A table inside a table needs to read as the smaller thing. */
 .subgrid { font-size: 12px; margin-bottom: 0; }

@@ -226,3 +226,45 @@ class AlertDefaultsOut(AlertDefaultsIn):
     cheapest_room: Decimal | None = None
     dearest_room: Decimal | None = None
 
+
+
+class HistoryTableOut(ORMModel):
+    """One table's share of the stored past."""
+
+    key: str
+    label: str
+    #: Rows older than the retention window -- what a clean would delete.
+    expired: int
+    #: Rows in the table altogether, so the number above has a denominator.
+    total: int
+
+
+class HistoryUsageOut(ORMModel):
+    """What a history clean would delete, before anybody presses anything.
+
+    A destructive button whose effect is unknown until after it is pressed is
+    one people either avoid or regret, so the page shows the counts first and
+    the confirmation quotes them back.
+    """
+
+    keep_months: int
+    cutoff: datetime
+    tables: list[HistoryTableOut]
+    #: Raw readings past the window, and how many whole monthly partitions of
+    #: them can actually be reclaimed right now. The two differ on purpose --
+    #: a partition holds a calendar month and is dropped whole or not at all.
+    observations_expired: int
+    partitions_droppable: int
+
+    @property
+    def total_expired(self) -> int:
+        return sum(t.expired for t in self.tables) + self.observations_expired
+
+
+class HistoryCleanResult(ORMModel):
+    """What a clean actually deleted."""
+
+    keep_months: int
+    cutoff: datetime
+    deleted: dict[str, int]
+    observation_partitions_dropped: int

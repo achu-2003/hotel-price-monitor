@@ -66,6 +66,7 @@ from app.notifications import registry
 from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
 from app.services import monitoring as monitoring_service
+from app.services import retention
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
 from app.services.price_display import cheapest as cheapest_shown
@@ -1666,10 +1667,12 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
     # script so the section is complete on first paint -- a danger-zone button
     # that appears before the numbers it is about is a button people press
     # without them.
+    history = await retention.measure(session, settings.history_retention_months)
 
     return await _render(
         request, user, session, "settings.html",
         alert_defaults=alert_defaults,
+        history=history,
         recipients=recipients, assignments=assignments, hotels=hotels,
         sent_counts=sent_counts,
         channels=registry.available_channels(),

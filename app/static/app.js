@@ -1289,6 +1289,81 @@
     });
   });
 
+  // -- clearing stored history ---------------------------------------
+  /*
+   * The same sweep the 1st of the month runs, on demand. Not a form.api-form:
+   * the useful part of the answer is what it deleted, and the generic handler
+   * reloads the page a moment after saying "Saved.", which would take the
+   * counts with it before anybody read them.
+   *
+   * A plain confirm rather than a typed name, which is the opposite of the
+   * hotel purge two hundred lines up, and the difference is deliberate. That
+   * one destroys a specific thing that will never come back and can be pressed
+   * by mistake on the wrong hotel. This one applies a standing policy that is
+   * going to run on its own in a few weeks anyway, to rows the deployment has
+   * already decided it does not keep — so the confirmation quotes the number
+   * and the date and asks once, rather than making someone transcribe
+   * something to prove they meant it.
+   */
+  document.querySelectorAll("button.clean-history").forEach(function (button) {
+    button.addEventListener("click", async function () {
+      const expired = Number(button.dataset.expired || 0);
+      if (!expired) return;
+
+      const months = Number(button.dataset.keepMonths || 1);
+      const asked = window.confirm(
+        "Delete " + expired.toLocaleString() + " rows older than " +
+        button.dataset.cutoff + "?\n\n" +
+        "Price changes, check runs, recorded errors and sent messages from " +
+        "before then. The hotels, their links, the schedules and the " +
+        "recipients are untouched, and so is the last price of each room.\n\n" +
+        "This is the same clean that runs by itself on the 1st of each month, " +
+        "keeping " + months + " month" + (months === 1 ? "" : "s") + ". " +
+        "Nothing here can bring the rows back."
+      );
+      if (!asked) return;
+
+      const status = button.parentElement.querySelector(".form-status");
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "…";
+
+      const result = await api("/api/v1/maintenance/history/clean", "POST");
+      if (!result.ok) {
+        button.textContent = original;
+        button.disabled = false;
+        if (status) {
+          status.textContent = problemText(result);
+          status.className = "form-status error";
+        }
+        return;
+      }
+
+      /*
+       * Said before the reload, and given time to be read. A sweep that
+       * deletes nothing looks identical to one that failed if the only
+       * feedback is the page coming back, and the number is the whole point
+       * of having pressed it.
+       */
+      const body = result.body || {};
+      const total = Object.values(body.deleted || {}).reduce(function (a, b) {
+        return a + b;
+      }, 0);
+      const months_dropped = body.observation_partitions_dropped || 0;
+      if (status) {
+        status.hidden = false;
+        status.className = "form-status ok";
+        status.textContent =
+          "Deleted " + total.toLocaleString() + " rows" +
+          (months_dropped
+            ? " and " + months_dropped + " month" +
+              (months_dropped === 1 ? "" : "s") + " of raw readings"
+            : "") + ".";
+      }
+      setTimeout(function () { window.location.reload(); }, 2500);
+    });
+  });
+
   // -- lists that stop after N rows ----------------------------------
   // The height comes from the rows, not from a number of pixels: these tables
   // wrap, so the twelfth row is not at a predictable offset and a fixed height
