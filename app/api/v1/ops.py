@@ -404,13 +404,12 @@ async def clean_history_now(
     admin: AdminUser,
     keep_months: int | None = Query(default=None, ge=1, le=120),
 ):
-    """Run the monthly history sweep now, by hand.
+    """Discard the stored past beyond the retention window.
 
-    Same policy as ``maintenance.clean_history``, out of the same module, so
-    the button and the schedule cannot mean two different things by "old". The
-    only difference is who asked, which is why this one writes an audit row and
-    the scheduled one does not: an automatic sweep on a stated policy is not a
-    decision anybody made today, and a person pressing this is.
+    THE ONLY WAY THIS EVER HAPPENS. Nothing sweeps these tables on a schedule:
+    a job that quietly deletes months of a business's own history, on a
+    calendar, is not something to run unattended -- so it is a person, looking
+    at the counts, pressing a button, and the audit row records which person.
 
     ADMIN ONLY. This deletes rows no backup inside the application can return.
 

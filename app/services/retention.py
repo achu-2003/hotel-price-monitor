@@ -48,13 +48,23 @@ writing one, with no time bound. That guard only matters when a price_series
 row is deleted and rebuilt -- and this sweep never touches price_series, so
 ageing out the change it would have found cannot make it fire twice.
 
+NOTHING HERE RUNS ON A SCHEDULE
+===============================
+There was a monthly Celery task and it was taken out again. A job that quietly
+deletes months of a business's own history, on a calendar, unattended, is not
+worth the disk it saves: the one time it matters is the time somebody wanted
+last quarter back. So the clean is a person on the settings page, looking at
+the counts, pressing a button -- and the audit row records which person.
+
+The consequence to be honest about: these tables are now bounded only by
+somebody remembering. Nothing will tell them.
+
 STATEMENTS, NOT EXECUTION
 =========================
-The sweep runs from two places on two kinds of session: the monthly Celery task
-holds a sync session, the button on the settings page an async one. So this
-module hands back statements and lets the caller execute them. One policy,
-counted and deleted by the same predicate, with no chance of the preview and
-the deletion disagreeing about what "old" means.
+The module hands back statements rather than running them, so counting and
+deleting cannot drift into two different ideas of "old" -- the settings page
+measures with the same predicate the button deletes with. It is also what
+would let a scheduled caller hold a sync session if one is ever wanted again.
 """
 from __future__ import annotations
 

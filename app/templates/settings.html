@@ -714,12 +714,13 @@
   <h2>Stored history</h2>
   <p class="muted">
     Every check, every price move and every message is written down, and none
-    of it is read after the week it happened. This keeps
-    {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}
-    and discards the rest, automatically on the 1st of each month. Nothing
-    monitored changes: the hotels, their booking links, the selectors, the
-    schedules and the recipients are all untouched, and so is the last price
-    of each room, which is what tomorrow's comparison is made against.
+    of it is read after the week it happened. Nothing here is deleted on a
+    schedule — the button below is the only thing that discards it, and it
+    discards what is older than
+    {{ history.keep_months }} month{{ '' if history.keep_months == 1 else 's' }}.
+    Nothing monitored changes: the hotels, their booking links, the selectors,
+    the schedules and the recipients are all untouched, and so is the last
+    price of each room, which is what tomorrow's comparison is made against.
   </p>
 
   <div class="panel stack" id="stored-history">

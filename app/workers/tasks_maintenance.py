@@ -7,8 +7,6 @@ Five jobs, each addressing a way this system fails quietly rather than loudly:
 ``alert_on_silence``    a target that stopped succeeding without erroring
 ``prune_artifacts``     screenshots and HTML fill a disk otherwise
 ``retention_sweep``     drop observation partitions past the retention window
-``clean_history``       discard price changes, runs, errors and messages that
-                        are older than the retention window
 ``sweep_stale_configs`` a config the current scanner would not have written
 """
 from __future__ import annotations
@@ -102,57 +100,6 @@ def retention_sweep(keep_months: int = RETENTION_MONTHS) -> dict[str, int]:
                 dropped += 1
 
     return {"dropped": dropped}
-
-
-@shared_task(name="maintenance.clean_history", ignore_result=True)
-def clean_history(keep_months: int | None = None) -> dict[str, int]:
-    """Discard the recorded past beyond the retention window. Monthly.
-
-    Everything the monitor learns is written down and, until this existed,
-    almost none of it was ever thrown away. Twenty price changes a day on one
-    hotel is seven thousand rows a year; the check runs behind them are
-    heavier, because a run is recorded whether or not it found anything to
-    say. Across a fleet that reaches six figures inside a year, and none of it
-    is read -- the dashboard asks about this week, the alerts about this hour.
-
-    WHAT IT WILL NOT TOUCH is the part worth checking before trusting it, and
-    it is stated in services/retention.py rather than here so the task and the
-    settings-page button cannot drift into two different answers. In short:
-    hotels, sources, selectors, targets and recipients are setup, not history,
-    and price_series carries the baseline every comparison is made against.
-
-    ONE TRANSACTION for the row tables, so a failure halfway leaves the
-    database exactly as it was rather than half a policy applied. The
-    partition drops are DDL and cannot be undone by a rollback, so they run
-    last, after the part that can fail has succeeded.
-
-    ``keep_months`` is for the caller who wants to say; otherwise the
-    deployment's ``HISTORY_RETENTION_MONTHS`` decides, which is what the
-    monthly schedule uses.
-    """
-    months = keep_months if keep_months is not None else get_settings().history_retention_months
-    cutoff = retention.cutoff_for(datetime.now(UTC), months)
-
-    deleted: dict[str, int] = {}
-    with sync_session() as session:
-        for sweep in retention.sweeps(cutoff):
-            result = session.execute(sweep.purge)
-            deleted[sweep.key] = result.rowcount or 0
-
-        names = list(session.execute(retention.PARTITION_LIST_SQL).scalars().all())
-        dropped = retention.partitions_to_drop(names, cutoff)
-        for name in dropped:
-            # Interpolated, unavoidably: a table name cannot be a bind
-            # parameter. Safe because the name never came from a person -- it
-            # was read from pg_class a moment ago and matched against the
-            # partition naming pattern, and anything unparseable was left
-            # alone by partitions_to_drop.
-            session.execute(text(f"DROP TABLE IF EXISTS {name}"))
-            log.info("partition_dropped", partition=name)
-        deleted["observation_partitions"] = len(dropped)
-
-    log.info("history_cleaned", cutoff=cutoff.isoformat(), keep_months=months, **deleted)
-    return deleted
 
 
 @shared_task(name="maintenance.alert_on_silence", ignore_result=True)

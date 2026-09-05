@@ -1662,8 +1662,8 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
     # and fails at the first price move, which is the worst moment to find out.
     settings = get_settings()
 
-    # How much stored past there is, and how much of it the monthly sweep
-    # would discard. Measured here rather than fetched by the page's own
+    # How much stored past there is, and how much of it a clean would
+    # discard. Measured here rather than fetched by the page's own
     # script so the section is complete on first paint -- a danger-zone button
     # that appears before the numbers it is about is a button people press
     # without them.

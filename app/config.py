@@ -108,8 +108,10 @@ class Settings(BaseSettings):
 
     # ── how much history to keep ─────────────────────────────────────
     # Months of price changes, check runs, recorded errors and sent messages
-    # kept before the monthly sweep discards them. See services/retention.py
-    # for the full list of what is deleted and, more importantly, what is not.
+    # the clean on Settings keeps. Nothing discards them on a schedule --
+    # this only says where the line falls when somebody presses the button.
+    # See services/retention.py for the full list of what is deleted and,
+    # more importantly, what is not.
     #
     # One by default. Twenty price changes a day on one hotel is seven thousand
     # rows a year, and none of them is read: the dashboard asks about this

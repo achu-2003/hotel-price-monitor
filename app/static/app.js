@@ -1317,9 +1317,10 @@
         "Price changes, check runs, recorded errors and sent messages from " +
         "before then. The hotels, their links, the schedules and the " +
         "recipients are untouched, and so is the last price of each room.\n\n" +
-        "This is the same clean that runs by itself on the 1st of each month, " +
-        "keeping " + months + " month" + (months === 1 ? "" : "s") + ". " +
-        "Nothing here can bring the rows back."
+        "Nothing deletes this on a schedule, so it goes only when you press " +
+        "this. Everything from the last " + months + " month" +
+        (months === 1 ? "" : "s") + " is kept. Nothing here can bring the " +
+        "rows back."
       );
       if (!asked) return;
 

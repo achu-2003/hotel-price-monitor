@@ -22,7 +22,6 @@ beat entries would also mean thirty places to get the timezone wrong.
 from __future__ import annotations
 
 from celery import Celery
-from celery.schedules import crontab
 from celery.signals import setup_logging, worker_process_shutdown
 
 from app.config import get_settings
@@ -116,22 +115,6 @@ celery_app.conf.update(
         "ensure-partitions": {
             "task": "maintenance.ensure_partitions",
             "schedule": 86_400.0,
-        },
-        # Once a month, on the 1st, at half past three in the morning.
-        #
-        # crontab rather than a 30-day interval: an interval counts from the
-        # last time BEAT started, so a worker restarted every few weeks --
-        # which is how this deployment gets its updates -- would push the
-        # sweep forever into a future it never reaches, and the tables it
-        # exists to bound would grow without anybody being told. A calendar
-        # date cannot be postponed by a restart.
-        #
-        # 03:30 because the hour is the quietest for the sites being checked
-        # and the half hour keeps it off the top-of-hour tick that every
-        # other schedule here shares.
-        "clean-history": {
-            "task": "maintenance.clean_history",
-            "schedule": crontab(day_of_month="1", hour=3, minute=30),
         },
         # The only route by which a scanner fix reaches a hotel that is
         # silently wrong -- one reading the property next door's prices, say,

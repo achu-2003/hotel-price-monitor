@@ -192,18 +192,34 @@ class TestTheDefaults:
         assert Settings().history_retention_months == 1
         assert retention.DEFAULT_KEEP_MONTHS == 1
 
-    def test_the_clean_is_scheduled_monthly(self):
-        """A 30-day interval counts from the last time BEAT started, so a
-        deployment restarted every few weeks -- which is how this one gets its
-        updates -- would push the sweep into a future it never reaches, and the
-        tables it bounds would grow with nobody being told. A calendar date
-        cannot be postponed by a restart."""
+    def test_nothing_deletes_history_on_a_schedule(self):
+        """Deliberate, and the opposite of what this shipped with first.
+
+        A job that quietly deletes months of a business's own history on a
+        calendar, unattended, is not worth the disk it saves -- the one time it
+        matters is the time somebody wanted last quarter back. The clean is a
+        person pressing a button, and the audit row says which person.
+
+        Asserted rather than left to the absence of code, because a schedule is
+        one dict entry: it would come back as a plausible-looking three lines
+        in a file that already has seven of them, and nothing else on the way
+        to production would notice.
+        """
         from app.workers.celery_app import celery_app
 
-        entry = celery_app.conf.beat_schedule["clean-history"]
+        assert "clean-history" not in celery_app.conf.beat_schedule
+        tasks = {e["task"] for e in celery_app.conf.beat_schedule.values()}
+        assert "maintenance.clean_history" not in tasks
 
-        assert entry["task"] == "maintenance.clean_history"
-        assert entry["schedule"].day_of_month == {1}
+    def test_the_partition_drop_is_still_scheduled(self):
+        """The one sweep that DOES run on its own, and stays that way. It drops
+        observation partitions past two years -- a different window, a different
+        table, and old enough that nobody is holding their breath for it."""
+        from app.workers.celery_app import celery_app
+
+        assert celery_app.conf.beat_schedule["retention-sweep"]["task"] == (
+            "maintenance.retention_sweep"
+        )
 
     def test_the_partition_sweep_and_this_one_agree_about_months(self):
         """Two sweeps deciding where a month begins by two definitions is how
