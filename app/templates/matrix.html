@@ -79,6 +79,11 @@
           Saying so beats an empty line: the line reads as a missing fetch,
           and the fetch is the one thing that definitely happened.
         #}
+        {#
+          Only when the hotel has no priced night to borrow from at all --
+          nothing collected since it filled. A hotel that HAS one gets a card
+          per room below, the same as every other full property.
+        #}
         {% if row.sold_out and not row.cells %}
         <div class="cells">
           <span class="cell cell-soldout"
@@ -86,10 +91,18 @@
             <span class="cell-room">no rooms listed</span>
             <span class="cell-price">sold out</span>
           </span>
+          {#
+            The date is part of the sentence, never dropped. These properties
+            priced no room for the night being shown, so this figure belongs
+            to a different one -- and a rate shown without its date is the
+            single worst thing this screen could print. "06 Sep from 7,500"
+            reads as one claim; "from 7,500" beside a 05 Sep grid reads as
+            tonight's, and would be wrong.
+          #}
           {% if row.next_priced %}
           <a class="onward"
              href="/matrix?check_in={{ row.next_priced[0] }}&check_out={{ row.next_priced[1] }}&adults={{ adults }}">
-            priced for {{ row.next_priced[0].strftime('%d %b') }} →
+            see {{ row.next_priced[0].strftime('%d %b') }} →
           </a>
           {% endif %}
         </div>
@@ -105,15 +118,58 @@
               {% if cell.is_available %}{{ money(cell.price, cell.currency) }}
               {% else %}sold out{% endif %}
             </span>
+            {#
+              THE LAST RATE, UNDER "SOLD OUT" AND NEVER INSTEAD OF IT
+              ======================================================
+              A full room still says what the hotel was asking before it
+              filled, and that is the number a competitor decision needs --
+              "they sold out at 6,426" is intelligence, while a blank cell is
+              only an absence.
+
+              But it is not a price anybody can book, so it never takes the
+              place of the words. "sold out" stays the loud line and the rate
+              sits under it, muted and prefixed, because a bare figure in this
+              cell would read as availability and the whole system's rule is
+              that a sold-out room is never quoted a price.
+
+              Deliberately not struck through: a strike means "was this, now
+              less", and this room is not on sale at any figure.
+
+              ingest keeps the value for exactly this: a sold-out check
+              carries no price, and blanking the last known rate would lose it
+              for as long as the room stays full.
+            #}
+            {% if not cell.is_available and cell.price %}
+            <span class="cell-was">
+              {%- if cell.for_night -%}
+                {{ cell.for_night.strftime('%d %b') }} {{ money(cell.price, cell.currency) }}
+              {%- else -%}
+                was {{ money(cell.price, cell.currency) }}
+              {%- endif -%}
+            </span>
+            {% endif %}
             {# Only where this site published one component and not the other.
                A marker on every cell would be noise; here it is the whole
                warning -- without it a pre-tax rate sits beside an all-in one
-               and reads as a competitor undercutting by 15%. #}
-            {% if cell.price_note and cell.is_available %}
+               and reads as a competitor undercutting by 15%.
+
+               On a sold-out cell too, now that one carries a figure: a "was"
+               that is quietly pre-tax beside neighbours that are not is the
+               same misreading, and it does not stop being one because the
+               room is full. #}
+            {% if cell.price_note and cell.price %}
             <span class="cell-basis">{{ cell.price_note }}</span>
             {% endif %}
           </span>
           {% endfor %}
+          {# After the rooms, not before them: it is a way out of this row, and
+             a link ahead of the cards reads as a label for them. #}
+          {% if row.sold_out and row.next_priced %}
+          <a class="onward"
+             href="/matrix?check_in={{ row.next_priced[0] }}&check_out={{ row.next_priced[1] }}&adults={{ adults }}">
+            see {{ row.next_priced[0].strftime('%d %b') }} →
+          </a>
+          {% endif %}
         </div>
         {% endif %}
       </td>
@@ -139,7 +195,7 @@
     {% endif %}
     — change it on Settings
   </span>
-  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero; “no rooms listed” is a full night on an engine that omits its rooms rather than labelling them</span>
+  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero; “was …” is the last rate seen before the room filled and a dated price is another night's, neither one you can book tonight; “no rooms listed” is a full night on an engine that omits its rooms rather than labelling them</span>
   <span class="legend-item"><span class="legend-own"></span>your property</span>
   <span class="legend-note">
     Prices are the last confirmed value per offer, not the latest raw reading.

@@ -727,7 +727,8 @@ def _matrix_groups(
 
 
 async def _sold_out_rows(
-    session, user, check_in: date, check_out: date, adults: int, already: set[int]
+    session, user, check_in: date, check_out: date, adults: int, already: set[int],
+    show_with_tax: bool = False,
 ):
     """Hotels that WERE checked for this night and listed no room at all.
 
@@ -787,27 +788,73 @@ async def _sold_out_rows(
     if not hotels:
         return []
 
-    # Where the rolled reading landed. One query for all of them, and the
-    # earliest night after this one wins -- a roll goes forward, never back.
+    # Where the rolled reading landed, AND WHAT EACH ROOM COSTS THERE.
+    #
+    # ONE CARD PER ROOM, LIKE EVERY OTHER FULL HOTEL
+    # ==============================================
+    # A hotel whose engine labels its rooms sold out shows a card each, with
+    # the rate it was asking underneath. These properties list nothing at all
+    # when full, so they had one grey "no rooms listed" box and the row said
+    # less about them than about any competitor beside it -- which is backwards,
+    # because being full is the interesting thing a competitor did.
+    #
+    # They still priced their rooms, on the night the fetcher rolled forward
+    # to. Those are real per-room readings taken today, so the row is built
+    # from them and reads like the others.
+    #
+    # EVERY BORROWED PRICE CARRIES ITS DATE
+    # =====================================
+    # It has to. A rate from another night shown bare in this grid reads as
+    # tonight's, and that is the mistake absolute dates in the offer key exist
+    # to make impossible -- there is no point being rigorous in the database
+    # and loose on the screen. So the cell says "06 Sep", every time, and the
+    # cheapest column stays empty: none of it can be booked tonight.
+    rows_by_hotel: dict[int, list] = {}
     onward: dict[int, tuple[date, date]] = {}
-    for hotel_id, ci, co in (
+    for series, hotel_id, room_name in (
         await session.execute(
-            select(PriceSeries.hotel_id, PriceSeries.check_in, PriceSeries.check_out)
+            select(PriceSeries, PriceSeries.hotel_id, RoomType.name)
+            .join(RoomType, RoomType.id == PriceSeries.room_type_id)
             .where(
                 PriceSeries.hotel_id.in_([h.id for h, _ in hotels]),
                 PriceSeries.adults == adults,
                 PriceSeries.check_in > check_in,
             )
-            .group_by(PriceSeries.hotel_id, PriceSeries.check_in, PriceSeries.check_out)
-            .order_by(PriceSeries.check_in)
+            .order_by(PriceSeries.check_in, RoomType.sort_order)
         )
     ).all():
-        onward.setdefault(hotel_id, (ci, co))
+        # The earliest night after this one wins -- a roll goes forward, never
+        # back -- and rows are already in date order, so the first night seen
+        # for a hotel is its night and later ones belong to another target.
+        night = onward.setdefault(hotel_id, (series.check_in, series.check_out))
+        if (series.check_in, series.check_out) != night:
+            continue
+        shown = displayed_price(series, show_with_tax)
+        rows_by_hotel.setdefault(hotel_id, []).append(
+            {
+                "room_name": room_name,
+                "offer_key": series.offer_key,
+                "category": classify(room_name),
+                "category_label": label_for(classify(room_name)),
+                "price": shown.amount,
+                "price_note": shown.note,
+                "currency": series.currency,
+                # Sold out for the night being SHOWN. What it costs on the
+                # night it was priced is the figure beside it, and `for_night`
+                # is what stops the two being read as one claim.
+                "is_available": False,
+                "changed_recently": False,
+                "for_night": series.check_in,
+                "last_checked_at": series.last_checked_at,
+            }
+        )
 
     return [
         {
             "hotel": hotel,
-            "cells": [],
+            "cells": rows_by_hotel.get(hotel.id, []),
+            # Deliberately empty even when the cells carry prices. "Cheapest"
+            # answers "what can I book tonight", and not one of these can be.
             "cheapest": None,
             "sold_out": True,
             "checked_at": checked_at,
@@ -887,7 +934,9 @@ async def matrix(
     # chip the grid answers "who sells this tier tonight", and a property whose
     # rooms are unknown tonight is not an answer to it.
     sold_out = (
-        await _sold_out_rows(session, user, check_in, check_out, adults, set(grouped))
+        await _sold_out_rows(
+            session, user, check_in, check_out, adults, set(grouped), show_with_tax
+        )
         if category is None
         else []
     )

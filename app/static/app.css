@@ -525,6 +525,11 @@ a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
 /* The basis marker, on the cells that disagree with the rest of the column.
    Small and quiet: it qualifies a number rather than competing with it. */
 .cell-basis { font-size: 10px; color: var(--muted); font-style: italic; }
+/* The last rate under a sold-out room. Muted and small so it reads as history
+   rather than as an offer -- it sits below the words "sold out", never where
+   a bookable price would be. No strike-through: that would mean "was this,
+   now less", and this room is not for sale at any figure. */
+.cell-was { font-size: 11px; color: var(--muted); }
 
 /* -- forms ----------------------------------------------------------- */
 .filters {

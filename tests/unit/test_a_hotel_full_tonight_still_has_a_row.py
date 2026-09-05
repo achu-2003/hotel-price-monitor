@@ -30,6 +30,7 @@ the day the rooms came back.
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,22 @@ NIGHT = (date(2026, 9, 5), date(2026, 9, 6))
 CHECKED_AT = datetime(2026, 9, 5, 9, 35)
 
 ANANTHYAM = SimpleNamespace(id=1, name="Ananthyam Resort")
+
+
+def _row(night, price, room, exclusive=None, taxes=None):
+    """One (PriceSeries, hotel_id, room_name) triple as the query returns it."""
+    series = SimpleNamespace(
+        offer_key=f"k{room}{night}",
+        check_in=night,
+        check_out=night.replace(day=night.day + 1),
+        currency="INR",
+        current_price=price,
+        last_price_exclusive=exclusive,
+        last_taxes_fees=taxes,
+        last_price_inclusive=None,
+        last_checked_at=CHECKED_AT,
+    )
+    return (series, ANANTHYAM.id, room)
 STERLING = SimpleNamespace(id=10, name="Sterling")
 
 
@@ -112,7 +129,7 @@ class TestWhereTheRolledPricesWent:
     async def test_the_row_points_at_the_night_the_prices_landed_on(self):
         session = _Session(
             [(ANANTHYAM, CHECKED_AT)],
-            [(ANANTHYAM.id, date(2026, 9, 6), date(2026, 9, 7))],
+            [_row(date(2026, 9, 6), Decimal("7500"), "Superior Double")],
         )
         rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
         assert rows[0]["next_priced"] == (date(2026, 9, 6), date(2026, 9, 7))
@@ -128,12 +145,13 @@ class TestWhereTheRolledPricesWent:
         session = _Session(
             [(ANANTHYAM, CHECKED_AT)],
             [
-                (ANANTHYAM.id, date(2026, 9, 6), date(2026, 9, 7)),
-                (ANANTHYAM.id, date(2026, 9, 12), date(2026, 9, 13)),
+                _row(date(2026, 9, 6), Decimal("7500"), "Superior Double"),
+                _row(date(2026, 9, 12), Decimal("4000"), "Superior Double"),
             ],
         )
         rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
         assert rows[0]["next_priced"] == (date(2026, 9, 6), date(2026, 9, 7))
+        assert [c["for_night"] for c in rows[0]["cells"]] == [date(2026, 9, 6)]
 
     @pytest.mark.asyncio
     async def test_a_roll_that_produced_nothing_leaves_no_link(self):
@@ -181,3 +199,80 @@ class TestWhatTheLookupAsksFor:
         sql = str(session.statements[0])
         assert "hotels.owner_user_id" in sql
         assert "hotels.is_active" in sql
+
+
+class TestTheRolledNightCarriesItsPrice:
+    """A hotel with no cells needs a number on its row, or the row says nothing.
+
+    These properties priced NO room for the night on screen -- their engines
+    list nothing at all when full -- so unlike a hotel that labels its rooms
+    sold out, there is no last rate to show beneath them. Without the rolled
+    night's figure the only line on that row is the word "sold out", and a
+    comparison screen that cannot say what a competitor charges has stopped
+    comparing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_card_per_room_the_same_as_any_other_full_hotel(self):
+        session = _Session(
+            [(ANANTHYAM, CHECKED_AT)],
+            [
+                _row(date(2026, 9, 6), Decimal("7500"), "Deluxe Double"),
+                _row(date(2026, 9, 6), Decimal("9000"), "Superior Double"),
+            ],
+        )
+        rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
+        cells = rows[0]["cells"]
+        assert [c["room_name"] for c in cells] == ["Deluxe Double", "Superior Double"]
+        assert [c["price"] for c in cells] == [Decimal("7500"), Decimal("9000")]
+
+    @pytest.mark.asyncio
+    async def test_every_borrowed_price_carries_the_night_it_belongs_to(self):
+        """Without it the figure reads as tonight's, and it is not.
+
+        This is the trap absolute dates in the offer key exist to close, and
+        there is no point being rigorous in the database and loose on screen.
+        """
+        session = _Session(
+            [(ANANTHYAM, CHECKED_AT)],
+            [_row(date(2026, 9, 6), Decimal("7500"), "Deluxe Double")],
+        )
+        rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
+        assert rows[0]["cells"][0]["for_night"] == date(2026, 9, 6)
+
+    @pytest.mark.asyncio
+    async def test_the_room_is_still_sold_out_for_the_night_on_screen(self):
+        """The price is another night's; the availability is THIS night's.
+
+        Marked unavailable so it can never be totalled into a "cheapest" or
+        read as bookable tonight, whatever it costs on the night it was seen.
+        """
+        session = _Session(
+            [(ANANTHYAM, CHECKED_AT)],
+            [_row(date(2026, 9, 6), Decimal("7500"), "Deluxe Double")],
+        )
+        rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
+        assert rows[0]["cells"][0]["is_available"] is False
+        assert rows[0]["cheapest"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_hotel_with_no_priced_night_anywhere_keeps_the_plain_box(self):
+        session = _Session([(ANANTHYAM, CHECKED_AT)], [])
+        rows = await _sold_out_rows(session, USER, *NIGHT, 2, set())
+        assert rows[0]["cells"] == []
+        assert rows[0]["next_priced"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_figures_follow_the_tax_switch(self):
+        """They sit on a row beside cells rendered on the chosen basis.
+
+        Two prices side by side, one inclusive of tax and one not, is the
+        mismatch the whole switch exists to remove.
+        """
+        session = _Session(
+            [(ANANTHYAM, CHECKED_AT)],
+            [_row(date(2026, 9, 6), Decimal("6000"), "Deluxe Double",
+                  exclusive=Decimal("6000"), taxes=Decimal("300"))],
+        )
+        rows = await _sold_out_rows(session, USER, *NIGHT, 2, set(), True)
+        assert rows[0]["cells"][0]["price"] == Decimal("6300")
