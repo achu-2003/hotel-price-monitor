@@ -105,6 +105,46 @@ class IngestSummary:
     def changes_detected(self) -> int:
         return len(self.change_ids)
 
+    @property
+    def name_selector_looks_broken(self) -> bool:
+        """Whether the collisions in this fetch accuse the selector or the site.
+
+        ``offers_collapsed`` counts two different situations and only one of
+        them is a defect somebody can fix.
+
+        THE DEFECT. The room_name selector has landed on a label every card
+        shares, so the hotel's rooms all arrive with one identity. One property
+        was monitored as a single room for weeks because the selector found an
+        amenity chip reading "King Size Bed" on all six cards. Six offers, five
+        collapsed.
+
+        THE SITE. A hotel sells one room under two rate plans and the page does
+        not visibly distinguish them. AR Thanga Kottai on Cleartrip lists
+        "Temple Street Suite with 2 Bedrooms and 1 Living room" twice, at
+        ₹18,516 and ₹22,315 -- same name, same 1000 sq.ft, same "3 Adults",
+        same "Room with Breakfast", same inclusions. Nine offers, one collapsed.
+
+        The old test was ``offers_collapsed > 0``, which reported both. On the
+        second it produced an alert every thirty minutes telling an operator to
+        "add a meal_plan or refundable selector so the two can be told apart"
+        -- against a page where no such selector exists, because the two cards
+        are identical in every rendered character except the price. An alert
+        that cannot be acted on is worse than no alert: it is a permanent red
+        row that teaches people the Attention screen can be ignored, and this
+        one arrived after handover, in front of the customer.
+
+        WHAT SEPARATES THEM is how much of the fetch collapsed. A selector
+        reading a shared label collapses nearly everything, because nearly
+        every card carries that label. Rate plans collapse a couple of rooms
+        out of a list that is otherwise full of distinct names.
+
+        Two collisions minimum, so a two-card page never trips it: with two
+        cards sharing one name there is genuinely no way to tell "one room, two
+        plans" from "broken selector", and guessing in the direction of a false
+        alarm is the mistake this property exists to stop making.
+        """
+        return self.offers_collapsed >= 2 and self.offers_collapsed * 2 > self.offers_matched
+
 
 @dataclass(frozen=True, slots=True)
 class IngestContext:

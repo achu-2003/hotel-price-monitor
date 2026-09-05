@@ -447,6 +447,10 @@ def _ingest(
     offers_found = offers_unmatched = 0
     change_ids: list[int] = []
     collapsed_names: list[str] = []
+    # Whether ANY window in this run looked like a broken selector rather
+    # than a site selling one room on two plans. Gates the repair below,
+    # which drives a real browser against somebody else's page.
+    selector_suspect = False
 
     with sync_session() as session:
         target = session.execute(
@@ -484,6 +488,7 @@ def _ingest(
             offers_unmatched += summary.offers_unmatched
             change_ids.extend(summary.change_ids)
             collapsed_names.extend(summary.collapsed_names)
+            selector_suspect = selector_suspect or summary.name_selector_looks_broken
 
             # A fetch that read several rooms and could only file one of them
             # is a SUCCESS by every measure this task has -- the page loaded,
@@ -497,7 +502,13 @@ def _ingest(
             # failed, nothing was retried, and the dashboard showed one room for
             # weeks. Recorded here so the next occurrence is a line on Attention
             # rather than a discrepancy somebody happens to notice.
-            if summary.offers_collapsed:
+            # ONLY WHEN THE COLLISIONS ACCUSE THE SELECTOR. A hotel that sells
+            # one room under two rate plans the page does not distinguish
+            # collapses a couple of offers out of a list that is otherwise full
+            # of distinct names, and there is nothing for anybody to fix -- see
+            # IngestSummary.name_selector_looks_broken for the two cases and
+            # what separates them.
+            if summary.name_selector_looks_broken:
                 monitoring.record_error(
                     session,
                     error=SchemaDriftError(
@@ -506,10 +517,10 @@ def _ingest(
                         f"AT A DIFFERENT PRICE, so the cheaper or dearer of each "
                         f"pair was dropped and this hotel is being monitored as "
                         f"{summary.offers_matched - summary.offers_collapsed} room(s). "
-                        f"Either the room_name selector is reading a label several "
-                        f"cards share, or the site sells these rooms under rate "
-                        f"plans the config does not capture — add a meal_plan or "
-                        f"refundable selector so the two can be told apart.",
+                        f"Most of the fetch collapsed onto a handful of identities, "
+                        f"so the room_name selector is almost certainly reading a "
+                        f"label several cards share — an amenity chip or a bed "
+                        f"type — rather than the room's own name.",
                         context={
                             "names_seen": summary.collapsed_names[:8],
                             "hotel_source_id": payload["hotel_source_id"],
@@ -554,7 +565,13 @@ def _ingest(
     # Enqueued after the transaction, for the same reason the notify hand-off
     # is: the repair reads this source's row, and must never race the write
     # that told it to run.
-    if collapsed_names:
+    # NOT on collapsed_names alone. Every duplicate used to ask for a
+    # re-derivation, so a hotel selling one room under two rate plans spent a
+    # browser-driven rediscovery on every check, forever, against a page whose
+    # two cards are identical in every rendered character except the price --
+    # there is no config discovery could return that would separate them. The
+    # repair only runs where a config change could actually help.
+    if collapsed_names and selector_suspect:
         _request_repair(
             payload, requested_stay, reason="offers_collapsed", logger=logger,
             # The labels that collapsed. The repair needs them to tell the rooms

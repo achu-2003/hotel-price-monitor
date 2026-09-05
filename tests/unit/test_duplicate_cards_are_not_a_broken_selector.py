@@ -51,6 +51,7 @@ from decimal import Decimal
 import pytest
 
 from app.adapters.base import NormalizedOffer
+from app.services.ingest import IngestSummary
 
 
 class FakeElement:
@@ -216,3 +217,75 @@ class TestIngestTellsTheTwoFaultsApart:
             and kept_available == offer.is_available
         )
         assert not lossless
+
+
+class TestARoomSoldOnTwoPlansIsNotABrokenSelector:
+    """The third fault wearing the same message, found after handover.
+
+    AR Thanga Kottai on Cleartrip lists nine rooms, and one of them twice:
+
+        Temple Street Suite with 2 Bedrooms and 1 Living room   ₹18,516
+        Temple Street Suite with 2 Bedrooms and 1 Living room   ₹22,315
+
+    Read off the live page, the two cards are identical in every rendered
+    character except the price — same name, same 1000 sq.ft, same "3 Adults",
+    same "Room with Breakfast", same "Cancellation charges apply", same
+    "+ 2 inclusions". Two rate plans the site does not visibly distinguish.
+
+    The prices disagree, so ``offers_collapsed`` counted it, so the fetch filed:
+
+        1 of 9 offers shared an identity ... add a meal_plan or refundable
+        selector so the two can be told apart.
+
+    There is no such selector. Nothing on either card differs, so no
+    configuration discovery could return would separate them — and the alert
+    repeated every thirty minutes, in front of the customer, telling an
+    operator to do something impossible. Worse than the drop it reported: a
+    permanent red row teaches people the Attention screen can be ignored.
+
+    Each one also asked for a re-derivation, so the pair spent a real browser
+    against that page on every check, forever, learning nothing.
+    """
+
+    def _summary(self, *, matched: int, collapsed: int) -> IngestSummary:
+        summary = IngestSummary(offers_seen=matched, offers_matched=matched)
+        summary.offers_collapsed = collapsed
+        return summary
+
+    def test_the_cleartrip_shape_is_not_reported(self):
+        """Nine rooms, one sold twice. The names are otherwise all distinct,
+        which is what says the selector is doing its job."""
+        assert not self._summary(matched=9, collapsed=1).name_selector_looks_broken
+
+    def test_several_rooms_on_two_plans_each_is_still_not_reported(self):
+        """Three of ten rooms sold on two plans. Still a site that prices in
+        plans, still nothing a selector could fix."""
+        assert not self._summary(matched=10, collapsed=3).name_selector_looks_broken
+
+    def test_a_label_every_card_shares_is_still_reported(self):
+        """The fault this alert exists for, and the one that must survive the
+        change: a six-room property whose name selector found an amenity chip
+        reading "King Size Bed" on all six cards. Five collapsed onto one, and
+        the hotel showed a single room for weeks."""
+        assert self._summary(matched=6, collapsed=5).name_selector_looks_broken
+
+    def test_half_the_fetch_collapsing_is_reported(self):
+        """Three offers, two of them merged away. Most of the page landing on
+        one identity is the signature of a shared label, whatever the count."""
+        assert self._summary(matched=3, collapsed=2).name_selector_looks_broken
+
+    def test_exactly_half_is_not_enough(self):
+        """Four rooms, two collapsed, two standing on their own names. A
+        selector reading a shared label does not leave half the list intact."""
+        assert not self._summary(matched=4, collapsed=2).name_selector_looks_broken
+
+    def test_two_cards_sharing_one_name_never_trips_it(self):
+        """A two-card page cannot distinguish "one room, two plans" from a
+        broken selector — there is no third name to check the selector
+        against. Guessing in the direction of a false alarm is the mistake
+        this rule exists to stop making, and the cost of being wrong the other
+        way is one room monitored instead of two."""
+        assert not self._summary(matched=2, collapsed=1).name_selector_looks_broken
+
+    def test_a_clean_fetch_says_nothing(self):
+        assert not self._summary(matched=9, collapsed=0).name_selector_looks_broken
