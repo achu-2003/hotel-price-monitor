@@ -395,6 +395,48 @@ class PlaywrightDirectSiteAdapter:
                 log.warning("room_card_skipped", reason=str(exc), hotel=context.hotel_name)
 
         if not offers:
+            # ASK WHETHER THE HOTEL IS FULL, HERE TOO.
+            #
+            # This is the third and last way DOM extraction can end with no
+            # prices, and it was the only one that never asked. The other two
+            # -- nothing configured, and nothing matched -- both stop and read
+            # the page before they accuse anybody, for reasons written out
+            # above them at length. This one went straight to the accusation.
+            #
+            # A sold-out night is exactly where it fires. Treebo replaced
+            # '#t-roomTypes' with styled-component class names, so the stored
+            # room_card stopped matching, a repair re-derived it from a night
+            # that had rooms, and the selectors it learned -- 'div.jaYzsn' and
+            # its siblings -- still match LAYOUT divs on a night that has
+            # none. Eight of them matched. None held a room name, because
+            # there were no rooms:
+            #
+            #   8 room cards matched but none could be read. The price
+            #   selector 'div.jaYzsn' is stale: Room card carried no name.
+            #
+            # while the page said "SOLD OUT for the selected dates" in the
+            # panel a guest reads first. Every half hour: an alert a person
+            # has to close, an auto-repair attempt spent on a page with
+            # nothing to teach, and no sold-out row for the night -- until
+            # the failures piled up and the circuit breaker opened the source
+            # altogether, which is how a hotel stops being monitored at all.
+            #
+            # Safe for the same reason it is safe two branches up. A night
+            # the hotel is not selling has no price to miss, so recording
+            # "full" costs nothing even if the selectors really are stale --
+            # and the next night with rooms puts a page in front of us that
+            # does NOT say sold out, where drift raises and repair runs
+            # against markup that can actually be learned.
+            sold_out, body = _page_says_sold_out(page, config)
+            if sold_out:
+                log.info(
+                    "sold_out_with_unreadable_cards",
+                    hotel=context.hotel_name,
+                    cards=len(cards),
+                    page_text_chars=len(body),
+                )
+                return [], True
+
             # Report the selector that ACTUALLY failed.
             #
             # This message used to blame the price selector unconditionally.
@@ -403,18 +445,31 @@ class PlaywrightDirectSiteAdapter:
             # all -- it accused a price selector that was reading the page
             # perfectly, and sent whoever read the alert to the one part of the
             # config that was not broken.
-            blamed = (
-                "room_name" if all("carried no name" in r for r in reasons) else "price"
-            )
+            nameless = [r for r in reasons if "carried no name" in r]
+            blamed = "room_name" if reasons and len(nameless) == len(reasons) else "price"
+
+            # Quote a reason that is ABOUT the selector being blamed. The
+            # message used to quote reasons[0] whatever it said, so a page
+            # where three cards lost their name and five lost their price
+            # printed "The price selector 'div.jaYzsn' is stale: Room card
+            # carried no name" -- one sentence naming one selector and
+            # describing the other, which tells a reader nothing except that
+            # the alert cannot be trusted.
+            priced = [r for r in reasons if "carried no name" not in r]
+            candidates = nameless if blamed == "room_name" else priced
+            detail = (candidates or reasons or ["no card produced a usable offer"])[0]
+
             raise SchemaDriftError(
                 f"{len(cards)} room cards matched but none could be read. "
                 f"The {blamed} selector {selectors.get(blamed)!r} is stale: "
-                f"{reasons[0] if reasons else 'no card produced a usable offer'}.",
+                f"{detail}. No sold-out phrase appears anywhere in the "
+                f"{len(body):,} characters of text the page rendered.",
                 context={
                     "cards": len(cards),
                     "hotel": context.hotel_name,
                     "failing_selector": blamed,
                     "reasons": reasons[:3],
+                    "page_text_chars": len(body),
                 },
             )
 
