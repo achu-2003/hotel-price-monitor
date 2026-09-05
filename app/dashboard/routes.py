@@ -68,6 +68,10 @@ from app.notifications.render import money
 from app.services import monitoring as monitoring_service
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
+from app.services.price_display import cheapest as cheapest_shown
+from app.services.price_display import (
+    Shown, displayed_price, displayed_price_sql, is_on_asked_basis_sql,
+)
 from app.services.room_category import CATEGORIES, classify, is_category, label_for
 
 router = APIRouter(include_in_schema=False)
@@ -406,6 +410,7 @@ async def overview(request: Request, user: DashUser, session: DbSession):
         summary=summary,
         changes=recent_changes,
         hotels=hotels,
+        show_with_tax=await _show_prices_with_tax(session),
         flat_move=_flat_move(recent_changes),
         max_pct=max((abs(c.delta_pct or 0) for c, _, _ in recent_changes), default=0) or 1,
     )
@@ -460,6 +465,7 @@ async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
     """
     settings = get_settings()
     today = local_today(settings.timezone)
+    show_with_tax = await _show_prices_with_tax(session)
 
     rows = (
         await session.execute(
@@ -467,7 +473,14 @@ async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
                 Hotel.id,
                 Hotel.name,
                 func.count(PriceSeries.offer_key),
-                func.min(PriceSeries.current_price),
+                # The same fallback order the room cells use, in SQL because
+                # this one is a MIN() over every room. Both forms live in
+                # services/price_display.py and a test holds them together.
+                func.min(displayed_price_sql(show_with_tax)),
+                # Whether EVERY room behind that figure carries the component
+                # the switch asked for. Only then may the card say so -- see
+                # is_on_asked_basis_sql for the label that lied.
+                func.bool_and(is_on_asked_basis_sql(show_with_tax)),
                 func.max(PriceSeries.last_checked_at),
             )
             .join(
@@ -515,7 +528,7 @@ async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
     }
 
     out = []
-    for hotel_id, name, rooms, cheapest, checked in rows:
+    for hotel_id, name, rooms, cheapest, on_basis, checked in rows:
         if not rooms:
             status, tone = "No prices", "bad"
         elif hotel_id in quiet:
@@ -529,12 +542,29 @@ async def _tonight_by_hotel(session, now: datetime, user) -> list[dict]:
             "name": name,
             "rooms": rooms or 0,
             "cheapest": cheapest,
+            # bool_and over no rows is NULL, which is neither true nor a claim.
+            "on_basis": bool(on_basis),
             "checked": _localtime(checked, "%H:%M") if checked else None,
             "status": status,
             "tone": tone,
             "standing": hotel_id in standing,
         })
     return out
+
+
+async def _show_prices_with_tax(session) -> bool:
+    """Whether displayed prices carry tax, deployment-wide.
+
+    One row, read per request. Not cached the way the worker caches the
+    thresholds beside it: this decides what is on the screen the operator is
+    looking at, and a switch that takes a minute to appear reads as a switch
+    that did not work. The read is a primary-key get on a single-row table.
+
+    Missing row -- the window between deploying this and running its migration
+    -- means off, which is what every screen showed yesterday.
+    """
+    row = await session.get(AlertDefaults, 1)
+    return bool(row is not None and row.show_prices_with_tax)
 
 
 # -- price matrix ----------------------------------------------------
@@ -626,7 +656,9 @@ async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
     return weekend.check_in, weekend.check_out, "Defaults to the coming weekend."
 
 
-def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
+def _matrix_groups(
+    rows, recent_cutoff: datetime, category: str | None, show_with_tax: bool = False
+):
     """Hotels with their room cells, plus how many rooms each category has.
 
     THE COUNTS ARE OF EVERY ROOM, THE CELLS ARE OF THE CHOSEN ONES
@@ -658,13 +690,20 @@ def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
             hotel.id,
             {"hotel": hotel, "cells": [], "cheapest": None, "sold_out": False},
         )
+        # The number this cell shows, and whether it had to fall back to the
+        # other basis to have one. See services/price_display.py: the marker is
+        # set only where the site published one component and not the other,
+        # which is exactly where a reader would otherwise compare a pre-tax
+        # rate against an all-in one and see a competitor that is not there.
+        shown = displayed_price(series, show_with_tax)
         entry["cells"].append(
             {
                 "room_name": room_name,
                 "offer_key": series.offer_key,
                 "category": slug,
                 "category_label": label_for(slug),
-                "price": series.current_price,
+                "price": shown.amount,
+                "price_note": shown.note,
                 "currency": series.currency,
                 "is_available": series.is_available,
                 "changed_recently": (
@@ -676,8 +715,12 @@ def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
         )
 
     for entry in grouped.values():
-        prices = [c["price"] for c in entry["cells"] if c["is_available"] and c["price"]]
-        entry["cheapest"] = min(prices) if prices else None
+        # Over the RENDERED numbers, not the stored ones. Totalling the cells
+        # with tax while the summary above them stayed pre-tax would put a
+        # "cheapest" on the row that is lower than every price beside it.
+        entry["cheapest"] = cheapest_shown(
+            [Shown(c["price"]) for c in entry["cells"] if c["is_available"] and c["price"]]
+        )
 
     return grouped, counts
 
@@ -835,7 +878,8 @@ async def matrix(
     ).all()
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
-    grouped, counts = _matrix_groups(rows, recent_cutoff, category)
+    show_with_tax = await _show_prices_with_tax(session)
+    grouped, counts = _matrix_groups(rows, recent_cutoff, category, show_with_tax)
 
     # Hotels whose engine reports a full night by listing nothing. They have no
     # room to put in a category, so they join the unfiltered view only: under a
@@ -901,6 +945,7 @@ async def matrix(
         filtered_out=filtered_out,
         default_note=default_note,
         collected=collected,
+        show_with_tax=show_with_tax,
     )
 
 
@@ -993,6 +1038,13 @@ async def hotel_detail(
 
     unlisted_keys = unlisted_offer_keys([row[0] for row in prices])
 
+    # Keyed by offer_key rather than folded into the rows above, so the tuple
+    # shape the rest of this handler reads stays what it was.
+    show_with_tax = await _show_prices_with_tax(session)
+    shown_prices = {
+        series.offer_key: displayed_price(series, show_with_tax) for series, _ in prices
+    }
+
     # Whether anything was ever collected for another night, so a hotel that has
     # stopped collecting says so instead of falling back to the first-run setup
     # path and looking like it was never configured.
@@ -1035,6 +1087,7 @@ async def hotel_detail(
         alert_defaults=alert_defaults,
         hotel=hotel, sources=sources, rooms=rooms, targets=targets,
         prices=prices, unlisted_keys=unlisted_keys, runs=runs, now=datetime.now(UTC),
+        shown_prices=shown_prices, show_with_tax=show_with_tax,
         all_sources=all_sources, attached_ids=attached_ids,
         today=today, had_past_prices=had_past_prices,
         known_engines=known_engines(),
@@ -1552,6 +1605,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         min_delta_abs=stored.min_delta_abs,
         min_delta_pct=stored.min_delta_pct,
         confirm_checks=stored.confirm_checks,
+        show_prices_with_tax=stored.show_prices_with_tax,
         cheapest_room=cheapest,
         dearest_room=dearest,
     )
@@ -1606,6 +1660,13 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
     # before the access token exists produces an assignment that looks saved
     # and fails at the first price move, which is the worst moment to find out.
     settings = get_settings()
+
+    # How much stored past there is, and how much of it the monthly sweep
+    # would discard. Measured here rather than fetched by the page's own
+    # script so the section is complete on first paint -- a danger-zone button
+    # that appears before the numbers it is about is a button people press
+    # without them.
+
     return await _render(
         request, user, session, "settings.html",
         alert_defaults=alert_defaults,

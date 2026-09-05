@@ -517,6 +517,9 @@ a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
 .cell-price { font-weight: 650; font-variant-numeric: tabular-nums; }
 .cell-changed { border-color: var(--accent); background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent-2); }
 .cell-soldout { background: var(--line-soft); color: var(--muted); }
+/* The basis marker, on the cells that disagree with the rest of the column.
+   Small and quiet: it qualifies a number rather than competing with it. */
+.cell-basis { font-size: 10px; color: var(--muted); font-style: italic; }
 /* The rolled night, beside the sold-out cell rather than under it: the roll is
    the answer to "then where are this hotel's prices", and an answer belongs
    next to the question. */

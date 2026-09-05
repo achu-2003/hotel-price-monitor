@@ -105,6 +105,13 @@
               {% if cell.is_available %}{{ money(cell.price, cell.currency) }}
               {% else %}sold out{% endif %}
             </span>
+            {# Only where this site published one component and not the other.
+               A marker on every cell would be noise; here it is the whole
+               warning -- without it a pre-tax rate sits beside an all-in one
+               and reads as a competitor undercutting by 15%. #}
+            {% if cell.price_note and cell.is_available %}
+            <span class="cell-basis">{{ cell.price_note }}</span>
+            {% endif %}
           </span>
           {% endfor %}
         </div>
@@ -122,6 +129,16 @@
 #}
 <div class="legend">
   <span class="legend-item"><span class="legend-swatch legend-changed"></span>changed in the last 24 hours</span>
+  <span class="legend-item">
+    {% if show_with_tax %}
+      prices <strong>include tax</strong>; <em>excl. tax</em> marks a room whose
+      site published no tax figure
+    {% else %}
+      prices are <strong>before tax</strong>; <em>incl. tax</em> marks a room
+      whose site published no pre-tax figure
+    {% endif %}
+    — change it on Settings
+  </span>
   <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero; “no rooms listed” is a full night on an engine that omits its rooms rather than labelling them</span>
   <span class="legend-item"><span class="legend-own"></span>your property</span>
   <span class="legend-note">

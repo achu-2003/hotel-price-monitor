@@ -14,6 +14,7 @@ this deployment cannot actually send on.
 """
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from types import SimpleNamespace
@@ -675,3 +676,85 @@ def recipients_table(page: str) -> str:
     """
     start = page.index("grid-recipients")
     return page[start:page.index("</table>", start)]
+
+
+class TestTheDisplayedPriceSwitch:
+    """A switch, not a checkbox with a Save beside it.
+
+    A checkbox that only takes effect once a separate Save is pressed shows two
+    states at once -- the box says one thing, the site still shows the other --
+    and the gap between them is silent. So the control IS the setting: its
+    position is the stored value, and pressing it saves.
+
+    That makes the position load-bearing in a way a label never was. It is the
+    only thing on the page that says which way this deployment is set, and it
+    is expressed in one attribute, so both directions are pinned here.
+    """
+
+    def _panel(self, page: str) -> str:
+        start = page.index('id="price-display"')
+        return page[start:page.index("</form>", start)]
+
+    def _defaults(self, *, with_tax: bool):
+        return SimpleNamespace(
+            min_delta_abs=Decimal("50.00"),
+            min_delta_pct=Decimal("2.00"),
+            confirm_checks=2,
+            cheapest_room=Decimal("1736"),
+            dearest_room=Decimal("16950"),
+            show_prices_with_tax=with_tax,
+        )
+
+    def test_it_is_announced_as_a_switch(self):
+        """role="switch" rather than a decorated checkbox. A checkbox announces
+        a promise that something else will commit the change, which is the
+        arrangement this replaced."""
+        panel = self._panel(render(alert_defaults=self._defaults(with_tax=False)))
+
+        assert 'role="switch"' in panel
+
+    def test_switched_on_it_reads_on(self):
+        panel = self._panel(render(alert_defaults=self._defaults(with_tax=True)))
+
+        assert 'aria-checked="true"' in panel
+
+    def test_switched_off_it_reads_off(self):
+        panel = self._panel(render(alert_defaults=self._defaults(with_tax=False)))
+
+        assert 'aria-checked="false"' in panel
+
+    def test_the_label_names_the_setting_and_does_not_move(self):
+        """A switch shows its own state, so the words beside it stay put. A
+        label that changed with the position would be saying the same thing
+        twice and, if the two ever disagreed, saying it twice differently."""
+        on = self._panel(render(alert_defaults=self._defaults(with_tax=True)))
+        off = self._panel(render(alert_defaults=self._defaults(with_tax=False)))
+
+        assert "Show prices with tax included" in on
+        assert "Show prices with tax included" in off
+
+    def test_there_is_no_separate_save(self):
+        """The box and the Save were two presses for one decision, and the page
+        sat in disagreement with the database in between."""
+        panel = self._panel(render(alert_defaults=self._defaults(with_tax=False)))
+
+        assert "Save display" not in panel
+
+    def test_the_value_still_travels_on_a_named_input(self):
+        """Both forms on this page PUT the whole alert_defaults row, and the
+        sensitivity form reads THIS input by name so its own save cannot
+        silently switch tax display back off. Removing the input would break
+        that from the other end of the page, where nothing points at it.
+
+        Matched on the tag rather than on the word "checked" anywhere in the
+        panel: the switch carries aria-checked="false" when it is off, and a
+        substring search would read that as a ticked box.
+        """
+        on = self._panel(render(alert_defaults=self._defaults(with_tax=True)))
+        off = self._panel(render(alert_defaults=self._defaults(with_tax=False)))
+
+        box_on = re.search(r"<input[^>]*name=\"show_prices_with_tax\"[^>]*>", on).group(0)
+        box_off = re.search(r"<input[^>]*name=\"show_prices_with_tax\"[^>]*>", off).group(0)
+
+        assert "checked" in box_on
+        assert "checked" not in box_off

@@ -670,6 +670,23 @@ def _apply_comparison(
     if observation.price is not None:
         series.current_price = observation.price
 
+        # The components behind that number, for the display switch on
+        # Settings. Written together with current_price and under the same
+        # condition, so the three can never describe a different reading from
+        # the one on the screen beside them.
+        #
+        # A sold-out check carries no price and leaves all four standing: the
+        # last known rate is still the last known rate, and its tax is still
+        # its tax. Blanking them would make the switch empty a cell that had a
+        # perfectly good price in it yesterday.
+        #
+        # Assigned even where the offer left them None. A site that stops
+        # publishing tax has stopped publishing tax, and carrying the previous
+        # fetch's figure forward would show a total the page no longer states.
+        series.last_price_exclusive = offer.price_exclusive
+        series.last_taxes_fees = offer.taxes_fees
+        series.last_price_inclusive = offer.price_inclusive
+
     series.last_price = new_state.last_price
     series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available

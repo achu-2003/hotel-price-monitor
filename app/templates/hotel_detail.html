@@ -200,7 +200,9 @@
         <td>{{ room_name }}{% if series.meal_plan %} <span class="muted">{{ series.meal_plan }}</span>{% endif %}</td>
         <td class="num">{{ series.adults }}A</td>
         <td class="num strong">
-          {% if series.is_available %}{{ money(series.current_price, series.currency) }}
+          {% set shown = shown_prices.get(series.offer_key) %}
+          {% if series.is_available %}{{ money(shown.amount if shown else series.current_price, series.currency) }}
+          {% if shown and shown.note %}<span class="cell-basis">{{ shown.note }}</span>{% endif %}
           {% elif series.offer_key in unlisted_keys %}
           {# Off the page, not sold out. The hotel is not saying this room is
              full; it has stopped offering it, and nothing is watching it any
@@ -211,7 +213,12 @@
           {% if series.pending_price %}
           {# Moved enough to matter, not yet confirmed across the required
              number of checks. Shown, never alerted on. #}
-          <span class="pill pill-pending" title="Awaiting confirmation ({{ series.pending_count }} so far)">
+          {# The debounce figure, and it is the number the COMPARISON runs on
+             -- which is the pre-tax one whatever this screen is set to. There
+             is no tax recorded against a price that has not been confirmed
+             yet, and grossing it up with the confirmed row's tax would invent
+             one. Said in the tooltip rather than converted. #}
+          <span class="pill pill-pending" title="Awaiting confirmation ({{ series.pending_count }} so far){% if show_with_tax %} · before tax{% endif %}">
             → {{ money(series.pending_price, series.currency) }}?
           </span>
           {% endif %}

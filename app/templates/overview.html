@@ -163,7 +163,7 @@
       <span class="hcard-figures">
         <span class="hcard-count">{{ hotel.rooms }}</span>
         <span class="hcard-sub">
-          rooms{% if hotel.cheapest is not none %} · from {{ money(hotel.cheapest, 'INR') }}{% endif %}
+          rooms{% if hotel.cheapest is not none %} · from {{ money(hotel.cheapest, 'INR') }}{% if show_with_tax and hotel.on_basis %} incl. tax{% endif %}{% endif %}
         </span>
       </span>
       <span class="hcard-foot">

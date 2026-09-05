@@ -69,6 +69,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -97,7 +98,16 @@ log = get_logger("adapter.hotelzify")
 _API_ROOT = "https://api.hotelzify.com"
 _AVAILABILITY = f"{_API_ROOT}/hotel/v2/hotel/availability"
 _PROMOTIONS = f"{_API_ROOT}/hotel/v2/promotions/get-promotion"
+#: The hotel's OWN tax table, banded by room price. A third endpoint, and the
+#: reason a Hotelzify rate can be shown inclusive of tax at all -- the
+#: availability response quotes "plus taxes" and carries no amount.
+_TAXES = f"{_API_ROOT}/payments/v1/tax/list"
 _TIMEOUT = 20.0
+
+#: How long a fetched tax table is reused. A hotel's GST bands change when the
+#: law does, not between one check and the next, so re-asking every half hour
+#: for every property on the engine is load with no information in it.
+_TAX_CACHE_SECONDS = 3600
 
 #: Booking URLs look like https://booking.<brand>.com/rooms/5171/<in>/<out>/2/0
 _ID_FROM_URL = re.compile(r"/rooms/(\d+)")
@@ -117,6 +127,123 @@ _RESTRICTED_FLAGS = (
     "isRetargeting",
     "isReturningMember",
 )
+
+
+#: hotel_id -> (expires_at, schedule). Process-local and deliberately small:
+#: one entry per Hotelzify property this worker has fetched.
+_TAX_CACHE: dict[str, tuple[float, "_TaxSchedule | None"]] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class _TaxBand:
+    """One row of the hotel's tax table."""
+
+    tax: Decimal
+    is_percentage: bool
+    price_from: Decimal
+    price_to: Decimal | None
+
+    def covers(self, price: Decimal) -> bool:
+        if price < self.price_from:
+            return False
+        return self.price_to is None or price <= self.price_to
+
+    def on(self, price: Decimal) -> Decimal:
+        amount = price * self.tax / 100 if self.is_percentage else self.tax
+        return amount.quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
+@dataclass(frozen=True, slots=True)
+class _TaxSchedule:
+    """What the hotel says it charges on top of a room, by price band.
+
+    NOT A RATE WE CHOSE
+    ===================
+    This is the property's own table, published by the engine that takes the
+    booking: Sterling declares 0% under 1,000, 5% to 7,500 and 18% above it.
+    Reading it is reporting, and it is the only reason a Hotelzify rate can be
+    shown with tax at all -- the availability response prints "plus taxes"
+    beside every rate and carries no amount anywhere.
+
+    That distinction is the whole point. Applying a GST rate WE picked would
+    produce a number the hotel never quoted, and the band boundaries are
+    exactly where such a guess goes wrong: a 7,400 room and a 7,600 room are
+    taxed at 5% and 18% by this table, and no single assumed rate is right for
+    both.
+
+    ALL MATCHING BANDS, SUMMED
+    ==========================
+    Bands here are mutually exclusive by price, so the sum is the one that
+    matches. It is a sum rather than a first-match because a property is free
+    to file a service charge as a second active row over the same range, and
+    taking only the first would quietly under-report the bill.
+    """
+
+    bands: tuple[_TaxBand, ...]
+
+    def on(self, price: Decimal) -> Decimal | None:
+        """The tax on ``price``, or None when the table does not cover it.
+
+        None, never zero. A gap in the table means the hotel has not said what
+        it charges at this price, which is a different claim from "nothing" --
+        and stored as zero it would render as a total identical to the rate,
+        indistinguishable from a genuinely all-inclusive quote.
+        """
+        matching = [b for b in self.bands if b.covers(price)]
+        if not matching:
+            return None
+        return sum((b.on(price) for b in matching), Decimal("0"))
+
+
+def _tax_schedule(payload: Any) -> _TaxSchedule | None:
+    """Parse the tax table, or refuse it whole.
+
+    REFUSED WHOLE, NOT ROW BY ROW
+    =============================
+    A row this code cannot read -- an unknown ``taxType``, a band with no
+    usable rate -- discards the ENTIRE schedule rather than being skipped.
+    Skipping it would silently drop one component of a bill and produce a
+    total that looks complete and is short, which is worse than the honest
+    "excl. tax" the display falls back to.
+
+    Only active, room-level rows are considered. A tax filed at another level
+    is not a per-room charge and adding it to a nightly rate would overstate
+    every room on the property.
+    """
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    bands: list[_TaxBand] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        if not row.get("isActive"):
+            continue
+        if str(row.get("level") or "").strip().lower() != "room":
+            continue
+
+        kind = str(row.get("taxType") or "").strip().lower()
+        if kind not in ("percentage", "percent", "fixed", "amount", "flat"):
+            log.warning("hotelzify_tax_type_unknown", tax_type=kind)
+            return None
+
+        rate = _as_decimal(row.get("tax"))
+        low = _as_decimal(row.get("priceFrom"))
+        if rate is None or low is None:
+            return None
+        high = row.get("priceTo")
+        bands.append(
+            _TaxBand(
+                tax=rate,
+                is_percentage=kind in ("percentage", "percent"),
+                price_from=low,
+                # null is the open-ended top band, not a missing value.
+                price_to=None if high is None else _as_decimal(high),
+            )
+        )
+
+    return _TaxSchedule(tuple(bands)) if bands else None
 
 
 class HotelzifyAdapter:
@@ -149,7 +276,8 @@ class HotelzifyAdapter:
             user_agent,
         )
         promotions = self._promotions(hotel_id, context, user_agent)
-        offers = self._to_offers(availability, promotions, context)
+        taxes = self._tax_schedule_for(hotel_id, user_agent)
+        offers = self._to_offers(availability, promotions, context, taxes)
 
         return FetchResult(
             offers=offers,
@@ -223,6 +351,60 @@ class HotelzifyAdapter:
         data = payload.get("data") if isinstance(payload, dict) else None
         return [p for p in (data or []) if isinstance(p, dict)]
 
+    def _tax_schedule_for(self, hotel_id: str, user_agent: str) -> _TaxSchedule | None:
+        """The property's tax table, cached, and never fatal.
+
+        WHY THIS IS OPTIONAL
+        ====================
+        The rate is the thing being monitored; the tax is what lets it be
+        DISPLAYED inclusive. A third endpoint failing must not turn a fetch
+        that has already read every room into a failed check -- five of those
+        open the circuit and take the hotel off monitoring altogether, which
+        would be a steep price for a cosmetic setting.
+
+        So a failure returns None and the offers carry no tax, exactly as they
+        did before this existed: the matrix shows the pre-tax rate marked
+        "excl. tax", which is true.
+
+        The None is cached alongside a real schedule. A property with no tax
+        table configured would otherwise be re-asked on every single fetch,
+        forever, to be told nothing again.
+        """
+        now = time.monotonic()
+        cached = _TAX_CACHE.get(hotel_id)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+
+        try:
+            payload = self._request(
+                _TAXES,
+                {
+                    "hotelId": hotel_id,
+                    "page": "1",
+                    "pageSize": "100",
+                    # The property's OWN bands. The engine will otherwise fold
+                    # in its platform defaults, which are not what this hotel
+                    # has told its guests it charges.
+                    "getDefaultTaxes": "false",
+                },
+                user_agent,
+            )
+        except (NetworkError, TimeoutError_, HttpStatusError, SchemaDriftError,
+                RateLimitedError, AuthError, BlockedError) as exc:
+            log.warning("hotelzify_taxes_unavailable", hotel_id=hotel_id, error=str(exc))
+            # NOT cached. A refusal or an outage is a state to retry, unlike a
+            # property that answered and simply has no table.
+            return None
+
+        schedule = _tax_schedule(payload)
+        _TAX_CACHE[hotel_id] = (now + _TAX_CACHE_SECONDS, schedule)
+        log.info(
+            "hotelzify_tax_schedule",
+            hotel_id=hotel_id,
+            bands=len(schedule.bands) if schedule else 0,
+        )
+        return schedule
+
     # -- transport ---------------------------------------------------
     def _request(self, url: str, params: dict[str, str], user_agent: str) -> Any:
         try:
@@ -271,7 +453,11 @@ class HotelzifyAdapter:
 
     # -- shaping -----------------------------------------------------
     def _to_offers(
-        self, payload: Any, promotions: list[dict], context: FetchContext
+        self,
+        payload: Any,
+        promotions: list[dict],
+        context: FetchContext,
+        taxes: _TaxSchedule | None = None,
     ) -> list[NormalizedOffer]:
         rooms = _dig_rooms(payload)
         if not rooms:
@@ -291,7 +477,7 @@ class HotelzifyAdapter:
         offers: list[NormalizedOffer] = []
         for room in rooms:
             if isinstance(room, dict):
-                offer = self._offer_for_room(room, board, discount, context)
+                offer = self._offer_for_room(room, board, discount, context, taxes)
                 if offer is not None:
                     offers.append(offer)
 
@@ -310,6 +496,7 @@ class HotelzifyAdapter:
         board: str,
         discount: _Discount | None,
         context: FetchContext,
+        taxes: _TaxSchedule | None = None,
     ) -> NormalizedOffer | None:
         name = _clean(room.get("roomName"))
         if not name:
@@ -342,13 +529,27 @@ class HotelzifyAdapter:
         rack = chosen.price
         sell = discount.apply(rack) if discount else rack
 
+        # Hotelzify quotes tax-exclusive: the page prints "plus taxes" beside
+        # every rate, and the availability response carries no amount. The
+        # figure comes from the property's OWN banded table on a third
+        # endpoint (_tax_schedule_for), so this is still the hotel's number
+        # rather than a rate we picked -- which matters most exactly where a
+        # guess goes wrong, at the band edges: this property taxes a 7,400
+        # room at 5% and a 7,600 room at 18%.
+        #
+        # Applied to the SELL price, not the rack rate. Tax is charged on what
+        # the guest actually pays, and on a promoted room those differ.
+        #
+        # None when the table could not be read or does not reach this price.
+        # Left unset then, exactly as before: the display shows the pre-tax
+        # rate marked "excl. tax", which is true, rather than a total that is
+        # short by an unknown amount.
+        tax = taxes.on(sell) if taxes is not None and sell is not None else None
+
         return NormalizedOffer(
             raw_room_name=name,
-            # Hotelzify quotes tax-exclusive: the page prints "plus taxes"
-            # beside every rate. taxes_fees is deliberately left unset rather
-            # than guessed at -- the tax list is a separate endpoint and a
-            # made-up inclusive figure would be worse than an absent one.
             price_exclusive=sell,
+            taxes_fees=tax,
             currency=context.currency,
             meal_plan=chosen.plan,
             is_available=rooms_left is None or rooms_left > 0,
@@ -362,6 +563,7 @@ class HotelzifyAdapter:
                 "board_matched": chosen.plan.strip().lower() == board.strip().lower(),
                 "promotion": discount.describe() if discount else None,
                 "plans_seen": {p.plan: str(p.price) for p in priced},
+                "tax_on_sell": None if tax is None else str(tax),
             },
         )
 

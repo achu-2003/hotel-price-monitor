@@ -949,29 +949,108 @@
   // on a 25,000 rupee suite, because 0.4% is under a 2% floor, and nothing on
   // the page would say why. So saving here sets the percentage to zero and
   // the rupee amount decides on its own.
+  //
+  // ONE ENDPOINT, TWO FORMS, ONE COMPLETE OBJECT
+  // ============================================
+  // /alert-defaults is a PUT: it REPLACES the row. Two forms on this page
+  // write to it -- sensitivity, and the displayed-price switch below it -- and
+  // a form that sent only its own fields would reset the other one's every
+  // time it saved. Someone loosening their alert threshold would have silently
+  // turned tax-inclusive prices back off across the whole site, with nothing
+  // on the page to connect the two.
+  //
+  // So the payload is built from the page rather than from the form: both
+  // controls are read wherever they live, and either Save writes both. The
+  // fields are on one row in the database and they travel as one object.
+  const alertDefaultsPayload = function () {
+    const number = function (name) {
+      const input = document.querySelector(".alert-defaults-form input[name=" + name + "]");
+      return input ? Number(input.value) : null;
+    };
+    const tax = document.querySelector("input[name=show_prices_with_tax]");
+    return {
+      min_delta_abs: number("min_delta_abs"),
+      // The comparison engine requires BOTH floors to be cleared, so leaving a
+      // percentage in place while only the rupee amount is editable makes the
+      // visible setting a lie -- 100 rupees would be silent on a 25,000 rupee
+      // suite, because 0.4% is under a 2% floor, and nothing on the page would
+      // say why. Saving sets it to zero and the rupee amount decides alone.
+      min_delta_pct: 0,
+      confirm_checks: number("confirm_checks"),
+      show_prices_with_tax: tax ? tax.checked : false,
+    };
+  };
+
+  const saveAlertDefaults = async function (form, status, okText) {
+    say(status, "Saving...", "");
+    const result = await api("/api/v1/alert-defaults", "PUT", alertDefaultsPayload());
+    if (!result.ok) {
+      say(status, problemText(result), "error");
+      return false;
+    }
+    say(status, okText, "ok");
+    return true;
+  };
+
   document.querySelectorAll("form.alert-defaults-form").forEach(function (form) {
     const status = form.querySelector(".form-status");
-
     form.addEventListener("submit", async function (event) {
       event.preventDefault();
-      const number = function (name) {
-        const input = form.querySelector("input[name=" + name + "]");
-        return input ? Number(input.value) : null;
-      };
-      say(status, "Saving...", "");
-      const result = await api("/api/v1/alert-defaults", "PUT", {
-        min_delta_abs: number("min_delta_abs"),
-        min_delta_pct: 0,
-        confirm_checks: number("confirm_checks"),
-      });
-      if (!result.ok) {
-        say(status, problemText(result), "error");
-        return;
-      }
       // "Within a minute" rather than "saved": the workers cache this, so a
       // change is not instant and saying so prevents a second save when the
       // next alert still uses the old figure.
-      say(status, "Saved — in effect within a minute.", "ok");
+      await saveAlertDefaults(form, status, "Saved — in effect within a minute.");
+    });
+  });
+
+  // -- displayed prices: with tax, or without ------------------------
+  // Reloads on success rather than only reporting it. This switch restates
+  // every price on the site, and leaving the page showing the old numbers
+  // under a green "Saved" invites a second save and a bug report -- the one
+  // thing the operator wants to see is whether the figures moved.
+  document.querySelectorAll("form.price-display-form").forEach(function (form) {
+    const status = form.querySelector(".form-status");
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      // The switch IS the setting. It used to save whatever a separate
+      // checkbox happened to be showing, which meant the page could sit with
+      // the box ticked and the site still on the old basis until somebody
+      // noticed the Save. Flipping here, before the payload is built, makes
+      // one press the whole action -- and the payload reads the hidden input,
+      // so the sensitivity form on the same page still writes the value we
+      // just chose rather than the one it was rendered with.
+      const box = form.querySelector("input[name=show_prices_with_tax]");
+      const knob = form.querySelector(".switch");
+      if (box) box.checked = !box.checked;
+      const on = box && box.checked;
+
+      // Moved BEFORE the request, not after it. A switch that waits for a
+      // round trip before it moves reads as a switch that did not register
+      // the press, and gets pressed again -- which on this control would send
+      // a second save undoing the first.
+      if (knob) {
+        knob.setAttribute("aria-checked", on ? "true" : "false");
+        knob.disabled = true;
+      }
+
+      const ok = await saveAlertDefaults(
+        form, status,
+        on ? "Saved — prices now include tax." : "Saved — prices now exclude tax."
+      );
+
+      // Put it back if the save failed, both the value and the thing on
+      // screen. Leaving it flipped would show a setting the server never took
+      // and make the next press a no-op against it.
+      if (!ok) {
+        if (box) box.checked = !box.checked;
+        if (knob) {
+          knob.setAttribute("aria-checked", box && box.checked ? "true" : "false");
+          knob.disabled = false;
+        }
+      }
+      if (ok) {
+        window.setTimeout(function () { window.location.reload(); }, 600);
+      }
     });
   });
 

@@ -29,6 +29,15 @@ def _series(price):
     return SimpleNamespace(
         offer_key=f"k{price}",
         current_price=price,
+        # The tax components the display switch reads. None throughout: these
+        # rows are about categories, not about tax, and with no component
+        # published the switch falls back to current_price either way -- so
+        # every price asserted below is the price asserted before it existed.
+        # What tax does to the figures is pinned in
+        # test_a_price_shown_with_or_without_tax.py.
+        last_price_exclusive=None,
+        last_taxes_fees=None,
+        last_price_inclusive=None,
         currency="INR",
         is_available=True,
         last_changed_at=None,

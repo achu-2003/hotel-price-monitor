@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
-    Integer, Numeric, String, Text,
+    Integer, Numeric, String, Text, false,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -255,4 +255,16 @@ class AlertDefaults(Base, TimestampMixin):
     #: How many consecutive checks must agree before a move is announced. The
     #: debounce that stops a single odd read becoming an alert.
     confirm_checks: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: Whether a displayed price carries tax. DISPLAY ONLY -- it never reaches
+    #: the comparison engine, which stays on ``PRICE_BASIS``. Switching this
+    #: must not re-baseline a series or announce a move that never happened,
+    #: so what a person is shown and what the system compares are kept apart.
+    #:
+    #: It lives here rather than in Settings for the reason the thresholds
+    #: above do: it is an operating decision, and an operator cannot edit .env
+    #: and restart five services.
+    show_prices_with_tax: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 

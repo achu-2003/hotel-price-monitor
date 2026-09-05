@@ -207,6 +207,11 @@ class AlertDefaultsIn(ORMModel):
     min_delta_abs: Decimal = Field(ge=0, le=1_000_000)
     min_delta_pct: Decimal = Field(ge=0, le=100)
     confirm_checks: int = Field(ge=1, le=10)
+    #: Display only -- it never reaches the comparison engine. Defaulted rather
+    #: than required so a client that predates it (or the sensitivity form,
+    #: which sends three fields) does not silently switch the whole deployment
+    #: back to pre-tax prices on every save.
+    show_prices_with_tax: bool = False
 
 
 class AlertDefaultsOut(AlertDefaultsIn):

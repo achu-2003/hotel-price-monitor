@@ -32,8 +32,15 @@ from app.db.models import (
     UnmatchedOffer,
 )
 from app.schemas.common import HealthStatus, Page, ReadinessStatus
-from app.schemas.monitoring import MonitoringErrorOut
+from app.schemas.monitoring import (
+    HistoryCleanResult,
+    HistoryTableOut,
+    HistoryUsageOut,
+    MonitoringErrorOut,
+)
 from app.schemas.prices import DashboardSummary
+from app.config import get_settings
+from app.services import retention
 from app.services.ownership import owned_hotel_ids, scope_hotels
 from app.services.rediscovery import REPAIRABLE, RepairState
 
@@ -358,3 +365,93 @@ async def recent_failures(session: DbSession, user: CurrentUser, hours: int = 24
         out.has_html = bool(error.html_path)
         items.append(out)
     return Page[MonitoringErrorOut](items=items)
+
+
+# -- history retention -----------------------------------------------
+def _as_schema(usage: retention.Usage) -> HistoryUsageOut:
+    return HistoryUsageOut(
+        keep_months=usage.keep_months,
+        cutoff=usage.cutoff,
+        tables=[
+            HistoryTableOut(key=t.key, label=t.label, expired=t.expired, total=t.total)
+            for t in usage.tables
+        ],
+        observations_expired=usage.observations_expired,
+        partitions_droppable=usage.partitions_droppable,
+    )
+
+
+@router.get("/maintenance/history", response_model=HistoryUsageOut)
+async def history_usage(
+    session: DbSession,
+    _admin: AdminUser,
+    keep_months: int | None = Query(default=None, ge=1, le=120),
+):
+    """What a clean would delete, before anybody presses anything.
+
+    A destructive button whose effect is unknown until after it is pressed is
+    one people either avoid or regret. The settings page reads this to fill in
+    its numbers, and the confirmation quotes them back.
+    """
+    months = keep_months or get_settings().history_retention_months
+    return _as_schema(await retention.measure(session, months))
+
+
+@router.post("/maintenance/history/clean", response_model=HistoryCleanResult)
+async def clean_history_now(
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+    keep_months: int | None = Query(default=None, ge=1, le=120),
+):
+    """Run the monthly history sweep now, by hand.
+
+    Same policy as ``maintenance.clean_history``, out of the same module, so
+    the button and the schedule cannot mean two different things by "old". The
+    only difference is who asked, which is why this one writes an audit row and
+    the scheduled one does not: an automatic sweep on a stated policy is not a
+    decision anybody made today, and a person pressing this is.
+
+    ADMIN ONLY. This deletes rows no backup inside the application can return.
+
+    The counts are read BEFORE the delete, in the same transaction, so the
+    number reported back is the number that went -- rather than a second count
+    afterwards, which would be zero however much or little had actually
+    happened.
+    """
+    months = keep_months or get_settings().history_retention_months
+    cutoff = retention.cutoff_for(datetime.now(UTC), months)
+
+    deleted: dict[str, int] = {}
+    for sweep in retention.sweeps(cutoff):
+        result = await session.execute(sweep.purge)
+        deleted[sweep.key] = result.rowcount or 0
+
+    names = list((await session.scalars(retention.PARTITION_LIST_SQL)).all())
+    dropped = retention.partitions_to_drop(names, cutoff)
+    for name in dropped:
+        # Interpolated, unavoidably: a table name cannot be a bind parameter.
+        # Safe because the name never came from a person -- it was read from
+        # pg_class a moment ago and matched against the partition naming
+        # pattern, and anything unparseable was left alone by
+        # partitions_to_drop.
+        await session.execute(text(f"DROP TABLE IF EXISTS {name}"))
+
+    await record_audit(
+        session, user=admin, action="clean_history", entity="retention",
+        entity_id=None,
+        after={"keep_months": months, "cutoff": cutoff.isoformat(),
+               "deleted": deleted, "partitions_dropped": len(dropped)},
+        request=request,
+    )
+    await session.commit()
+
+    log.info("history_cleaned_by_hand", user=admin.username, keep_months=months,
+             cutoff=cutoff.isoformat(), partitions=len(dropped), **deleted)
+
+    return HistoryCleanResult(
+        keep_months=months,
+        cutoff=cutoff,
+        deleted=deleted,
+        observation_partitions_dropped=len(dropped),
+    )

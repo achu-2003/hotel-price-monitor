@@ -101,6 +101,20 @@ class PriceSeries(Base):
     last_price_basis: Mapped[PriceBasis] = mapped_column(
         pg_enum(PriceBasis, "price_basis"), default=PriceBasis.INCLUSIVE, nullable=False
     )
+
+    # ── what the site actually published, kept for the display switch ──
+    # ``current_price`` is one number on ONE basis, chosen by PRICE_BASIS, and
+    # it is the number the change detector runs on. It cannot answer "show me
+    # this with tax", because for seven of the ten hotels here the tax is a
+    # separate figure and for three there is no pre-tax figure at all.
+    #
+    # So the components are carried alongside it, written by ingest from the
+    # same offer. NULL means the site did not say -- never zero, which would
+    # claim a room is taxed at nothing. See services/price_display.py for how
+    # a missing component is rendered rather than guessed at.
+    last_price_exclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    last_taxes_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    last_price_inclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

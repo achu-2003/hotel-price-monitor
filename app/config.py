@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     artifact_dir: Path = Path("/data/artifacts")
     artifact_retention_days: int = 7
 
+    # ── how much history to keep ─────────────────────────────────────
+    # Months of price changes, check runs, recorded errors and sent messages
+    # kept before the monthly sweep discards them. See services/retention.py
+    # for the full list of what is deleted and, more importantly, what is not.
+    #
+    # One by default. Twenty price changes a day on one hotel is seven thousand
+    # rows a year, and none of them is read: the dashboard asks about this
+    # week, the alerts about this hour. The cost is real and worth stating --
+    # "what did this competitor charge last Diwali" stops having an answer.
+    # Raise it if that question matters more than the disk.
+    history_retention_months: int = 1
+
     # ── self-repair ──────────────────────────────────────────────────
     # A site redesign breaks stored selectors, and until now the only cure was
     # a person noticing and editing adapter_config by hand. Discovery already

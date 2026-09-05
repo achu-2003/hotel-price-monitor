@@ -47,6 +47,78 @@
   </form>
 </section>
 
+{#
+  DISPLAY, NOT SENSITIVITY
+  ========================
+  Its own section rather than another field in the panel above, because it
+  answers a different question. Sensitivity decides whether anybody is TOLD;
+  this decides which number they READ, and it changes no alert, no threshold
+  and no stored history. Filed together they would look like one setting, and
+  somebody loosening their alerts would silently restate every price on the
+  site.
+#}
+<section>
+  <h2>Displayed prices</h2>
+  <p class="muted">
+    The hotels do not agree on what a price is: most quote a room before tax
+    and state the tax beside it, and a few publish a single all-in figure. This
+    decides which of the two every screen shows — the matrix, each hotel page
+    and the overview — for all hotels at once.
+  </p>
+
+  {#
+    ONE BUTTON, NOT A BOX AND A SAVE
+    ================================
+    A checkbox that only takes effect once a separate Save is pressed has two
+    states on screen and one in the database, and the gap between them is
+    silent: ticking the box restated every price on the page in the operator's
+    head while the site went on showing the old ones. The button below IS the
+    switch -- pressing it flips the setting, saves, and reloads onto the
+    numbers it just chose.
+
+    The checkbox stays, hidden, because it is where the value lives. Both
+    forms on this page PUT the whole alert_defaults row, and the sensitivity
+    form reads this input by name so its own save cannot silently turn tax
+    display back off. Removing it would break that at a distance.
+  #}
+  <form class="panel stack price-display-form" id="price-display">
+    {# role="switch" with aria-checked, not a styled checkbox. A screen reader
+       announces this as "switch, on" and reads the change when it flips; a
+       decorated checkbox next to a Save announces a checkbox, which is a
+       promise that something else will commit it. #}
+    <div class="switch-row">
+      <button type="submit" class="switch" role="switch"
+              aria-checked="{{ 'true' if alert_defaults.show_prices_with_tax else 'false' }}">
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-text">Show prices with tax included</span>
+      </button>
+      <span class="form-status" role="status"></span>
+    </div>
+    <input type="checkbox" name="show_prices_with_tax" value="true" hidden
+           {% if alert_defaults.show_prices_with_tax %}checked{% endif %}>
+    <span class="muted">
+      On, a room quoted at ₹9,000 + ₹1,620 tax reads <strong>₹10,620</strong>.
+      Off, it reads <strong>₹9,000</strong> — the number the booking page
+      leads with. Off is how this deployment has always shown them.
+    </span>
+    <span class="muted">
+      Where a site publishes only one of the two, that one is shown and
+      labelled <em>incl. tax</em> or <em>excl. tax</em> on the cell. No tax
+      rate is ever assumed: the totals here are the site's own two figures
+      added, never a percentage applied to a rate — the tax these sites report
+      ranges from 5% to 18% on rooms at the same property, so a computed
+      figure would look authoritative and be wrong.
+    </span>
+    <span class="muted">
+      <strong>Alerts and price history are unaffected.</strong> What counts as
+      a price change is still measured on the same basis it always was, so
+      switching this cannot fire an alert or restate a move that has already
+      been recorded. Changes still read on the pre-tax figure.
+    </span>
+
+  </form>
+</section>
+
 {% if not channels %}
 {# Nothing below can send. Said once, at the top, rather than as a surprise
    after someone has filled the form in. #}
