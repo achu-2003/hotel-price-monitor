@@ -1166,9 +1166,25 @@ a.hcard:hover {
 
 /* A checkbox whose label is a sentence rather than a noun — "Tell them when
    monitoring breaks". Inputs are full-width block elements everywhere else on
-   this page, which would put the box on its own line above its own meaning. */
+   this page, which would put the box on its own line above its own meaning.
+
+   THE SELECTOR LIST IS THE RULE, not decoration on it. `.stack label` sets
+   flex-direction: column, which is right for a caption above its input and
+   wrong for this — and at (0,1,1) it out-specifies a bare `.checkline` at
+   (0,1,0). Every checkline on the site lives inside a .stack, so every one of
+   them rendered as a centred box floating above its own sentence: the ops
+   alert switch on Settings, the tax switch before it became a toggle, and the
+   own-property tick on the hotel page. It reads as a stray checkbox belonging
+   to the field above.
+
+   Named for both parents rather than fixed by adding `.inline` at each call
+   site, because the next one written will be `class="checkline"` like the
+   others and would arrive broken in the same way. */
+.stack label.checkline,
+.filters label.checkline,
 .checkline {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: var(--s2, 8px);
   font-weight: 500;

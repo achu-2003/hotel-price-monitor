@@ -367,7 +367,7 @@
 
   {% if is_admin %}
   <details class="panel" id="hotel-details">
-    <summary>Hotel details <span class="muted">— name, location, notes</span></summary>
+    <summary>Hotel details <span class="muted">— name, location, whose it is</span></summary>
     <form class="stack api-form" style="margin-top:12px"
           data-endpoint="/api/v1/hotels/{{ hotel.id }}" data-method="PATCH">
       <label>Name
@@ -379,6 +379,31 @@
       <label>Notes
         <textarea name="notes" rows="2">{{ hotel.notes or '' }}</textarea>
       </label>
+
+      {#
+        EDITABLE HERE BECAUSE IT IS THE EASIEST THING TO MISS WHEN ADDING ONE.
+        It was one tick on the create form and nowhere else, so a hotel added
+        without it stayed a competitor forever — and this page only PRINTED
+        the answer, as a pill, next to no way of changing it.
+
+        What being wrong costs: the matrix highlights your own row and marks it
+        "yours" so a price can be read against the right baseline. A property
+        filed as a competitor is shown as one more line among them, and every
+        comparison made off that screen is made against the wrong thing —
+        quietly, because nothing about the screen looks broken.
+      #}
+      <label class="checkline">
+        <input type="checkbox" name="is_own_property" value="true"
+               {% if hotel.is_own_property %}checked{% endif %}>
+        This is my own property
+      </label>
+      <span class="muted">
+        Your own rows are highlighted on the matrix and marked
+        <span class="pill pill-own">yours</span>, which is what makes a
+        competitor's price readable as above or below yours. Nothing else
+        changes: the same checks run on the same schedule, and the price
+        history is untouched either way.
+      </span>
       <button type="submit">Save</button>
       <p class="form-status" hidden></p>
       <span class="muted">

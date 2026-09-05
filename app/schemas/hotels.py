@@ -49,6 +49,20 @@ class HotelUpdate(ORMModel):
     longitude: float | None = None
     notes: str | None = None
     is_active: bool | None = None
+    #: Correctable after the fact, which it was not before.
+    #:
+    #: The flag could only be set on the create form, and it is the easiest
+    #: thing on that form to miss -- one tick among the name, the location and
+    #: the booking URL. Missing it makes the matrix wrong in the specific way
+    #: that matters: the property whose prices the operator actually sets is
+    #: shown as one more competitor, unhighlighted, and every comparison read
+    #: off that screen is a comparison against the wrong baseline.
+    #:
+    #: Listing it here is what makes the control on the hotel page real.
+    #: ORMModel does not forbid extra fields, so a PATCH carrying a name this
+    #: model does not declare is accepted, ignored, and answered 200 -- the
+    #: checkbox would have saved nothing and said it had.
+    is_own_property: bool | None = None
 
 
 class HotelOut(HotelBase):
