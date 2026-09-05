@@ -45,6 +45,7 @@ from app.db.models import (
     AlertDefaults,
     ChangeDirection,
     CheckRun,
+    CheckRunStatus,
     CircuitState,
     Hotel,
     HotelRecipient,
@@ -655,7 +656,7 @@ def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
 
         entry = grouped.setdefault(
             hotel.id,
-            {"hotel": hotel, "cells": [], "cheapest": None},
+            {"hotel": hotel, "cells": [], "cheapest": None, "sold_out": False},
         )
         entry["cells"].append(
             {
@@ -679,6 +680,97 @@ def _matrix_groups(rows, recent_cutoff: datetime, category: str | None):
         entry["cheapest"] = min(prices) if prices else None
 
     return grouped, counts
+
+
+async def _sold_out_rows(
+    session, user, check_in: date, check_out: date, adults: int, already: set[int]
+):
+    """Hotels that WERE checked for this night and listed no room at all.
+
+    A HOTEL WITH NO ROWS IS NOT A HOTEL NOBODY LOOKED AT
+    ====================================================
+    The grid above is built from ``price_series``, so a property appears only
+    if the night produced at least one row. That silently splits the sold-out
+    hotels in two, along a line that is about the booking engine rather than
+    about the hotel:
+
+    * Sterling's engine lists its rooms and prints "sold out" under each, so
+      three unavailable rows are filed and the property shows up correctly.
+    * Aiosell and the portal simply omit the rooms. ``sold_out_detected`` is
+      true, the fetcher rolls forward and prices the NEXT night (see
+      ``_with_rollover``), and NOTHING is filed under the night asked for.
+
+    On Saturday 5 Sep, eight of ten hotels were full and seven of those were
+    the second kind. Every one of them was fetched successfully at 09:30, and
+    the comparison screen showed three properties -- indistinguishable, to
+    anyone looking at it, from a fetcher that had stopped running.
+
+    So the row comes from the check run instead, which recorded exactly this:
+    a successful fetch, for these dates, that found the hotel sold out. No
+    price is invented for it. A sold-out night quotes no rate, and filing a
+    placeholder series would need a meal plan and a refundability the empty
+    response never carried -- an offer key that could never match the real one
+    when the rooms came back.
+
+    ``next_priced`` is the night their prices DID land on, read from what was
+    actually collected rather than assumed to be the following day, so the
+    rolled reading is one click away instead of a date somebody has to guess.
+    """
+    checked = (
+        await session.execute(
+            select(Hotel, func.max(CheckRun.started_at).label("checked_at"))
+            .select_from(CheckRun)
+            .join(MonitorTarget, MonitorTarget.id == CheckRun.monitor_target_id)
+            .join(HotelSource, HotelSource.id == MonitorTarget.hotel_source_id)
+            .join(Hotel, Hotel.id == HotelSource.hotel_id)
+            .where(
+                CheckRun.check_in == check_in,
+                CheckRun.check_out == check_out,
+                CheckRun.status == CheckRunStatus.SUCCESS,
+                CheckRun.sold_out.is_(True),
+                # The occupancy lives on the target, not the run: a run is one
+                # page load, and the page was asked for these guests. Without
+                # it a 2-adult grid would grow rows from a 4-adult target.
+                MonitorTarget.adults == adults,
+                Hotel.is_active.is_(True),
+                Hotel.owner_user_id == user.id,
+            )
+            .group_by(Hotel.id)
+        )
+    ).all()
+
+    hotels = [(h, checked_at) for h, checked_at in checked if h.id not in already]
+    if not hotels:
+        return []
+
+    # Where the rolled reading landed. One query for all of them, and the
+    # earliest night after this one wins -- a roll goes forward, never back.
+    onward: dict[int, tuple[date, date]] = {}
+    for hotel_id, ci, co in (
+        await session.execute(
+            select(PriceSeries.hotel_id, PriceSeries.check_in, PriceSeries.check_out)
+            .where(
+                PriceSeries.hotel_id.in_([h.id for h, _ in hotels]),
+                PriceSeries.adults == adults,
+                PriceSeries.check_in > check_in,
+            )
+            .group_by(PriceSeries.hotel_id, PriceSeries.check_in, PriceSeries.check_out)
+            .order_by(PriceSeries.check_in)
+        )
+    ).all():
+        onward.setdefault(hotel_id, (ci, co))
+
+    return [
+        {
+            "hotel": hotel,
+            "cells": [],
+            "cheapest": None,
+            "sold_out": True,
+            "checked_at": checked_at,
+            "next_priced": onward.get(hotel.id),
+        }
+        for hotel, checked_at in hotels
+    ]
 
 
 @router.get("/matrix", response_class=HTMLResponse)
@@ -745,6 +837,19 @@ async def matrix(
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
     grouped, counts = _matrix_groups(rows, recent_cutoff, category)
 
+    # Hotels whose engine reports a full night by listing nothing. They have no
+    # room to put in a category, so they join the unfiltered view only: under a
+    # chip the grid answers "who sells this tier tonight", and a property whose
+    # rooms are unknown tonight is not an answer to it.
+    sold_out = (
+        await _sold_out_rows(session, user, check_in, check_out, adults, set(grouped))
+        if category is None
+        else []
+    )
+    listed = sorted(
+        list(grouped.values()) + sold_out, key=lambda e: e["hotel"].name
+    )
+
     # One chip per category that has a room on this night, in the order of the
     # sheet this page replaced. A category nothing is sold under is left out
     # rather than shown at zero: a dead chip is a control that does nothing,
@@ -773,7 +878,7 @@ async def matrix(
     # prices, so a list of other nights to try would be answering a question
     # nobody asked, and it costs a query to be wrong.
     collected: list = []
-    if not grouped and not filtered_out:
+    if not listed and not filtered_out:
         collected = (
             await session.execute(
                 select(PriceSeries.check_in, PriceSeries.check_out, PriceSeries.adults)
@@ -786,7 +891,7 @@ async def matrix(
 
     return await _render(
         request, user, session, "matrix.html",
-        rows=sorted(grouped.values(), key=lambda e: e["hotel"].name),
+        rows=listed,
         check_in=check_in,
         check_out=check_out,
         adults=adults,

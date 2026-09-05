@@ -73,6 +73,27 @@
       </td>
       <td class="num strong">{{ money(row.cheapest, row.cells[0].currency if row.cells else 'INR') }}</td>
       <td>
+        {#
+          A property with no cells was checked and came back full, with an
+          engine that omits its rooms rather than labelling them sold out.
+          Saying so beats an empty line: the line reads as a missing fetch,
+          and the fetch is the one thing that definitely happened.
+        #}
+        {% if row.sold_out and not row.cells %}
+        <div class="cells">
+          <span class="cell cell-soldout"
+                title="Checked {{ row.checked_at|localtime('%d %b %H:%M') }} · this source lists no rooms on a full night">
+            <span class="cell-room">no rooms listed</span>
+            <span class="cell-price">sold out</span>
+          </span>
+          {% if row.next_priced %}
+          <a class="onward"
+             href="/matrix?check_in={{ row.next_priced[0] }}&check_out={{ row.next_priced[1] }}&adults={{ adults }}">
+            priced for {{ row.next_priced[0].strftime('%d %b') }} →
+          </a>
+          {% endif %}
+        </div>
+        {% else %}
         <div class="cells">
           {% for cell in row.cells %}
           <span class="cell {{ 'cell-changed' if cell.changed_recently else '' }}
@@ -87,6 +108,7 @@
           </span>
           {% endfor %}
         </div>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -100,7 +122,7 @@
 #}
 <div class="legend">
   <span class="legend-item"><span class="legend-swatch legend-changed"></span>changed in the last 24 hours</span>
-  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero</span>
+  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out — never a price of zero; “no rooms listed” is a full night on an engine that omits its rooms rather than labelling them</span>
   <span class="legend-item"><span class="legend-own"></span>your property</span>
   <span class="legend-note">
     Prices are the last confirmed value per offer, not the latest raw reading.
