@@ -445,21 +445,18 @@ class TestTheTwoWaysOfAddingSomebodySitSideBySide:
 
     def test_both_panels_share_one_row(self):
         page = render()
+        pair = pair_holding(page, 'id="alert-numbers"')
 
-        assert 'class="setup-pair"' in page
-        assert page.count('class="setup-col"') == 2
+        assert pair.count('class="setup-col"') == 2
 
     def test_the_alert_numbers_panel_is_in_the_pair(self):
-        page = render()
-        pair = page[page.index('class="setup-pair"'):]
-
-        assert pair.index('id="alert-numbers"') < pair.index("</section>")
+        assert 'id="alert-numbers"' in pair_holding(render(), 'id="alert-numbers"')
 
     def test_the_add_recipient_panel_is_in_the_pair(self):
-        page = render()
-        pair = page[page.index('class="setup-pair"'):]
-
-        assert pair.index('id="add-recipient"') < pair.index("</section>")
+        """Both panels in the SAME pair, which is the whole claim -- each one
+        being in some pair somewhere would satisfy a weaker test and miss the
+        thing that broke."""
+        assert 'id="add-recipient"' in pair_holding(render(), 'id="alert-numbers"')
 
     def test_alert_numbers_comes_first(self):
         """Left is the quick route; the drawing put it there and so does the
@@ -472,9 +469,8 @@ class TestTheTwoWaysOfAddingSomebodySitSideBySide:
         """Six columns and a horizontal scroller already: half the page would
         guarantee one."""
         page = render()
-        pair_end = page.index("</section>", page.index('class="setup-pair"'))
 
-        assert page.index("grid-recipients") > pair_end
+        assert "grid-recipients" not in pair_holding(page, 'id="alert-numbers"')
 
     def test_the_markup_is_balanced(self):
         """The pair added two divs across what used to be two sections.
@@ -668,6 +664,20 @@ class TestANumberIsNotAPerson:
         assert "alert number" not in recipients_table(render())
 
 
+def pair_holding(page: str, marker: str) -> str:
+    """The ``setup-pair`` section that contains ``marker``.
+
+    There is more than one pair on this page: alert sensitivity and displayed
+    prices share a row above these two. So a test about THIS pair has to say
+    which one it means -- the three that used to take the first pair on the
+    page started measuring the wrong row the day a second one was added, and
+    failed in a way that read as the recipients panels having moved.
+    """
+    at = page.index(marker)
+    start = page.rindex('class="setup-pair"', 0, at)
+    return page[start:page.index("</section>", at)]
+
+
 def recipients_table(page: str) -> str:
     """Just the table.
 
@@ -758,3 +768,76 @@ class TestTheDisplayedPriceSwitch:
 
         assert "checked" in box_on
         assert "checked" not in box_off
+
+
+def _defaults(*, with_tax: bool = False):
+    return SimpleNamespace(
+        min_delta_abs=Decimal("50.00"), min_delta_pct=Decimal("2.00"),
+        confirm_checks=2, cheapest_room=None, dearest_room=None,
+        show_prices_with_tax=with_tax,
+    )
+
+
+def _history():
+    """What retention.measure hands the page.
+
+    Passed explicitly by the structural tests below, because the section is
+    guarded on this value -- render it without and the whole panel disappears,
+    which is exactly how a corrupted copy of it passed unnoticed.
+    """
+    return SimpleNamespace(
+        keep_months=1,
+        cutoff=datetime(2026, 8, 5, tzinfo=UTC),
+        tables=[
+            SimpleNamespace(key="price_changes", label="price changes",
+                            expired=111, total=265),
+            SimpleNamespace(key="check_runs", label="check runs",
+                            expired=642, total=1571),
+        ],
+        observations_expired=0,
+        partitions_droppable=0,
+        total_expired=753,
+    )
+
+
+class TestTheTemplateItselfIsWellFormed:
+    """Cheap structural checks that caught a real, silent corruption.
+
+    A concurrent edit left ``{% block title %}`` without its ``{% endblock %}``,
+    so the whole Stored history section -- comment, panel, table, delete button
+    -- was swallowed into the TITLE block, and a second copy of it sat in the
+    content block below. The page still rendered and every test still passed:
+    the content block was intact, and the damage went into ``<title>``, which
+    nothing asserted on. It reached a commit.
+
+    Jinja does not object to a block containing markup, and a browser does not
+    object to a title containing a table. So the checks have to be made here.
+    """
+
+    def test_the_title_is_a_title(self):
+        """Not a section of the page. The tab, the bookmark and the history
+        entry are all built from this string."""
+        page = render(history=_history(), alert_defaults=_defaults())
+        title = re.search(r"<title>(.*?)</title>", page, re.S).group(1)
+
+        assert title.strip() == "Settings · Hotel Price Monitor"
+        assert "<" not in title
+
+    def test_each_section_appears_once(self):
+        """A duplicated section renders twice, and the second copy carries the
+        same element ids as the first -- so every getElementById on the page
+        starts answering with the wrong one."""
+        page = render(history=_history(), alert_defaults=_defaults())
+
+        for heading in ("Alert sensitivity", "Displayed prices", "Stored history",
+                        "WhatsApp alert numbers", "Recipients"):
+            assert page.count(f"<h2>{heading}</h2>") == 1, heading
+
+    def test_no_id_is_used_twice(self):
+        """The generic check behind the one above. Two elements with one id is
+        how a handler bound by id starts driving a control the operator cannot
+        see."""
+        page = render(history=_history(), alert_defaults=_defaults())
+        ids = re.findall(r'\sid="([^"]+)"', page)
+
+        assert sorted(ids) == sorted(set(ids))
