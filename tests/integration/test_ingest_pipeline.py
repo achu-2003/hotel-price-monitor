@@ -509,6 +509,83 @@ class TestRoomMatching:
         assert session.scalars(select(UnmatchedOffer)).one().raw_room_name == "---"
 
 
+class TestAFieldLabelIsNotANewRoom:
+    """A label read out of a spec table must not become a room.
+
+    THE REAL CASE. Booking.com prints each room card's bed configuration as a
+    definition list. On 3 Sep the room-name selector for Ananthyam reached into
+    it, and the hotel acquired three rooms called "Bed:", "Bedroom:" and
+    "Beds:", each with its own price series, each sitting in the comparison
+    grid ever since.
+
+    Every safety net in the pipeline let them through, and they were right to.
+    "Beds:" normalises to "beds", which is a perfectly good canonical form: it
+    collides with nothing, so nothing collapses; it resembles no existing room,
+    so nothing is merged. From there on it is indistinguishable from a room the
+    hotel has genuinely just added, which is a thing this pipeline is supposed
+    to handle by creating it.
+    """
+
+    def test_no_room_type_is_created_for_it(self, session, hotel_fixture):
+        summary = ingest_fetch_result(
+            session, _result(_offer(name="Beds:")), _context(hotel_fixture)
+        )
+        session.flush()
+
+        assert summary.offers_not_a_room == 1
+        assert summary.not_a_room_names == ["Beds:"]
+        assert session.scalars(
+            select(RoomType).where(RoomType.name == "Beds:")
+        ).all() == []
+
+    def test_it_files_no_price_and_no_unmatched_row(self, session, hotel_fixture):
+        """Not queued for a person either. Unmatched is a list of names
+        somebody must map to a room, and there is no room to map a label to --
+        it would be a permanent Attention row that nobody can ever clear."""
+        ingest_fetch_result(
+            session, _result(_offer(name="Beds:")), _context(hotel_fixture)
+        )
+        session.flush()
+
+        assert session.scalar(select(func.count(PriceSeries.offer_key))) == 0
+        assert session.scalars(select(UnmatchedOffer)).all() == []
+
+    def test_the_real_rooms_in_the_same_fetch_are_untouched(self, session, hotel_fixture):
+        """The label arrives BESIDE the rooms, card by card. Dropping it must
+        cost the fetch nothing else -- this is the shape the Ananthyam fetch
+        actually had."""
+        summary = ingest_fetch_result(
+            session,
+            _result(
+                _offer(name="Deluxe Double Room", price="3000"),
+                _offer(name="Beds:", price="3000"),
+                _offer(name="Superior Double Room", price="4200"),
+            ),
+            _context(hotel_fixture),
+        )
+        session.flush()
+
+        assert summary.offers_matched == 2
+        assert summary.offers_not_a_room == 1
+        assert sorted(
+            r.name for r in session.scalars(select(RoomType)).all()
+        ) == ["Deluxe Double Room", "Deluxe Room", "Superior Double Room"]
+
+    def test_a_name_that_merely_contains_a_colon_is_a_room(self, session, hotel_fixture):
+        """The rule is a name that ENDS in a colon. A room described in two
+        halves is still a room, and throwing it away would be the same defect
+        pointed the other way."""
+        summary = ingest_fetch_result(
+            session,
+            _result(_offer(name="Deluxe Room: Garden View")),
+            _context(hotel_fixture),
+        )
+        session.flush()
+
+        assert summary.offers_not_a_room == 0
+        assert summary.offers_matched == 1
+
+
 class TestIdempotency:
     def test_replaying_a_task_writes_no_duplicate_observation(self, session, hotel_fixture):
         """Celery redelivers on worker loss; the pipeline must absorb that."""

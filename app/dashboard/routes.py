@@ -664,6 +664,17 @@ async def _priced_rows(session, user, check_in: date, check_out: date, adults: i
     The matrix and the /comparison grid are two shapes of the same reading, so
     they read it once, here. Ordered by hotel then by the hotel's own room
     order, which is the order both pages present rooms in.
+
+    RETIRED ROOMS ARE LEFT OUT, and until this filter existed they were not.
+    ``room_types.is_active`` was honoured by ingest, which stops matching new
+    offers to a retired room, and by nothing that draws a screen -- so a room
+    taken out of service still appeared in the grid for every night it had
+    ever been priced on. The flag is how a room that was never a room gets
+    removed (Ananthyam's "Beds:", read out of a Booking.com spec table), and
+    a retirement that leaves the row on the comparison screen removes nothing.
+
+    The history is untouched: ``price_series`` still holds every reading, and
+    setting the flag back puts the room straight back on the page.
     """
     return (
         await session.execute(
@@ -675,6 +686,7 @@ async def _priced_rows(session, user, check_in: date, check_out: date, adults: i
                 PriceSeries.check_out == check_out,
                 PriceSeries.adults == adults,
                 Hotel.is_active.is_(True),
+                RoomType.is_active.is_(True),
                 Hotel.owner_user_id == user.id,
             )
             .order_by(Hotel.name, RoomType.sort_order)

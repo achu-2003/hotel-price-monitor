@@ -59,6 +59,45 @@ _ABBREVIATIONS = {
 _PUNCT_RE = re.compile(r"[^\w\s/&+-]")
 _WS_RE = re.compile(r"\s+")
 
+def looks_like_a_field_label(raw: str | None) -> bool:
+    """Whether this is a spec-table LABEL that a selector mistook for a room.
+
+    A room-name selector does not fail by finding nothing. It fails by finding
+    the wrong element and returning it with total confidence.
+
+    Ananthyam is the case. Booking.com prints each room card's bed
+    configuration as a definition list, and on 3 Sep the selector reached into
+    it: three "rooms" called "Bed:", "Bedroom:" and "Beds:" were created, each
+    with its own price series. Every screen believed the hotel had eight rooms.
+
+    THE NARROWEST RULE THAT CATCHES THEM, and narrow on purpose. A trailing
+    colon makes a string a field label rather than a value -- that is what the
+    colon is for -- and no hotel names a room with one. A colon INSIDE the name
+    is untouched, because "Deluxe Room: Garden View" is a real room described
+    in two halves.
+
+    WHAT THIS DELIBERATELY DOES NOT CLAIM
+    =====================================
+    It is not a general "is this a room name" test, and an earlier draft that
+    tried to be one broke something. That draft also rejected any name with no
+    letter in it -- "---", "2" -- which reads as an obvious improvement and is
+    not: ``normalize_room_name("---")`` is already empty, so ingest ALREADY
+    routes it to the unmatched queue, where a person can see it. Rejecting it
+    here dropped it one step earlier and one step quieter, and two integration
+    tests said so.
+
+    So the two rules divide cleanly. A name that normalises away is a name the
+    queue owns and always has. A name that normalises to something real --
+    "Beds:" becomes "beds" -- is one nothing was catching, because from there
+    on it is indistinguishable from a room the hotel has just added.
+
+    Deliberately not a keyword list either. "Bed", "Sleeps", "Size" and
+    "Occupancy" are all spec labels AND all appear inside real room names, so
+    reading the words would either miss the next site's labels or throw away
+    "Twin Bed Room". The punctuation is what carries the meaning.
+    """
+    return bool(raw) and raw.strip().endswith(":")
+
 
 def normalize_room_name(raw: str) -> str:
     """Canonical form used as the alias lookup key.

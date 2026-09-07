@@ -100,6 +100,13 @@ class IngestSummary:
     #: Kept apart from ``offers_collapsed`` because it is not a defect and must
     #: not raise: see the duplicate branch in :func:`ingest_fetch_result`.
     offers_duplicated: int = 0
+    #: Offers whose name could not be a room name at all -- a spec-table label
+    #: like "Beds:", or a bare number. Counted for the same reason
+    #: ``offers_collapsed`` is: the fetch succeeds either way, and without a
+    #: number here the only trace is three extra rooms on a hotel page that
+    #: nobody is looking at closely enough to doubt.
+    offers_not_a_room: int = 0
+    not_a_room_names: list[str] = field(default_factory=list)
 
     @property
     def changes_detected(self) -> int:
@@ -189,6 +196,34 @@ def ingest_fetch_result(
 
     for offer in result.offers:
         if _filtered_out(offer, ctx):
+            continue
+
+        # A field label out of a spec table, not a room. Dropped BEFORE
+        # resolution, because every step after this one would treat it as a
+        # room the hotel had just added: "Beds:" normalises to "beds", which
+        # collides with nothing and matches nothing, so a new room type is
+        # created with its own price series. That is how Ananthyam came to
+        # have rooms called "Bed:", "Bedroom:" and "Beds:".
+        #
+        # Only the labels. A name that normalises away to nothing is NOT
+        # handled here -- ``_resolve_room`` already queues it as unmatched,
+        # deliberately, and stealing that case only made it quieter.
+        #
+        # Not recorded as unmatched either. Unmatched is a queue of names a
+        # person must map to a room, and there is no room to map a label to --
+        # they would be three permanent rows on Attention that nobody can
+        # clear. Counted and logged instead, so the selector that produced
+        # them is still visible to anyone who looks at the run.
+        if room_matching.looks_like_a_field_label(offer.raw_room_name):
+            summary.offers_not_a_room += 1
+            if offer.raw_room_name not in summary.not_a_room_names:
+                summary.not_a_room_names.append((offer.raw_room_name or "")[:80])
+            log.warning(
+                "offer_name_is_not_a_room",
+                hotel_id=ctx.hotel_id,
+                source_id=ctx.source_id,
+                raw_name=(offer.raw_room_name or "")[:80],
+            )
             continue
 
         room_type_id = _resolve_room(session, offer, ctx, aliases, candidates)

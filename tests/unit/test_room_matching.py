@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services import room_matching
 from app.services.room_matching import (
     AUTO_MATCH_THRESHOLD,
     SUGGEST_THRESHOLD,
@@ -201,3 +202,51 @@ def test_word_order_alone_still_matches():
 
 def test_empty_strings_score_zero():
     assert score_similarity("", "deluxe") == 0.0
+
+
+class TestAFieldLabelMistakenForARoom:
+    """The guard that stops a spec-table label becoming a room.
+
+    A room-name selector does not fail by finding nothing. It fails by finding
+    the wrong element and returning it with total confidence, and nothing
+    downstream can catch that: "Beds:" normalises to "beds", collides with no
+    existing room, and is duly created as a room the hotel has just added.
+
+    Ananthyam is the real case -- Booking.com prints each card's bed
+    configuration as a definition list, the selector reached into it, and the
+    hotel acquired rooms called "Bed:", "Bedroom:" and "Beds:", each with its
+    own price series.
+    """
+
+    @pytest.mark.parametrize("raw", ["Bed:", "Bedroom:", "Beds:", "Sleeps:", "Room size:"])
+    def test_a_trailing_colon_makes_it_a_label(self, raw):
+        assert room_matching.looks_like_a_field_label(raw)
+
+    def test_a_colon_inside_the_name_is_left_alone(self):
+        """A room described in two halves is still a room. The rule is about a
+        name that ENDS in a colon, which is a label with its value missing."""
+        assert not room_matching.looks_like_a_field_label("Deluxe Room: Garden View")
+
+    @pytest.mark.parametrize("raw", [
+        "Deluxe Room",
+        "Cottage - 2 King Bed - Pool view - Sitout",
+        "Twin Bed Room",
+        "Villa 3 Bedroom with Living Room",
+        "Suíte Máster",
+    ])
+    def test_a_real_room_name_survives(self, raw):
+        """Including the ones whose words overlap the labels. "Bed" and
+        "Bedroom" are spec labels AND parts of real names, which is exactly
+        why the rule reads the punctuation and not the vocabulary."""
+        assert not room_matching.looks_like_a_field_label(raw)
+
+    @pytest.mark.parametrize("raw", ["---", "2", "", None, "   "])
+    def test_it_does_not_reach_for_the_cases_the_queue_already_owns(self, raw):
+        """THE REGRESSION THIS PINS. An earlier draft also rejected any name
+        with no letter in it, which reads as an improvement and is not:
+        "---" normalises to nothing, so ingest ALREADY queues it as unmatched
+        where a person can see it. Rejecting it here dropped it one step
+        earlier and one step quieter, and two integration tests said so."""
+        assert not room_matching.looks_like_a_field_label(raw)
+        if raw:
+            assert not normalize_room_name(raw) or raw == "2"
