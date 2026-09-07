@@ -24,17 +24,23 @@ the discovery heuristics are shared: a rule that improves here improves every
 hotel at once, where a stored mapping would have to be filled in again for
 each new property and would quietly go stale the day a site renames a room.
 
-The cost is that a category the name does not state cannot be inferred. Two
-known examples, both from the team's own sheet:
+The cost is that a category the name does not state cannot be inferred. Three
+known examples, all from the team's own sheet:
 
   * A property whose entry-level room is literally called "Deluxe" (and whose
     next tier up is "Superior") is a TIER judgement about that one property.
     By name alone "Deluxe" is a deluxe room, and that is where it lands.
   * "Compact Room" happens to be the pool-view room at one property. Nothing
     in those two words says so.
+  * "Villa 1 Bedroom" is the cheapest thing one property sells. It is still a
+    villa, and at every other property a villa is not the entry-level room.
 
-Both are visible and both are one word away from being fixed by naming the
-room accurately at the source, which is worth more than a hidden override.
+All three are visible, all three are one word away from being fixed by naming
+the room accurately at the source, and that is worth more than a hidden
+override. What is NOT on this list is a category the name states in different
+words -- a cottage that says how many beds it has instead of how many
+bedrooms. That is the name being read badly rather than the name being
+silent, so it is fixed here: see ``_WHOLE_UNIT_RE``.
 
 ORDER IS THE WHOLE DESIGN
 =========================
@@ -42,8 +48,9 @@ The rules are tried in order and the first hit wins, because the categories
 overlap in real names:
 
   "Two Bed Room Pool Villa"                 -> Swimming Pool Suite
-  "Cottage - 2 Bed Room, Pool View Sitout"  -> 2 Bed Room Villa
+  "Cottage - 2 King Bed, Pool View Sitout"  -> 2 Bed Room Villa
   "Pool Facing Deluxe Room"                 -> Pool View Rooms
+  "Deluxe Room with 2 Queen Beds"           -> Deluxe
 
 A pool ATTACHED to the unit ("pool villa", "private pool") outranks how many
 bedrooms it has: the pool is what is being sold. A pool merely VISIBLE from it
@@ -105,12 +112,42 @@ _WORD_NUMBERS = {
 #: BEDROOMS, NOT BEDS. "2 Bed Room Villa" is a unit with two bedrooms; a
 #: "Deluxe Room with 2 Queen Beds" is one room with two beds in it, and
 #: counting the second as a bedroom would file an ordinary twin room as a
-#: villa. So the count is only read off wording that names a bedroom --
-#: "bed room", "bedroom", "BHK" -- and a name that only ever says "2 king bed"
-#: is left to the later rules. That loses a penthouse the sheet calls a two
-#: bedroom; it does not turn every twin room in the system into a villa.
+#: villa. So the count is read off wording that names a bedroom -- "bed room",
+#: "bedroom", "BHK" -- and a name that only says "2 king bed" is left to
+#: ``_BEDS_RE`` below, which applies only where the name also says the thing
+#: being sold is a whole dwelling.
 _BEDROOMS_RE = re.compile(
     r"\b(\d{1,2}|one|two|three|four|five|six)\s*[- ]?\s*(?:bed\s*rooms?|bedrooms?|bhk)\b"
+)
+
+#: A whole dwelling, as opposed to a room inside one. This is the guard that
+#: makes counting BEDS safe: inside a cottage or a penthouse, "2 king bed" is
+#: how the engine describes a two-bedroom unit, and inside a room it is how it
+#: describes a twin.
+#:
+#: Deliberately NOT "suite", "duplex" or "apartment", all of which appear in
+#: ``_SUITE_RE``. Those words are sold as a room GRADE as often as a dwelling
+#: -- "Premium Suite, 2 Double Beds" and "Traditional Duplex, 2 Double Beds"
+#: are both one room with two beds on the OTA listings this system reads --
+#: and admitting them would reintroduce exactly the twin-room-as-villa error
+#: that the bedroom rule above exists to prevent.
+_WHOLE_UNIT_RE = re.compile(r"\b(?:cottage|villa|penthouse|bungalow|chalet)s?\b")
+
+#: Beds, counted only for a whole unit. Matches a numeral against either the
+#: word "bed" or a bed SIZE, because the size is often where the count is
+#: attached and the noun arrives later or not at all:
+#:
+#:   "Cottage - 2 Queen Bed - Pool view"   -> 2   (numeral on the size)
+#:   "Penthouse - 2 King and 1 Single Bed" -> 2   (largest wins; see _beds)
+#:   "Cottage - King and Sofa Bed"         -> 0   (no numeral, no claim)
+#:
+#: The middle one is why the size has to count on its own. Requiring the word
+#: "bed" after the numeral reads that penthouse as a ONE-bed unit, because the
+#: only numeral standing next to the word "bed" in it is the 1.
+_BEDS_RE = re.compile(
+    r"\b(\d{1,2}|one|two|three|four|five|six)\s*[- ]?\s*"
+    r"(?:queen|king|double|single|twin|sofa|bunk)\b|"
+    r"\b(\d{1,2}|one|two|three|four|five|six)\s*[- ]?\s*beds?\b"
 )
 
 #: A pool that is part of the unit. "Pool villa", "plunge pool", "with private
@@ -170,18 +207,39 @@ def _fold(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _count(token: str | None) -> int:
+    if not token:
+        return 0
+    return int(token) if token.isdigit() else _WORD_NUMBERS.get(token, 0)
+
+
 def _bedrooms(text: str) -> int:
     """Largest bedroom count stated in the name, or 0 if it states none.
 
     Largest, because a name can carry two numbers -- "Villa 3 Bed Room with 1
     Living Room" -- and the unit is as big as its biggest claim.
     """
-    best = 0
-    for match in _BEDROOMS_RE.finditer(text):
-        token = match.group(1)
-        count = _WORD_NUMBERS.get(token, 0) if not token.isdigit() else int(token)
-        best = max(best, count)
-    return best
+    return max(
+        (_count(m.group(1)) for m in _BEDROOMS_RE.finditer(text)), default=0
+    )
+
+
+def _beds(text: str) -> int:
+    """Largest bed count stated in the name, or 0 if it states none.
+
+    ONLY MEANINGFUL FOR A WHOLE UNIT, and :func:`classify` is what enforces
+    that. Read off a room name this number is the number of beds in one room,
+    which is not a bedroom count and never was.
+
+    Largest and not the sum, which is the whole difference between reading the
+    sheet's "Penthouse 2 King and 1 Single Bed" as the two-bedroom unit the
+    team files it under and reading it as a three-bedroom one. The single bed
+    is the child's bed in the second room, not a third room.
+    """
+    return max(
+        (_count(m.group(1) or m.group(2)) for m in _BEDS_RE.finditer(text)),
+        default=0,
+    )
 
 
 def classify(room_name: str) -> str:
@@ -200,6 +258,19 @@ def classify(room_name: str) -> str:
         return POOL_SUITE
 
     bedrooms = _bedrooms(text)
+    # A whole dwelling that never says "bedroom" states its size in beds
+    # instead, and on the properties here that is the normal way to write it:
+    # "Cottage - 2 King Bed - Pool view", "Penthouse - 2 King and 1 Single
+    # Bed". Both are two-bedroom units on the team's sheet and both used to
+    # land in Suite, beside one-bedroom cottages at half the price.
+    #
+    # Only when the name states no bedroom count of its own -- a stated
+    # bedroom is the better evidence and must not be overruled by a bed
+    # ("Villa 1 Bedroom, 2 Double Beds" is a one-bedroom villa) -- and only
+    # for a whole unit, so no room can be promoted by the beds inside it.
+    if not bedrooms and _WHOLE_UNIT_RE.search(text):
+        bedrooms = _beds(text)
+
     if bedrooms >= 3:
         return VILLA_3BR
     if bedrooms == 2 or _CONNECTING_RE.search(text):

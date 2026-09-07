@@ -125,7 +125,8 @@ class TestWhereTheRulesOverlap:
         line in its description rather than what it is. Only when the name has
         nothing bigger to say does the view decide the category.
         """
-        assert classify("Cottage - Two Queen Bed, Pool View Sitout") == SUITE
+        assert classify("Cottage - King & Sofa Bed, Pool View Sitout") == SUITE
+        assert classify("Cottage - Two Queen Bed, Pool View Sitout") == VILLA_2BR
         assert classify("Cottage - 2 Bed Room, Pool View Sit Out") == VILLA_2BR
         assert classify("Pool Facing Deluxe Room") == POOL_VIEW
 
@@ -159,6 +160,63 @@ class TestBedroomsAreNotBeds:
     def test_the_largest_count_in_the_name_wins(self):
         """A name can carry two numbers; the unit is as big as its biggest."""
         assert classify("Villa 3 Bed Room with 1 Living Room") == VILLA_3BR
+
+
+class TestAWholeDwellingCountedInBeds:
+    """The exception, and the guard that makes it safe.
+
+    Inside a cottage or a penthouse, "2 king bed" is how a booking engine
+    writes a two-bedroom unit; inside a room it is how it writes a twin. So
+    beds are counted ONLY where the name also says the thing being sold is a
+    whole dwelling, which is what keeps ``TestBedroomsAreNotBeds`` above true.
+
+    Every name here is real, from MGM Whispering Winds, and the team's sheet
+    files all three under 2 Bed Room Villa. They used to land in Suite --
+    beside that property's own one-bedroom cottage, at half the price.
+    """
+
+    @pytest.mark.parametrize("name", [
+        "Cottage - 2 Queen Bed - Pool view - Sitout",
+        "Cottage - 2 King Bed - Pool view - Sitout",
+        "Cottage - Living Room & 2 King Bed - Pool View Sit Out",
+    ])
+    def test_a_cottage_that_states_its_size_in_beds(self, name):
+        assert classify(name) == VILLA_2BR
+
+    def test_the_largest_count_wins_and_the_counts_are_not_added(self):
+        """"Penthouse - 2 King and 1 Single Bed" is the two-bedroom unit on
+        the sheet, not a three-bedroom one. The single bed is the child's bed
+        in the second room."""
+        assert classify("Penthouse - 2 King and 1 Single Bed") == VILLA_2BR
+
+    def test_a_size_carries_the_count_when_the_word_bed_arrives_later(self):
+        """THE BUG THIS PREVENTS: requiring the numeral to sit next to the
+        word "bed" reads that penthouse as a ONE-bed unit, because the only
+        numeral touching the word "bed" in it is the 1."""
+        assert classify("Penthouse - 2 King and 1 Single Bed") != SUITE
+
+    def test_a_unit_with_no_number_claims_nothing(self):
+        assert classify("Cottage - King and Sofa Bed - Sitout") == SUITE
+        assert classify("Private Cottage - King Bed - Pool view") == SUITE
+
+    def test_a_room_is_never_promoted_by_the_beds_inside_it(self):
+        """The guard, stated as its own case. Without the whole-dwelling
+        requirement every one of these becomes a two-bedroom villa."""
+        assert classify("Deluxe Room - 2 King Bed") == DELUXE
+        assert classify("Club Room - 2 Queen Beds") == CLASSIC
+        assert classify("Premium Suite, 2 Double Beds") == SUITE
+        assert classify("Traditional Duplex, 2 Double Beds") == SUITE
+
+    def test_a_stated_bedroom_is_not_overruled_by_a_bed(self):
+        """A stated bedroom count is the better evidence, so it wins. A
+        one-bedroom villa with two beds in it is a one-bedroom villa."""
+        assert classify("Villa 1 Bedroom, 2 Double Beds") == SUITE
+        assert classify("Villa 3 Bedroom with 2 King Bed") == VILLA_3BR
+
+    def test_a_pool_villa_is_still_a_pool_suite(self):
+        """The order is unchanged: the pool attached to the unit outranks
+        however the unit states its size."""
+        assert classify("Pool Villa - 2 King Bed") == POOL_SUITE
 
 
 class TestWhatTheNameCannotSay:
