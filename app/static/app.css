@@ -271,6 +271,75 @@ span.truncate { display: block; }
 .own-property td { background: var(--accent-bg); }
 .own-property td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .scroll-x { overflow-x: auto; border-radius: var(--radius); }
+
+/* -- a table too wide for the window, with its edges pinned ------------
+ *
+ * The comparison grid is seven room categories across, each wide enough to
+ * keep a gap pill on one line. That is wider than the window, and .scroll-x
+ * on its own does not solve it -- it scrolls, but the box is as tall as the
+ * table, so the horizontal scrollbar lands eighteen hundred pixels down the
+ * page. Measured on the real grid: a 1,312px box, a 1,404px table, and a
+ * scrollbar at y=1927 on a 2,460px page. The last column read as cut off
+ * rather than as scrollable, which is the same thing as missing.
+ *
+ * So the table gets a pane of its own with both scrollbars in view, and the
+ * two things you navigate by are pinned:
+ *
+ *   the category headings, or scrolling down leaves seven columns of rupee
+ *   amounts with nothing saying which tier each one is
+ *
+ *   the resort column, or scrolling right leaves a row of prices with no
+ *   property attached -- worse here than on an ordinary table, because every
+ *   number in the row is a comparison and the thing compared is the row label
+ *
+ * WHY .grid's OWN overflow HAS TO GO. `overflow: hidden` makes an element a
+ * scroll container, so a sticky cell inside .grid sticks to .grid -- which
+ * never scrolls -- and quietly does nothing at all. The clipping and the
+ * rounded corners move out to the pane, which is the thing that scrolls.
+ */
+.scroll-grid {
+  overflow: auto;
+  /* THE PANE HAS TO FIT THE WINDOW, and the subtrahend is why. It is roughly
+     the page furniture above the table -- bar, title, filter card, margins --
+     because a pane taller than the space left over pushes its own horizontal
+     scrollbar below the fold, which is the entire bug this rule exists to
+     fix. Worse than that: reaching the scrollbar by scrolling the PAGE lifts
+     the pane's pinned heading out of view with it, so you would arrive at the
+     control having lost the labels it is there to help you read.
+
+     Measured against the real page: furniture ends at y=275, so at a 850px
+     window this leaves the pane's bottom edge at 821 -- on screen, with the
+     table self-contained and the page barely scrolling at all. */
+  max-height: calc(100vh - 19rem);
+  min-height: 18rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  background: var(--panel);
+  /* The pane is what has an edge now, so the table inside it must not paint a
+     second one a pixel away from the first. */
+}
+.scroll-grid > .grid {
+  width: 100%; min-width: min-content;
+  border: none; border-radius: 0; box-shadow: none; overflow: visible;
+}
+.scroll-grid thead th { position: sticky; top: 0; z-index: 3; }
+/* Both pinned at once, so the corner cell has to outrank each of them or it
+   is overrun by whichever neighbour is scrolling past. */
+.scroll-grid thead th:first-child { z-index: 4; }
+.scroll-grid tbody td:first-child {
+  position: sticky; left: 0; z-index: 2;
+  /* Opaque, or the columns scroll THROUGH it. Set at the lowest specificity
+     of the three, so the tinted and hovered rows below still win. */
+  background: var(--panel);
+}
+/* The pinned column's own edge. A border rather than a shadow: the own-property
+   row already spends its box-shadow on the accent bar down its left side, and
+   two shadows on one cell would have to be written as one rule in two places. */
+.scroll-grid thead th:first-child,
+.scroll-grid tbody td:first-child { border-right: 1px solid var(--line); }
+.scroll-grid .own-property td:first-child { background: var(--accent-bg); }
+.scroll-grid tbody tr:hover td:first-child { background: #f8f8ff; }
 /* width:100% inside a scrolling box means "the box's width", which would let
    the table shrink back to the space available and wrap everything it was
    supposed to be allowed to overflow. min-content is the width it actually

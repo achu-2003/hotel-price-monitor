@@ -169,7 +169,19 @@
 {% endif %}
 
 {% if not grid.is_empty %}
-<div class="scroll-x">
+{#
+  A PANE, NOT A PAGE-WIDTH TABLE
+  =============================
+  Seven categories at a width that keeps a gap pill on one line is wider than
+  the window, and .scroll-x alone was not enough: the box was as tall as the
+  table (1,927px), so its horizontal scrollbar sat below the fold and the last
+  column simply looked cut off. Nothing on the screen said the 3-bedroom villa
+  column was still there.
+
+  So the table gets its own scroll pane, with the resort column and the
+  category headings pinned. See .scroll-grid.
+#}
+<div class="scroll-grid">
 <table class="grid grid-gap">
   <thead>
     <tr>
