@@ -547,10 +547,56 @@ a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
    grid is tabular figures. The columns are narrow and the eye travels down
    them; proportional digits make that measurably slower. */
 .grid-gap td, .grid-gap th { font-variant-numeric: tabular-nums; }
-.grid-gap tbody td:not(:first-child) { min-width: 132px; }
+/* Wide enough for a gap pill to stay on one line.
+ *
+ * At 132px the narrow columns cut every pill in two, so the same reading
+ * looked like a one-line answer under Suite and a two-line one under Classic
+ * Room. The table is width:100%, so raising the floor costs no total width --
+ * it moves slack out of the columns that had it into the ones that did not.
+ *
+ * Not load-bearing: a longer number than today's (a six-figure rate) wraps
+ * between the amount and the percentage and still reads correctly. This only
+ * buys the common case a straight line. */
+.grid-gap tbody td:not(:first-child) { min-width: 192px; }
+/* The property column needs a floor of its own, or the rule above takes its
+   width: raising six columns at once left the first one narrow enough to
+   break "MGM WHISPERING MEADOWS" across two lines and push the "yours" chip
+   below the name it belongs to. This is the column every row is found by. */
+.grid-gap thead th:first-child,
+.grid-gap tbody td:first-child { min-width: 250px; }
+/* ONE ROOM: PRICE, NAME, POSITION -- ALWAYS THOSE THREE, ALWAYS IN THAT ORDER
+ *
+ * A grid rather than flowed spans. Flowed, a pill rides up beside a one-line
+ * room name in one column and drops below a three-line one in the next, so
+ * two identical kinds of answer land at two different heights and the eye
+ * reads them as different kinds of thing. On a grid every block is the same
+ * three rows in the same order, whatever the name does.
+ *
+ * Rows stay full width so long room names wrap instead of overflowing the
+ * column; only the pills are pulled back to their own width, below.
+ */
+.gap-rate { display: grid; row-gap: 2px; }
+/* The further rooms of the tier are peers of the first, not parts of it, so
+   they are separated by a hairline rather than indented under it -- an indent
+   would suggest the second figure was somehow inside the first. Drawn on the
+   adjacency, so a cell with one room has no stray rule under it. */
+.gap-rate + .gap-rate {
+  margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line);
+}
 .gap-price { display: block; font-weight: 650; }
 .gap-room  { display: block; font-size: 11px; color: var(--muted); }
-.gap-also  { color: var(--muted); opacity: .8; }
+/* Subordinate in weight only. The entry price is the figure a rate decision
+   is made against so it stays the heaviest thing in the cell, but the rest
+   are not shrunk: the pill under them is already 11px, and going below that
+   costs the word inside it as well as the colour. */
+.gap-rate + .gap-rate .gap-price { font-weight: 550; opacity: .92; }
+/* Pills are grid items, and a grid item fills its column by default -- which
+   would stretch a "cheaper" pill the full width of the cell and turn a tight
+   chip into a banner. Pulled back to their own width, left-aligned with the
+   price above them. */
+.gap-rate > .gap-delta,
+.gap-rate > .gap-level,
+.gap-rate > .gap-base { justify-self: start; margin-top: 3px; }
 /* The gap, on its own line under the price it is measured from. A pill rather
    than coloured text: at 11px, colour alone on a thin glyph is the weakest
    possible signal, and the tint gives the word behind it something to sit on.
@@ -566,10 +612,16 @@ a.chip.is-on .chip-count { background: rgba(255, 255, 255, .22); color: #fff; }
  * "dearer" in words, and the legend under the table says which is which.
  */
 .gap-delta {
-  display: inline-flex; align-items: baseline; gap: 5px; margin-top: 5px;
+  display: inline-flex; align-items: baseline; gap: 2px 5px; margin-top: 5px;
   font-size: 11px; font-weight: 650; border-radius: 999px;
   padding: 2px 8px; border: 1px solid transparent;
+  /* Wraps as a whole, between the amount and the percentage, and never inside
+     the amount -- so a column too narrow for one line gives
+     "−₹1,956.00 cheaper" over "38.1%" rather than splitting the direction off
+     the number it describes. */
+  flex-wrap: wrap;
 }
+.gap-amt { white-space: nowrap; }
 .gap-under { color: var(--up);   background: var(--up-bg);   border-color: #f3c9c9; }
 .gap-over  { color: var(--down); background: var(--down-bg); border-color: #bfe4d3; }
 /* Level is a real answer and not a missing one, so it gets a pill too --

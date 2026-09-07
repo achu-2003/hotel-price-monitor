@@ -15,12 +15,20 @@
   a pre-tax rate to be quietly differenced against an all-in one.
 #}
 
-{% macro cell(c, is_baseline) %}
-  {% if c.has_price %}
+{#
+  ONE ROOM'S RATE, AND WHERE IT PUTS THEM
+  =======================================
+  Its own macro because the further rooms of a tier are shown exactly as the
+  cheapest one is. They were briefly a bare name and price sitting under a
+  room that had a gap beside it, which left whoever was reading to do by hand
+  the one subtraction this whole page exists to have already done. Sharing the
+  markup means the two cannot drift into telling different amounts of the
+  truth about the same night.
+#}
+{% macro rate(c, is_baseline) %}
+    <span class="gap-rate">
     <span class="gap-price">{{ money(c.price, c.currency) }}</span>
-    <span class="gap-room">
-      {{ c.room_name }}{% if c.also %} <span class="gap-also">+{{ c.also }} more</span>{% endif %}
-    </span>
+    <span class="gap-room">{{ c.room_name }}</span>
     {# Only where this site published one component and not the other. Same
        marker, same meaning, same reason as the matrix: a pre-tax rate sitting
        beside an all-in one reads as a competitor 15% away who is not there. #}
@@ -43,8 +51,13 @@
       {% else %}
       <span class="gap-delta {{ 'gap-under' if c.cheaper else 'gap-over' }}{{ ' gap-approx' if c.mixed_basis }}"
             {% if c.mixed_basis %}title="One of these two prices includes tax and the other does not, because one of the sites published only the one figure. The gap spans that difference — treat it as approximate."{% endif %}>
-        {{ '−' if c.cheaper else '+' }}{{ money(c.gap|abs, c.currency) }}
-        {{ 'cheaper' if c.cheaper else 'dearer' }}
+        {# The figure and the word it qualifies are ONE span, and it does not
+           break. Left as loose text they were a single wrapping run, so in a
+           narrow column "dearer" dropped to a second line while the percentage
+           stayed up on the first -- a pill reading "+₹1,865.00  36.3%" over
+           the word that says which direction it means. #}
+        <span class="gap-amt">{{ '−' if c.cheaper else '+' }}{{ money(c.gap|abs, c.currency) }}
+        {{ 'cheaper' if c.cheaper else 'dearer' }}</span>
         {% if c.gap_pct is not none %}
         <span class="gap-pct">{{ '%.1f'|format(c.gap_pct|abs) }}%</span>
         {% endif %}
@@ -52,6 +65,32 @@
       </span>
       {% endif %}
     {% endif %}
+    </span>
+{% endmacro %}
+
+{% macro cell(c, is_baseline) %}
+  {% if c.has_price %}
+    {{ rate(c, is_baseline) }}
+    {#
+      THE OTHER ROOMS OF THE TIER, IN FULL
+      ====================================
+      This was "+2 more". A count says a choice exists and then withholds it,
+      and the one errand it prompts is a trip to the matrix to find out what
+      the entry price is cheaper *than* -- the errand this page was built to
+      remove. Each one is shown the way the room above it is shown, gap and
+      all, because a tier is not one rate: a competitor whose entry room
+      undercuts us and whose next room sits above us is a different fact from
+      one who is under us all the way up, and the entry price alone cannot
+      tell those two apart.
+    #}
+    {#
+      is_baseline IS passed down. On your own row these rooms carry no gap --
+      nothing is measured against itself -- so without it they came out as a
+      bare price and name under a room that had a label, and your row was the
+      one place on the page where two equal readings looked unequal. Every
+      room of yours is your rate, so every one of them says so.
+    #}
+    {% for o in c.others %}{{ rate(o, is_baseline) }}{% endfor %}
   {% elif c.sold_out %}
     {# Sells the tier; every room in it is full tonight. A different fact from
        an empty cell, and the more interesting of the two. #}

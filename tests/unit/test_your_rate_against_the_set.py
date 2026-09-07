@@ -141,8 +141,86 @@ class TestWhatIsCompared:
         assert cell.price == Decimal(4800)
         assert cell.room_name == "Classic Room"
 
-    def test_the_other_rooms_of_the_tier_are_counted_not_lost(self):
-        assert _cell(_grid(), STERLING, CLASSIC).also == 1
+    def test_the_other_rooms_of_the_tier_are_named_not_merely_counted(self):
+        """Sterling's second classic room arrives with its own price.
+
+        It used to arrive as the number 1, rendered "+1 more". That said a
+        room existed and refused to say which or at what -- so the only move
+        it left was opening the matrix to find out what 4,800 was cheaper
+        *than*, which is the lookup this page exists to spare anyone.
+        """
+        cell = _cell(_grid(), STERLING, CLASSIC)
+        assert [(o.room_name, o.price) for o in cell.others] == [
+            ("Classic Room with Balcony", Decimal(6100)),
+        ]
+        # The old count still reads off the list, so anything asking "are
+        # there others" keeps working without knowing they are now named.
+        assert cell.also == 1
+
+    def test_the_other_rooms_are_listed_cheapest_first(self):
+        """The cell is a ladder and has to be read as one: a list in price
+        order says where the tier goes after its entry price, and one in
+        arrival order says only what order the scraper happened to see."""
+        rows = [
+            (_series(5500), AGS, "Classic Room"),
+            (_series(9000), STERLING, "Mountain View Classic"),
+            (_series(4800), STERLING, "Classic Room"),
+            (_series(6100), STERLING, "Classic Room with Balcony"),
+        ]
+        cell = _cell(_grid(rows), STERLING, CLASSIC)
+        assert cell.price == Decimal(4800)
+        assert [o.price for o in cell.others] == [Decimal(6100), Decimal(9000)]
+
+    def test_each_further_room_carries_its_own_gap(self):
+        """Sterling's classic tier straddles our rate: their entry room is 700
+        under us and their next one is 600 over.
+
+        THE DECISION THIS PROTECTS: a cell that priced the gap for the
+        cheapest room only says "cheaper" about a tier we are sitting inside
+        of. Holding our rate because one competitor room undercuts it, when
+        their very next room is above it, is the wrong move made on a true
+        number -- and nothing on the page would have shown the difference.
+        """
+        cell = _cell(_grid(), STERLING, CLASSIC)
+        assert (cell.price, cell.gap) == (Decimal(4800), Decimal(-700))
+        assert cell.cheaper
+
+        (other,) = cell.others
+        assert other.room_name == "Classic Room with Balcony"
+        assert other.price == Decimal(6100)
+        assert other.gap == Decimal(600)
+        assert other.dearer and not other.cheaper
+
+    def test_a_further_room_is_not_itself_given_further_rooms(self):
+        """The nesting stops at one level. A ladder of ladders is not a cell
+        anyone reads, and rendering one would recurse in the template."""
+        assert all(o.others == () for o in _cell(_grid(), STERLING, CLASSIC).others)
+
+    def test_a_further_room_in_the_other_column_is_not_subtracted_either(self):
+        """OTHER holds rooms that could not be placed, so nothing in it
+        subtracts -- and that has to hold for every room in the cell, not just
+        the one the old code happened to compute a gap for."""
+        rows = [
+            (_series(5500), AGS, "Bed in 6-Bed Dorm"),
+            (_series(4000), STERLING, "Treehouse"),
+            (_series(9000), STERLING, "Houseboat"),
+        ]
+        cell = _cell(_grid(rows), STERLING, OTHER)
+        assert cell.gap is None
+        assert [o.gap for o in cell.others] == [None]
+
+    def test_a_sold_out_room_is_not_offered_as_an_alternative(self):
+        """The cheapest excludes full rooms, and so must the list under it --
+        otherwise the room ruled out of the arithmetic reappears three lines
+        down as something a guest could book."""
+        rows = [
+            (_series(5500), AGS, "Classic Room"),
+            (_series(4800), STERLING, "Classic Room"),
+            (_series(6100, available=False), STERLING, "Classic Room with Balcony"),
+        ]
+        cell = _cell(_grid(rows), STERLING, CLASSIC)
+        assert cell.others == ()
+        assert cell.also == 0
 
     def test_a_full_room_is_never_the_price_even_when_it_is_the_cheapest(self):
         """THE BUG THIS PREVENTS: a sold-out room's last known rate winning the

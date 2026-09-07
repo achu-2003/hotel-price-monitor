@@ -113,9 +113,20 @@ class Cell:
     #: The room the figure belongs to. A gap is meaningless without knowing
     #: which of their rooms produced it.
     room_name: str | None = None
-    #: Further rooms this hotel sells in the tier, above the cheapest one.
-    #: Shown as "+2 more" rather than listed: the matrix lists them.
-    also: int = 0
+    #: Further rooms this hotel sells in the tier, above the cheapest one,
+    #: in ascending price order. Cells in their own right, each carrying its
+    #: own gap against your rate.
+    #:
+    #: These began as a count rendered as "+2 more", which said a choice
+    #: existed and refused to say what it was. Naming them was not enough
+    #: either: a room shown as a bare name and price, beside a cheapest room
+    #: shown with a gap, leaves the reader to do by hand the one subtraction
+    #: this page exists to have already done. So they are the same shape as
+    #: the room above them, and they carry their own answer.
+    #:
+    #: Always empty on a room that is itself one of these: the nesting stops
+    #: at one level, because a ladder of ladders is not a cell anyone reads.
+    others: tuple[Cell, ...] = ()
     #: The tax-basis marker from price_display, where the site published one
     #: component and not the other.
     note: str | None = None
@@ -134,6 +145,11 @@ class Cell:
     @property
     def has_price(self) -> bool:
         return self.price is not None
+
+    @property
+    def also(self) -> int:
+        """How many further rooms are on sale in the tier."""
+        return len(self.others)
 
     @property
     def dearer(self) -> bool:
@@ -201,13 +217,25 @@ def _cell_for(priced: list[_Priced]) -> Cell:
         # docstring on why a full room carries no gap.
         return Cell(sold_out=bool(priced))
 
-    best = min(on_sale, key=lambda p: p.amount)
+    # Sorted rather than min(): the same room comes out first either way
+    # (sorting is stable), and the rest arrive already in the order they are
+    # listed in — cheapest upwards, so the column reads as a ladder.
+    ranked = sorted(on_sale, key=lambda p: p.amount)
+    best = ranked[0]
     return Cell(
         price=best.amount,
         currency=best.currency,
         room_name=best.room_name,
-        also=len(on_sale) - 1,
         note=best.note,
+        others=tuple(
+            Cell(
+                price=p.amount,
+                currency=p.currency,
+                room_name=p.room_name,
+                note=p.note,
+            )
+            for p in ranked[1:]
+        ),
     )
 
 
@@ -231,7 +259,7 @@ def _against(cell: Cell, base: Cell, slug: str) -> Cell:
         price=cell.price,
         currency=cell.currency,
         room_name=cell.room_name,
-        also=cell.also,
+        others=tuple(_against(o, base, slug) for o in cell.others),
         note=cell.note,
         sold_out=cell.sold_out,
         gap=gap,
