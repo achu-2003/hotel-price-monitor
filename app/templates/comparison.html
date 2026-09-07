@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}Comparison · Hotel Price Monitor{% endblock %}
+
+{#
+  THE SHEET, WITH THE PRICES FILLED IN
+  ====================================
+  Resorts down the side, room categories across the top -- the shape the team
+  already kept by hand -- and in each cell the gap between that property's
+  entry price for the tier and ours. The matrix answers "what is everyone
+  asking"; this answers "where does that put us", which is the question the
+  matrix left as seventy subtractions to do in your head.
+
+  What may and may not be subtracted is decided in app/services/rate_gap.py,
+  not here: a template that computed its own gaps would be a second place for
+  a pre-tax rate to be quietly differenced against an all-in one.
+#}
+
+{% macro cell(c, is_baseline) %}
+  {% if c.has_price %}
+    <span class="gap-price">{{ money(c.price, c.currency) }}</span>
+    <span class="gap-room">
+      {{ c.room_name }}{% if c.also %} <span class="gap-also">+{{ c.also }} more</span>{% endif %}
+    </span>
+    {# Only where this site published one component and not the other. Same
+       marker, same meaning, same reason as the matrix: a pre-tax rate sitting
+       beside an all-in one reads as a competitor 15% away who is not there. #}
+    {% if c.note %}<span class="cell-basis">{{ c.note }}</span>{% endif %}
+    {% if is_baseline %}
+      <span class="gap-base">your rate</span>
+    {% elif c.gap is not none %}
+      {#
+        A WORD, NOT ONLY A COLOUR
+        =========================
+        Red is a competitor under us and green is a competitor over us, which
+        is the opposite of what red and green mean on the Changes page -- there
+        they describe the direction a price moved, here they describe who is
+        cheaper. That is exactly why each one is also written out: "cheaper"
+        and "dearer" survive a screenshot, a greyscale print, and a reader who
+        does not separate the two hues.
+      #}
+      {% if c.gap == 0 %}
+      <span class="gap-delta gap-level">same rate</span>
+      {% else %}
+      <span class="gap-delta {{ 'gap-under' if c.cheaper else 'gap-over' }}{{ ' gap-approx' if c.mixed_basis }}"
+            {% if c.mixed_basis %}title="One of these two prices includes tax and the other does not, because one of the sites published only the one figure. The gap spans that difference — treat it as approximate."{% endif %}>
+        {{ '−' if c.cheaper else '+' }}{{ money(c.gap|abs, c.currency) }}
+        {{ 'cheaper' if c.cheaper else 'dearer' }}
+        {% if c.gap_pct is not none %}
+        <span class="gap-pct">{{ '%.1f'|format(c.gap_pct|abs) }}%</span>
+        {% endif %}
+        {% if c.mixed_basis %}<span class="gap-flag">†</span>{% endif %}
+      </span>
+      {% endif %}
+    {% endif %}
+  {% elif c.sold_out %}
+    {# Sells the tier; every room in it is full tonight. A different fact from
+       an empty cell, and the more interesting of the two. #}
+    <span class="gap-none">sold out</span>
+  {% else %}
+    <span class="gap-none">—</span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Comparison</h1>
+    {% if baseline %}
+    <p class="muted">
+      Every property's cheapest room on sale in each category, against
+      <strong>{{ baseline.name }}</strong>.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<form class="filters" method="get" action="/comparison">
+  <label>Check in <input type="date" name="check_in" value="{{ check_in }}"></label>
+  <label>Check out <input type="date" name="check_out" value="{{ check_out }}"></label>
+  <label>Adults <input type="number" name="adults" min="1" max="20" value="{{ adults }}"></label>
+  <button type="submit">Show</button>
+  {% if default_note %}<span class="muted">{{ default_note }}</span>{% endif %}
+  {# Carried through, so changing the night does not silently swap which of
+     your properties everything is measured against. #}
+  {% if baseline and own|length > 1 %}
+  <input type="hidden" name="baseline" value="{{ baseline.id }}">
+  {% endif %}
+</form>
+
+{#
+  Only with more than one property of your own. With exactly one it is a
+  control with a single option: it answers nothing and takes up the line above
+  the table that says what the table is measured against.
+#}
+{% if own|length > 1 %}
+{% set qs = "check_in=%s&check_out=%s&adults=%s"|format(check_in, check_out, adults) %}
+<div class="chips chips-filter">
+  <span class="chips-label">Compare against</span>
+  {% for mine in own %}
+  <a class="chip {{ 'is-on' if baseline and baseline.id == mine.id }}"
+     href="/comparison?{{ qs }}&baseline={{ mine.id }}">{{ mine.name }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{#
+  NO BASELINE IS A SETUP PROBLEM, AND IT IS SAID AS ONE
+  ====================================================
+  Without a property marked as yours there is nothing to subtract from, so the
+  grid still prints every competitor's rate and no gaps at all. That is a page
+  that looks broken unless it says why it is not, and says where the tick box
+  is -- one click on the hotel's own page.
+#}
+{% if not own %}
+<p class="note">
+  No property is marked as your own, so there is nothing to compare against.
+  The rates below are every property this account watches. Open the property
+  that is yours from <a href="/hotels">Hotels</a> and tick
+  <em>This is my own property</em> to fill in the gaps.
+</p>
+{% elif baseline and not grid.baseline and not grid.is_empty %}
+{# Yours is marked, and nothing was collected for it on this night. Naming the
+   property is the difference between "the page is broken" and "our own feed
+   did not run", which is a thing somebody can go and fix. #}
+<p class="note">
+  No price was collected for <strong>{{ baseline.name }}</strong> on this
+  night, so the rates below carry no gap. They are still what everybody else
+  is asking.
+</p>
+{% endif %}
+
+{% if not grid.is_empty %}
+<div class="scroll-x">
+<table class="grid grid-gap">
+  <thead>
+    <tr>
+      <th>Resort</th>
+      {% for col in grid.columns %}<th>{{ col.label }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {# Yours first and pinned to the top of the body, whatever its name sorts
+       as. Every number under it is measured from this row, and a baseline
+       sitting sixth alphabetically is a baseline nobody can see while reading
+       the row they care about. #}
+    {% if grid.baseline %}
+    <tr class="own-property">
+      <td>
+        <a href="/hotels/{{ grid.baseline.hotel.id }}">{{ grid.baseline.hotel.name }}</a>
+        <span class="pill pill-own">yours</span>
+      </td>
+      {% for c in grid.baseline.cells %}<td>{{ cell(c, true) }}</td>{% endfor %}
+    </tr>
+    {% endif %}
+    {% for row in grid.rivals %}
+    <tr>
+      <td>
+        <a href="/hotels/{{ row.hotel.id }}">{{ row.hotel.name }}</a>
+        {#
+          The row in one line, for the scan down the first column before
+          anybody reads a cell.
+
+          It leads with the undercut count and stops there, rather than
+          reciting both halves. Where a property is under us is the half that
+          costs money and the half somebody acts on; where it is over us is
+          one glance to the right, and a summary that says both ends up
+          reading as neither.
+
+          Only where something was actually compared. With no baseline, or a
+          competitor selling nothing we sell, "under you in 0 of 0" is a
+          sentence that MEANS "we could not compare" and READS as "they never
+          undercut us" -- which is the opposite.
+        #}
+        {% if row.compared %}
+        <span class="gap-summary">
+          {% if row.cheaper_in %}under you in {{ row.cheaper_in }} of {{ row.compared }}
+          {%- elif row.dearer_in %}over you in {{ row.dearer_in }} of {{ row.compared }}
+          {%- else %}level with you{% endif %}
+        </span>
+        {% endif %}
+      </td>
+      {% for c in row.cells %}<td>{{ cell(c, false) }}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{#
+  CHECKED, FULL, AND THEREFORE NOT IN THE TABLE
+  =============================================
+  These properties were fetched successfully for this night and listed no room
+  at all. They have no rate to put in a cell and borrowing the one from the
+  night the fetcher rolled forward to would be a gap against a different
+  night's price -- so they are named instead. A competitor simply absent from
+  the grid reads as a competitor nobody checked, which is the one thing that
+  is definitely not true of them.
+#}
+{% if full %}
+<p class="muted">
+  Checked and full for this night, so not compared:
+  {% for hotel in full %}
+  <a href="/hotels/{{ hotel.id }}">{{ hotel.name }}</a>{% if not loop.last %} · {% endif %}
+  {% endfor %}
+  — the <a href="/matrix?check_in={{ check_in }}&check_out={{ check_out }}&adults={{ adults }}">matrix</a>
+  shows what they were asking on the night their prices did land on.
+</p>
+{% endif %}
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-swatch legend-under"></span>cheaper than you — they are undercutting your rate for that category</span>
+  <span class="legend-item"><span class="legend-swatch legend-over"></span>dearer than you</span>
+  <span class="legend-item">
+    each cell is the <strong>cheapest room on sale</strong> in that category,
+    so a property selling three classic rooms is compared on its entry one
+  </span>
+  <span class="legend-item">
+    <strong>sold out</strong> means the property sells that category and every
+    room in it is full — never a price of zero, and never a gap: a rate nobody
+    can book is not one you are competing with. <strong>—</strong> means it
+    does not sell the category at all
+  </span>
+  {% if 'other' in grid.columns|map(attribute='slug')|list %}
+  <span class="legend-item">
+    <strong>Other</strong> collects rooms whose names state no tier. Nothing in
+    that column is subtracted — two rooms land there because neither could be
+    placed, not because they are the same kind of room
+  </span>
+  {% endif %}
+  <span class="legend-item">
+    {% if show_with_tax %}
+      prices <strong>include tax</strong>; <em>excl. tax</em> marks a room whose
+      site published no tax figure
+    {% else %}
+      prices are <strong>before tax</strong>; <em>incl. tax</em> marks a room
+      whose site published no pre-tax figure
+    {% endif %}
+    — change it on Settings. <strong>†</strong> marks a gap between two prices
+    on different bases, which makes it approximate
+  </span>
+  <span class="legend-note">
+    Prices are the last confirmed value per offer, not the latest raw reading.
+  </span>
+</div>
+{% else %}
+<p class="muted">
+  Nothing has been collected for these dates and occupancy yet. Rates appear
+  once a monitor target covering this stay window has run successfully, and
+  the <a href="/matrix">matrix</a> lists the nights that do have prices.
+</p>
+{% endif %}
+{% endblock %}

@@ -1,8 +1,8 @@
 {#
   Layout for every dashboard page.
 
-  FIVE NAV ITEMS, NOT EIGHT
-  =========================
+  SIX NAV ITEMS, NOT EIGHT
+  ========================
   Three of the originals were scaffolding for problems that no longer exist:
 
   * "Sources" existed because the booking engine was a choice. It is now read
@@ -17,6 +17,14 @@
   Settings is the fifth: recipients and alert numbers were on Alerts, which
   put three hundred lines of setup above the delivery history somebody
   opens when a hotel says it never heard.
+
+  Comparison is the sixth, and it is not a view of the Matrix. The Matrix
+  answers "what is everyone asking"; Comparison answers "where does that put
+  us", which is the question every one of these prices gets collected for. It
+  is its own tab rather than a filter on the Matrix because the two are read
+  at different moments — one while looking at a competitor, one while setting
+  your own rate — and burying the second under a control on the first is how
+  it goes unread.
 
   Attention appears ONLY when there is something to do. A permanent tab reading
   zero every day teaches people to stop looking at it, so it earns its place by
@@ -46,6 +54,7 @@
   {% set path = request.url.path %}
   <nav>
     <a href="/matrix"        class="{{ 'active' if path.startswith('/matrix') }}">Matrix</a>
+    <a href="/comparison"    class="{{ 'active' if path.startswith('/comparison') }}">Comparison</a>
     <a href="/changes"       class="{{ 'active' if path.startswith('/changes') }}">Changes</a>
     <a href="/hotels"        class="{{ 'active' if path.startswith('/hotels') }}">Hotels</a>
     <a href="/notifications" class="{{ 'active' if path.startswith('/notifications') }}">Alerts</a>

@@ -66,6 +66,7 @@ from app.notifications import registry
 from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
 from app.services import monitoring as monitoring_service
+from app.services import rate_gap
 from app.services import retention
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
@@ -657,6 +658,30 @@ async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
     return weekend.check_in, weekend.check_out, "Defaults to the coming weekend."
 
 
+async def _priced_rows(session, user, check_in: date, check_out: date, adults: int):
+    """``(series, hotel, room_name)`` for one night, for this account's hotels.
+
+    The matrix and the /comparison grid are two shapes of the same reading, so
+    they read it once, here. Ordered by hotel then by the hotel's own room
+    order, which is the order both pages present rooms in.
+    """
+    return (
+        await session.execute(
+            select(PriceSeries, Hotel, RoomType.name)
+            .join(Hotel, PriceSeries.hotel_id == Hotel.id)
+            .join(RoomType, PriceSeries.room_type_id == RoomType.id)
+            .where(
+                PriceSeries.check_in == check_in,
+                PriceSeries.check_out == check_out,
+                PriceSeries.adults == adults,
+                Hotel.is_active.is_(True),
+                Hotel.owner_user_id == user.id,
+            )
+            .order_by(Hotel.name, RoomType.sort_order)
+        )
+    ).all()
+
+
 def _matrix_groups(
     rows, recent_cutoff: datetime, category: str | None, show_with_tax: bool = False
 ):
@@ -726,6 +751,41 @@ def _matrix_groups(
     return grouped, counts
 
 
+async def _sold_out_hotels(session, user, check_in: date, check_out: date, adults: int):
+    """``(hotel, last_checked_at)`` for properties a good fetch found full.
+
+    Both comparison screens need this list and neither can derive it from
+    ``price_series``: these engines file nothing at all for a night they are
+    full on, so the evidence that anyone looked lives only on the check run.
+    The matrix turns the list into rows with the rolled night's prices; the
+    /comparison grid names them under the table, having no rate for tonight to
+    put in a cell. One query, one definition of "checked and full", so the two
+    pages cannot come to disagree about which hotels those are.
+    """
+    return (
+        await session.execute(
+            select(Hotel, func.max(CheckRun.started_at).label("checked_at"))
+            .select_from(CheckRun)
+            .join(MonitorTarget, MonitorTarget.id == CheckRun.monitor_target_id)
+            .join(HotelSource, HotelSource.id == MonitorTarget.hotel_source_id)
+            .join(Hotel, Hotel.id == HotelSource.hotel_id)
+            .where(
+                CheckRun.check_in == check_in,
+                CheckRun.check_out == check_out,
+                CheckRun.status == CheckRunStatus.SUCCESS,
+                CheckRun.sold_out.is_(True),
+                # The occupancy lives on the target, not the run: a run is one
+                # page load, and the page was asked for these guests. Without
+                # it a 2-adult grid would grow rows from a 4-adult target.
+                MonitorTarget.adults == adults,
+                Hotel.is_active.is_(True),
+                Hotel.owner_user_id == user.id,
+            )
+            .group_by(Hotel.id)
+        )
+    ).all()
+
+
 async def _sold_out_rows(
     session, user, check_in: date, check_out: date, adults: int, already: set[int],
     show_with_tax: bool = False,
@@ -761,28 +821,7 @@ async def _sold_out_rows(
     actually collected rather than assumed to be the following day, so the
     rolled reading is one click away instead of a date somebody has to guess.
     """
-    checked = (
-        await session.execute(
-            select(Hotel, func.max(CheckRun.started_at).label("checked_at"))
-            .select_from(CheckRun)
-            .join(MonitorTarget, MonitorTarget.id == CheckRun.monitor_target_id)
-            .join(HotelSource, HotelSource.id == MonitorTarget.hotel_source_id)
-            .join(Hotel, Hotel.id == HotelSource.hotel_id)
-            .where(
-                CheckRun.check_in == check_in,
-                CheckRun.check_out == check_out,
-                CheckRun.status == CheckRunStatus.SUCCESS,
-                CheckRun.sold_out.is_(True),
-                # The occupancy lives on the target, not the run: a run is one
-                # page load, and the page was asked for these guests. Without
-                # it a 2-adult grid would grow rows from a 4-adult target.
-                MonitorTarget.adults == adults,
-                Hotel.is_active.is_(True),
-                Hotel.owner_user_id == user.id,
-            )
-            .group_by(Hotel.id)
-        )
-    ).all()
+    checked = await _sold_out_hotels(session, user, check_in, check_out, adults)
 
     hotels = [(h, checked_at) for h, checked_at in checked if h.id not in already]
     if not hotels:
@@ -909,21 +948,7 @@ async def matrix(
     if check_in is None or check_out is None:
         check_in, check_out, default_note = await _default_night(session, user, adults)
 
-    rows = (
-        await session.execute(
-            select(PriceSeries, Hotel, RoomType.name)
-            .join(Hotel, PriceSeries.hotel_id == Hotel.id)
-            .join(RoomType, PriceSeries.room_type_id == RoomType.id)
-            .where(
-                PriceSeries.check_in == check_in,
-                PriceSeries.check_out == check_out,
-                PriceSeries.adults == adults,
-                Hotel.is_active.is_(True),
-                Hotel.owner_user_id == user.id,
-            )
-            .order_by(Hotel.name, RoomType.sort_order)
-        )
-    ).all()
+    rows = await _priced_rows(session, user, check_in, check_out, adults)
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
     show_with_tax = await _show_prices_with_tax(session)
@@ -995,6 +1020,92 @@ async def matrix(
         filtered_out=filtered_out,
         default_note=default_note,
         collected=collected,
+        show_with_tax=show_with_tax,
+    )
+
+
+# -- comparison ------------------------------------------------------
+@router.get("/comparison", response_class=HTMLResponse)
+async def comparison(
+    request: Request,
+    user: DashUser,
+    session: DbSession,
+    check_in: BlankableDate = None,
+    check_out: BlankableDate = None,
+    adults: BlankableAdults = None,
+    baseline: BlankableInt = None,
+):
+    """Your rate against every competitor's, by room category.
+
+    The same night, the same rows and the same tax basis as the matrix — a
+    second shape of one reading rather than a second reading, so the two pages
+    cannot show different prices for the same room. What is added is the
+    subtraction: each cell carries the gap between that property's entry price
+    for the tier and yours. See app/services/rate_gap.py for what is and is
+    not allowed to be subtracted.
+
+    ``baseline`` picks between own properties and is offered only when there
+    is more than one. An id that is not one of yours falls back to the first
+    of yours rather than 404ing: a stale bookmark should show the page it was
+    saved for, and there is nothing here that a wrong baseline could leak —
+    the query is ownership-scoped either way.
+    """
+    if user is None:
+        return _redirect_to_login(request)
+
+    if adults is None:
+        adults = 2
+
+    default_note = None
+    if check_in is None or check_out is None:
+        check_in, check_out, default_note = await _default_night(session, user, adults)
+
+    # Yours, in name order, so "the first of yours" is a stable choice rather
+    # than whatever the database happened to return first.
+    own = (
+        await session.scalars(
+            select(Hotel)
+            .where(
+                Hotel.owner_user_id == user.id,
+                Hotel.is_own_property.is_(True),
+                Hotel.is_active.is_(True),
+            )
+            .order_by(Hotel.name)
+        )
+    ).all()
+    chosen = next((h for h in own if h.id == baseline), None) or (own[0] if own else None)
+
+    rows = await _priced_rows(session, user, check_in, check_out, adults)
+    show_with_tax = await _show_prices_with_tax(session)
+    grid = rate_gap.build(
+        rows,
+        baseline_hotel_id=chosen.id if chosen else None,
+        show_with_tax=show_with_tax,
+    )
+
+    # Properties whose engine files nothing when they are full. They have no
+    # rate for tonight, so they get no row and no gap -- naming them under the
+    # table is the whole of what can honestly be said about them here, and it
+    # is worth saying: a competitor missing from the grid otherwise reads as a
+    # competitor nobody checked.
+    seen = {grid.baseline.hotel.id} if grid.baseline else set()
+    seen |= {r.hotel.id for r in grid.rivals}
+    full = [
+        hotel
+        for hotel, _ in await _sold_out_hotels(session, user, check_in, check_out, adults)
+        if hotel.id not in seen
+    ]
+
+    return await _render(
+        request, user, session, "comparison.html",
+        grid=grid,
+        own=own,
+        baseline=chosen,
+        full=full,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        default_note=default_note,
         show_with_tax=show_with_tax,
     )
 
