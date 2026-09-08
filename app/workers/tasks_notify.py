@@ -1,10 +1,29 @@
 """Turning confirmed changes into messages that actually reach someone.
 
-Three tasks:
+Four tasks:
 
 ``notify.dispatch_changes``      batch → filter → create notification rows
+``notify.market_summary``        every N hours → one counted window per person
 ``notify.send``                  one row → one provider call → record the result
 ``notify.release_quiet_hours``   send what was held overnight
+
+TWO MESSAGES, TWO TRIGGERS
+==========================
+``dispatch_changes`` fires the moment a change is confirmed and sends one
+message per (recipient, hotel) naming the rooms that moved and by how much.
+This is what the system has always sent and none of it changes.
+
+``market_summary`` fires on a clock — every ``alert_defaults``
+``summary_interval_hours`` — and sends ONE message per recipient: how many
+rooms moved in that window, which ones, and by how much. Not the comparison
+grid: a message about a window is about what changed in it, and /comparison
+answers the other question on a screen with room for a table.
+
+Both go out. They answer different questions: one says a room moved, the other
+says what the last two hours added up to and where it leaves you. Every filter
+in front of the first is in front of the second too — a change still has to be
+confirmed, still has to clear the recipient's threshold, and a recipient with
+no live assignment still hears nothing.
 
 The split exists so a provider outage cannot lose a change. ``dispatch_changes``
 commits the notification rows and marks the changes notified in ONE
@@ -41,7 +60,14 @@ from app.db.models.price import (
 )
 from app.db.session import sync_session
 from app.notifications import registry
-from app.notifications.base import ChangeLine, Destination
+from app.notifications.base import (
+    MARKET_COMPARISON,
+    PRICE_CHANGE,
+    WHATSAPP_COMPARISON_MIN_PARAMS,
+    ChangeLine,
+    Destination,
+    RenderedMessage,
+)
 from app.notifications.digest import (
     ChangeFacts,
     dedupe_key,
@@ -50,8 +76,10 @@ from app.notifications.digest import (
     ops_dedupe_key,
     passes_recipient_threshold,
     release_time,
+    summary_dedupe_key,
 )
-from app.notifications.render import render_digest
+from app.notifications.render import render_digest, render_summary
+from app.services import monitoring as monitoring_service
 
 log = get_logger("tasks.notify")
 
@@ -208,6 +236,204 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
     return {"notifications": len(created)}
 
 
+@shared_task(name="notify.market_summary", ignore_result=True)
+def market_summary() -> dict[str, int]:
+    """Every N hours: how many rooms moved, which ones, and where that leaves us.
+
+    Ticks every few minutes and does nothing most of the time. What it sends is
+    the LAST CLOSED WINDOW -- with a two-hour interval and a tick at 14:03, the
+    window is 12:00 to 14:00 -- so a window is only ever reported once it is
+    complete, and never half-full.
+
+    WHY CLOCK-ALIGNED SLOTS AND NOT "TWO HOURS SINCE THE LAST ONE"
+    ==============================================================
+    A watermark -- send, remember when, send again two hours later -- needs
+    somewhere to remember it, and the obvious place is the notifications table.
+    But an empty window sends nothing, so there would be no row to remember it
+    by, and the window would go on growing until something finally moved: the
+    reader would be told "9 rooms changed in the last 14 hours" on a Tuesday
+    morning because the market was quiet overnight. Keeping the watermark
+    somewhere else makes a worker that died mid-window skip one.
+
+    Slots aligned to midnight in the deployment timezone need no memory at all.
+    Every tick computes the same window from the clock, and the dedupe key IS
+    the window, so the unique index turns however many ticks land in one slot
+    into exactly one message. A worker down for six hours comes back and sends
+    the current slot, having lost the ones it slept through -- which is the
+    honest outcome, because nobody was there to read them and the movement is
+    all still on the dashboard.
+
+    The window named is the one actually covered, so the short final slot of a
+    day that the interval does not divide evenly says so rather than rounding.
+    """
+    interval = monitoring_service.summary_interval_hours()
+    if interval <= 0:
+        return {"notifications": 0}
+
+    now = datetime.now(UTC)
+    window_start, window_end = _last_closed_window(now, interval)
+    created: list[int] = []
+
+    with sync_session() as session:
+        changes = session.execute(
+            select(PriceChange).where(
+                PriceChange.changed_at >= window_start,
+                PriceChange.changed_at < window_end,
+            )
+        ).scalars().all()
+        if not changes:
+            # Nothing moved. Deliberately silent: a message saying so every two
+            # hours around the clock is a paid WhatsApp that teaches its reader
+            # to ignore the number.
+            return {"notifications": 0}
+
+        hotel_ids = {c.hotel_id for c in changes}
+        assignments = _assignments_for(session, hotel_ids)
+        if not assignments:
+            return {"notifications": 0}
+
+        recipient_ids = {r for links in assignments.values() for r in links}
+        recipients = {
+            r.id: r
+            for r in session.execute(
+                select(Recipient).where(
+                    Recipient.id.in_(recipient_ids), Recipient.is_active.is_(True)
+                )
+            ).scalars()
+        }
+        links = _links_by_pair(session, hotel_ids)
+        hotels = {
+            h.id: h
+            for h in session.execute(
+                select(Hotel).where(Hotel.id.in_(hotel_ids))
+            ).scalars()
+        }
+        lines_by_change = _render_lines(session, changes, hotels)
+        facts_by_id = {c.id: _facts_for(c) for c in changes}
+
+        # recipient -> the changes that earned a place in their summary, and
+        # the channels to send it on.
+        #
+        # Grouped by PERSON, not by hotel. The message answers "how busy was
+        # the last two hours", and that question is about everything they
+        # watch: four properties moving produces one message saying four rooms
+        # changed, not four messages each saying one did. The per-change alert
+        # is the one that speaks per hotel, and it still does.
+        pending: dict[int, list[int]] = {}
+        channels: dict[int, list[str]] = {}
+
+        batches = group_for_digest(list(facts_by_id.values()), assignments)
+        for (recipient_id, hotel_id), batch_ids in batches.items():
+            recipient = recipients.get(recipient_id)
+            link = links.get((hotel_id, recipient_id))
+            if recipient is None or link is None or not link.is_active:
+                continue
+            # The same threshold the immediate alert applied. A summary that
+            # counted moves the reader was never told about would disagree with
+            # their own inbox, and the inbox is what they trust.
+            kept = [
+                cid
+                for cid in batch_ids
+                if passes_recipient_threshold(
+                    facts_by_id[cid], link.min_delta_abs, link.min_delta_pct
+                )
+            ]
+            if not kept:
+                continue
+
+            pending.setdefault(recipient_id, []).extend(kept)
+            # Unioned in order, not replaced. The same person can hold email on
+            # one property and email+WhatsApp on another, and the one message
+            # covering both has to go everywhere either assignment asked for --
+            # dropping a channel here would silence a number that was reaching
+            # them yesterday.
+            bucket = channels.setdefault(recipient_id, [])
+            for channel in link.channels or ["email"]:
+                if channel not in bucket:
+                    bucket.append(channel)
+
+        hours = _window_hours(window_start, window_end)
+
+        for recipient_id, change_ids in pending.items():
+            recipient = recipients[recipient_id]
+            ids = sorted(set(change_ids))
+            message = render_summary(
+                [lines_by_change[cid] for cid in ids if cid in lines_by_change],
+                window_hours=hours,
+                when=now,
+                param_count=_comparison_param_count(),
+            )
+            for channel in channels[recipient_id]:
+                notification_id = _create_notification(
+                    session,
+                    recipient=recipient,
+                    # No hotel. The message is about a window across everything
+                    # this person watches, and filing it under whichever
+                    # property moved first would put one property's name on a
+                    # count that is not only about it.
+                    hotel_id=None,
+                    channel=channel,
+                    change_ids=ids,
+                    subject=message.subject,
+                    body=message.text,
+                    now=now,
+                    kind=MARKET_COMPARISON,
+                    dedupe=summary_dedupe_key(recipient.id, channel, window_start),
+                )
+                if notification_id is not None:
+                    created.append(notification_id)
+
+        change_count = len(changes)
+
+    for notification_id in created:
+        send_notification.apply_async(args=[notification_id], queue="notify")
+
+    log.info(
+        "market_summary_queued",
+        count=len(created),
+        changes=change_count,
+        window_start=window_start.isoformat(),
+        hours=hours,
+    )
+    return {"notifications": len(created)}
+
+
+def _last_closed_window(now: datetime, interval: int) -> tuple[datetime, datetime]:
+    """The most recent complete slot, aligned to midnight in the local zone.
+
+    Aligned to midnight rather than to the epoch so the slots are ones a person
+    would name: an interval of two puts a message at 8, 10 and 12, rather than
+    at 7:38 because that is when the worker happened to start.
+
+    An interval that does not divide 24 leaves a short final slot before
+    midnight. It is reported honestly -- the message names the hours it
+    actually covers, not the configured interval. See ``_moved_headline``.
+    """
+    zone = _zone(get_settings().timezone)
+    local = now.astimezone(zone)
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    elapsed = int((local - midnight).total_seconds() // 3600)
+    boundary = (elapsed // interval) * interval
+
+    if boundary == 0:
+        # Before today's first boundary, so the last closed slot is yesterday's
+        # final one. Measured back from midnight rather than assumed to be a
+        # whole interval long: when the interval does not divide 24 that slot
+        # is short, and claiming otherwise would name hours it did not cover.
+        whole = (24 // interval) * interval
+        start = midnight - timedelta(hours=24 - whole or interval)
+        return start.astimezone(UTC), midnight.astimezone(UTC)
+
+    end = midnight + timedelta(hours=boundary)
+    return (end - timedelta(hours=interval)).astimezone(UTC), end.astimezone(UTC)
+
+
+def _window_hours(start: datetime, end: datetime) -> int:
+    """How long the window actually was, in whole hours, at least one."""
+    return max(1, round((end - start).total_seconds() / 3600))
+
+
 def _create_notification(
     session: Session,
     *,
@@ -218,6 +444,7 @@ def _create_notification(
     subject: str,
     body: str,
     now: datetime,
+    kind: str = PRICE_CHANGE,
     dedupe: str | None = None,
 ) -> int | None:
     """Insert the notification row, honouring quiet hours and the dedupe key.
@@ -255,6 +482,7 @@ def _create_notification(
         hotel_id=hotel_id,
         channel=channel,
         provider=provider.provider_name,
+        kind=kind,
         dedupe_key=dedupe or dedupe_key(recipient.id, channel, change_ids),
         price_change_ids=change_ids,
         subject=subject[:300],
@@ -263,20 +491,36 @@ def _create_notification(
         created_at=now,
         scheduled_for=scheduled_for,
     )
-    session.add(notification)
+    # Read BEFORE the insert is attempted. A failed flush rolls the transaction
+    # back, and every attribute on every instance in the session is expired --
+    # so reading recipient.id in the except block below fires a lazy load
+    # against a transaction that can no longer run one, and PendingRollbackError
+    # replaces the duplicate we were handling.
+    recipient_id = recipient.id
+
     try:
-        # Savepoint: a duplicate must not poison the surrounding transaction,
-        # which still has the other recipients' rows to write.
+        # BOTH the add and the flush inside the savepoint. Session.begin_nested()
+        # flushes anything already pending as it takes its snapshot, so an add()
+        # placed above this line is written on the OUTER transaction and the
+        # savepoint never covers it -- a duplicate then poisons the surrounding
+        # transaction instead of being caught here, and every later recipient in
+        # the same run is lost with it.
+        #
+        # Rarely reached from dispatch_changes, which only sees a duplicate on a
+        # Celery retry. The market summary reaches it on every tick: the task
+        # keeps no state and re-offers the same window until one message is
+        # written, so this IS the mechanism that stops a second send.
         with session.begin_nested():
+            session.add(notification)
             session.flush()
     except IntegrityError:
-        log.info("notification_deduplicated", recipient_id=recipient.id, channel=channel)
+        log.info("notification_deduplicated", recipient_id=recipient_id, channel=channel)
         return None
 
     if scheduled_for is not None:
         log.info(
             "notification_held_for_quiet_hours",
-            recipient_id=recipient.id,
+            recipient_id=recipient_id,
             release_at=scheduled_for.isoformat(),
         )
         return None
@@ -658,14 +902,20 @@ def _rebuild_message(session: Session, notification: Notification, subject: str,
     Rebuilt from the change ids rather than stored per channel, so a template
     fix applies to a message that has been sitting in a quiet-hours hold since
     last night.
+
+    ``notification.kind`` decides which message is rebuilt, and it is read off
+    the row rather than from the setting. A summary queued at 11 PM must be
+    released at 7 AM as a summary even if somebody set the interval to zero in
+    between -- and it must reach WhatsApp on the template it was queued for,
+    because the other one would take its parameters and mean something else.
     """
     changes = session.execute(
         select(PriceChange).where(PriceChange.id.in_(notification.price_change_ids))
     ).scalars().all()
     if not changes:
-        from app.notifications.base import RenderedMessage
-
-        return RenderedMessage(subject=subject, text=body, html=None)
+        return RenderedMessage(
+            subject=subject, text=body, html=None, kind=notification.kind
+        )
 
     hotels = {
         h.id: h
@@ -673,11 +923,74 @@ def _rebuild_message(session: Session, notification: Notification, subject: str,
             select(Hotel).where(Hotel.id.in_({c.hotel_id for c in changes}))
         ).scalars()
     }
+
+    if notification.kind == MARKET_COMPARISON:
+        return _rebuild_summary(session, notification, changes, hotels, subject, body)
+
     lines = _render_lines(session, changes, hotels)
     hotel_name = hotels[changes[0].hotel_id].name if changes[0].hotel_id in hotels else "Hotel"
     return render_digest(
         hotel_name, [lines[c.id] for c in changes], when=notification.created_at
     )
+
+
+def _rebuild_summary(
+    session: Session,
+    notification: Notification,
+    changes: list[PriceChange],
+    hotels: dict[int, Hotel],
+    subject: str,
+    body: str,
+):
+    """The market summary again, for a message about to be sent.
+
+    Replayed from the row rather than recounted. Those changes happened inside
+    a window that closed hours ago and nothing can alter them now, so a summary
+    released at 7 AM still says what the 11 PM window contained -- not what has
+    moved since.
+
+    Falls back to the stored text when the changes are gone. The stored body is
+    the audit record of what was said when this was queued, so email still
+    carries something true; WhatsApp will refuse it for want of template
+    parameters, which is the honest outcome, because there is nothing to put in
+    them.
+    """
+    lines = _render_lines(session, changes, hotels)
+    moved = [lines[c.id] for c in sorted(changes, key=lambda c: c.id) if c.id in lines]
+    if not moved:
+        log.warning("market_summary_rebuild_empty", notification_id=notification.id)
+        return RenderedMessage(
+            subject=subject, text=body, html=None, kind=MARKET_COMPARISON
+        )
+
+    # The window this row reported, recovered from when it was written. The
+    # task queues a summary on the first tick AFTER a window closes, so the
+    # last closed window at ``created_at`` is the one that was reported.
+    interval = monitoring_service.summary_interval_hours() or 1
+    window_start, window_end = _last_closed_window(notification.created_at, interval)
+
+    return render_summary(
+        moved,
+        window_hours=_window_hours(window_start, window_end),
+        when=notification.created_at,
+        param_count=_comparison_param_count(),
+    )
+
+
+def _comparison_param_count() -> int:
+    """How many body variables the approved market-summary template has.
+
+    Read here rather than in the renderer, which stays pure. Two of them are
+    fixed and every one above those carries more of the moves, so this number
+    decides how many changed rooms fit on WhatsApp -- email and the stored text
+    always carry all of them.
+
+    Floored at the minimum: a count below it leaves no slot for a move at all,
+    and a summary with nothing in it is worse than the mismatch error the
+    provider would otherwise raise.
+    """
+    configured = get_settings().whatsapp_comparison_template_params
+    return max(WHATSAPP_COMPARISON_MIN_PARAMS, int(configured))
 
 
 def _facts_for(change: PriceChange) -> ChangeFacts:

@@ -268,3 +268,25 @@ class AlertDefaults(Base, TimestampMixin):
         Boolean, default=False, server_default=false(), nullable=False
     )
 
+    #: How often the market summary goes out, in hours. ``0`` means never.
+    #:
+    #: Every N hours the worker closes a window and sends ONE message per
+    #: recipient: how many rooms changed in that window, which rooms and by how
+    #: much, and where the portfolio now sits against the market. It is a
+    #: separate message from the per-change alert and does not replace it -- a
+    #: move that clears the thresholds above is still sent the moment it is
+    #: confirmed. This is the reading somebody opens at 4 PM to set tomorrow's
+    #: rate, not the thing that tells them a room moved.
+    #:
+    #: A window with nothing in it sends nothing. Silence here means no room
+    #: moved, and a message saying so every two hours around the clock would be
+    #: a paid WhatsApp message teaching its reader to ignore the number.
+    #:
+    #: Deployment-wide rather than per recipient, because it is one operating
+    #: decision about how often this account reads the market, and a deployment
+    #: where half the recipients are on a two-hour cadence and half on six is a
+    #: deployment where nobody can be told when the summary arrives.
+    summary_interval_hours: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+

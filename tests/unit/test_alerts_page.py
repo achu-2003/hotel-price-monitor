@@ -688,6 +688,79 @@ def recipients_table(page: str) -> str:
     return page[start:page.index("</table>", start)]
 
 
+class TestTheMarketSummaryInterval:
+    """How often the market summary goes out, as a number on the page.
+
+    A number and not a switch, and that distinction is what this class pins.
+    Every other control on Settings decides whether a message is sent at all;
+    this one adds a message that arrives on a clock whether or not anything
+    above it was triggered, so the page has to say what the number means --
+    including that 0 means never and that a quiet window is silent rather than
+    broken.
+
+    One of the two channels cannot carry the message until a second template is
+    approved, so the page says so before the interval is set, not after a row
+    of failed sends.
+    """
+
+    def _panel(self, page: str) -> str:
+        """The whole section, not just the form. What the number MEANS is the
+        prose around the box, and a test that read only the input would pass
+        against a page that had lost every word of it."""
+        start = page.index("<h2>Market summary</h2>")
+        return page[start:page.index("</section>", start)]
+
+    def test_it_is_a_bounded_number_not_a_switch(self):
+        """Bounded on the input as well as in the schema. Below an hour this
+        stops being a summary and becomes the per-change alert with extra
+        steps; above a day it stops being about what moved recently."""
+        panel = self._panel(render(alert_defaults=_defaults()))
+        assert 'type="number"' in panel
+        assert 'name="summary_interval_hours"' in panel
+        assert 'min="0"' in panel and 'max="24"' in panel
+
+    def test_the_stored_interval_is_what_the_box_shows(self):
+        """The box IS the stored value. A page that renders a default over a
+        configured 6 would have somebody save 2 back over it by pressing Save
+        on an unrelated part of the form."""
+        panel = self._panel(render(alert_defaults=_defaults(hours=6)))
+        assert 'value="6"' in panel
+
+    def test_off_is_shown_as_zero_rather_than_as_an_empty_box(self):
+        """An empty box reads as "not loaded yet" and invites a guess. 0 is a
+        value, and the panel says what it means."""
+        panel = self._panel(render(alert_defaults=_defaults(hours=0)))
+        assert 'value="0"' in panel
+        assert "0 turns it off" in panel
+
+    def test_a_quiet_window_is_documented_as_silent(self):
+        """Otherwise the first quiet evening reads as a broken schedule, and
+        the fix somebody reaches for is to lower the interval."""
+        panel = self._panel(render(alert_defaults=_defaults(hours=2)))
+        assert "sends nothing" in panel
+
+    def test_it_says_the_per_change_alerts_are_unaffected(self):
+        """The summary is a second message, not a replacement. Read as a
+        replacement, an operator sets it and waits two hours for a move they
+        were already being told about immediately."""
+        panel = self._panel(render(alert_defaults=_defaults(hours=2)))
+        assert "does not replace" in panel
+
+    def test_an_unapproved_whatsapp_template_is_warned_about_up_front(self):
+        """Discovered here or discovered as failed sends on the Alerts page.
+        The first is a sentence; the second is an outage nobody reported."""
+        panel = self._panel(
+            render(alert_defaults=_defaults(), comparison_whatsapp_ready=False)
+        )
+        assert "second approved template" in panel
+
+    def test_no_warning_once_the_template_is_configured(self):
+        panel = self._panel(
+            render(alert_defaults=_defaults(), comparison_whatsapp_ready=True)
+        )
+        assert "second approved template" not in panel
+
+
 class TestTheDisplayedPriceSwitch:
     """A switch, not a checkbox with a Save beside it.
 
@@ -770,11 +843,11 @@ class TestTheDisplayedPriceSwitch:
         assert "checked" not in box_off
 
 
-def _defaults(*, with_tax: bool = False):
+def _defaults(*, with_tax: bool = False, hours: int = 0):
     return SimpleNamespace(
         min_delta_abs=Decimal("50.00"), min_delta_pct=Decimal("2.00"),
         confirm_checks=2, cheapest_room=None, dearest_room=None,
-        show_prices_with_tax=with_tax,
+        show_prices_with_tax=with_tax, summary_interval_hours=hours,
     )
 
 
@@ -829,8 +902,8 @@ class TestTheTemplateItselfIsWellFormed:
         starts answering with the wrong one."""
         page = render(history=_history(), alert_defaults=_defaults())
 
-        for heading in ("Alert sensitivity", "Displayed prices", "Stored history",
-                        "WhatsApp alert numbers", "Recipients"):
+        for heading in ("Alert sensitivity", "Displayed prices", "Market summary",
+                        "Stored history", "WhatsApp alert numbers", "Recipients"):
             assert page.count(f"<h2>{heading}</h2>") == 1, heading
 
     def test_no_id_is_used_twice(self):

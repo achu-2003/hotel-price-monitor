@@ -27,10 +27,10 @@ import httpx
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.notifications.base import (
-    WHATSAPP_TEMPLATE_PARAM_COUNT,
     Destination,
     RenderedMessage,
     SendResult,
+    whatsapp_template_for,
 )
 
 log = get_logger("notify.whatsapp")
@@ -75,28 +75,50 @@ class WhatsAppCloudProvider:
                 error_detail="Recipient has no E.164 phone number", retryable=False,
             )
 
+        # Which approved template carries THIS message, and how many variables
+        # it was approved with. A price move and a market comparison are two
+        # templates; see ``base.whatsapp_template_for``.
+        template, expected = whatsapp_template_for(message.kind, settings)
+        if not template:
+            # The comparison template has not been approved on this deployment
+            # yet. Refused rather than sent through the other one: a comparison
+            # in the price-change template's slots is accepted by Meta, paid
+            # for, and delivered reading like an alert about a room that never
+            # moved.
+            log.warning("whatsapp_template_not_configured", kind=message.kind)
+            return SendResult(
+                ok=False,
+                error_code="template_not_configured",
+                error_detail=(
+                    f"No approved WhatsApp template is configured for "
+                    f"{message.kind!r} messages"
+                ),
+                retryable=False,
+            )
+
         # Deliberately no fallback to a single-parameter send. The approved
-        # template has seven body variables, so any other count is rejected
-        # with 132000 -- which is permanent, so the message is paid for, lost,
-        # and never retried. Refusing here costs nothing and says why.
+        # template has a fixed number of body variables, so any other count is
+        # rejected with 132000 -- which is permanent, so the message is paid
+        # for, lost, and never retried. Refusing here costs nothing and says
+        # why.
         #
         # This is reachable: a notification whose price_change rows were
         # deleted rebuilds with no template params at all, and so does any
         # message that is not about a price change.
         params = message.template_params or []
-        if len(params) != WHATSAPP_TEMPLATE_PARAM_COUNT:
+        if len(params) != expected:
             log.error(
                 "whatsapp_param_count_mismatch",
-                template=settings.whatsapp_template_name,
-                expected=WHATSAPP_TEMPLATE_PARAM_COUNT,
+                template=template,
+                expected=expected,
                 got=len(params),
             )
             return SendResult(
                 ok=False,
                 error_code="template_params",
                 error_detail=(
-                    f"Template {settings.whatsapp_template_name!r} takes "
-                    f"{WHATSAPP_TEMPLATE_PARAM_COUNT} parameters, got {len(params)}"
+                    f"Template {template!r} takes {expected} parameters, "
+                    f"got {len(params)}"
                 ),
                 retryable=False,
             )
@@ -110,7 +132,7 @@ class WhatsAppCloudProvider:
             "to": destination.phone_e164.lstrip("+"),
             "type": "template",
             "template": {
-                "name": settings.whatsapp_template_name,
+                "name": template,
                 "language": {"code": settings.whatsapp_template_lang},
                 "components": [
                     {

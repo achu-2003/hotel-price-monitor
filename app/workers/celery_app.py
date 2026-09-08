@@ -89,6 +89,20 @@ celery_app.conf.update(
             "schedule": 300.0,
             "options": {"expires": 280},
         },
+        # Ticks far more often than it sends. The interval it honours lives in
+        # alert_defaults and is edited on Settings, and beat_schedule is fixed
+        # at import: a schedule of N*3600 could not follow a number somebody
+        # changes on a page without restarting this process. So the task wakes
+        # every five minutes, works out the last closed window itself, and does
+        # nothing at all unless one has just closed.
+        #
+        # Sending twice inside one window is prevented by the dedupe key rather
+        # than by the cadence -- see notify.market_summary.
+        "market-summary": {
+            "task": "notify.market_summary",
+            "schedule": 300.0,
+            "options": {"expires": 280},
+        },
         "sweep-stale-targets": {
             "task": "maintenance.alert_on_silence",
             "schedule": 900.0,

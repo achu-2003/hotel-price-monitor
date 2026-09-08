@@ -69,10 +69,10 @@ import httpx
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.notifications.base import (
-    WHATSAPP_TEMPLATE_PARAM_COUNT,
     Destination,
     RenderedMessage,
     SendResult,
+    whatsapp_template_for,
 )
 
 log = get_logger("notify.whatsapp.mydreams")
@@ -144,24 +144,46 @@ class MyDreamsWhatsAppProvider:
                 error_detail="Recipient has no E.164 phone number", retryable=False,
             )
 
+        # Which approved template carries THIS message. Resolved through the
+        # same chokepoint as the Meta path, so the two transports cannot come
+        # to disagree about which template a comparison belongs in.
+        template, expected = whatsapp_template_for(message.kind, settings)
+        if not template:
+            log.warning("whatsapp_template_not_configured", kind=message.kind)
+            return SendResult(
+                ok=False,
+                error_code="template_not_configured",
+                error_detail=(
+                    f"No approved WhatsApp template is configured for "
+                    f"{message.kind!r} messages"
+                ),
+                retryable=False,
+            )
+
         # Same contract as the Meta path, and refused for the same reason: the
         # approved template has a fixed number of variables, so any other count
         # is a message that is paid for and lands wrong. Reachable whenever a
         # notification rebuilds with no price_change rows behind it.
+        #
+        # The reseller validates NEITHER -- it answers Success for a template
+        # that does not exist and for any parameter count at all (see the
+        # module docstring) -- so this check is the only thing standing between
+        # a drift here and a message that is accepted, charged for, and
+        # rejected silently at Meta with no callback to report it.
         params = message.template_params or []
-        if len(params) != WHATSAPP_TEMPLATE_PARAM_COUNT:
+        if len(params) != expected:
             log.error(
                 "whatsapp_param_count_mismatch",
-                template=settings.whatsapp_template_name,
-                expected=WHATSAPP_TEMPLATE_PARAM_COUNT,
+                template=template,
+                expected=expected,
                 got=len(params),
             )
             return SendResult(
                 ok=False,
                 error_code="template_params",
                 error_detail=(
-                    f"Template {settings.whatsapp_template_name!r} takes "
-                    f"{WHATSAPP_TEMPLATE_PARAM_COUNT} parameters, got {len(params)}"
+                    f"Template {template!r} takes {expected} parameters, "
+                    f"got {len(params)}"
                 ),
                 retryable=False,
             )
@@ -172,7 +194,7 @@ class MyDreamsWhatsAppProvider:
             # The reseller wants a bare country-code-prefixed number, as in
             # 919876543210 -- the E.164 '+' is not accepted.
             "Contact": destination.phone_e164.lstrip("+"),
-            "Template": settings.whatsapp_template_name,
+            "Template": template,
             "Param": ",".join(_param_safe(p) for p in params),
         }
 

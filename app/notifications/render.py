@@ -12,14 +12,41 @@ Two rules shape everything here:
 * **The message says what changed and by how much, in that order.** Someone
   reading this on a phone at 5:30 PM needs the hotel, the room, and the new
   price before anything else.
+
+TWO MESSAGES, TWO TRIGGERS
+==========================
+:func:`render_digest` answers "what just moved?" -- one hotel, the rooms that
+changed, the deltas. It is sent the moment a change is confirmed.
+
+:func:`render_summary` answers "what moved this window?" -- how many rooms
+changed price in the last N hours, which ones, and by how much. It is sent on
+a clock, every ``summary_interval_hours``, and never in response to a single
+change.
+
+Neither replaces the other and both go out. A delta is the right message when
+one room moves at 2 AM; a counted window is the right message when somebody
+sits down at 4 PM and wants to know whether the afternoon was busy. They are
+different jobs, not different amounts of detail.
+
+NEITHER OF THEM CARRIES THE COMPARISON GRID
+===========================================
+Where a rate sits against the market is a third question, asked at a different
+moment, and /comparison answers it on a screen with room for a table. Printing
+every room of every property beside four moves buries the four.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
-from app.notifications.base import ChangeLine, RenderedMessage
+from app.notifications.base import (
+    MARKET_COMPARISON,
+    WHATSAPP_COMPARISON_MIN_PARAMS,
+    ChangeLine,
+    RenderedMessage,
+)
 
 _IST = "Asia/Kolkata"
 
@@ -299,3 +326,258 @@ def _esc(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+# ── the market summary message ───────────────────────────────────────
+#: Longest one WhatsApp template variable may be before the providers cut it.
+#:
+#: Both cap at 700 characters and end a too-long value with an ellipsis. That
+#: is the right behaviour for a scraped room name and the wrong one for a list
+#: of price moves: the reader cannot tell a window that ended at four rooms
+#: from one that was cut off there. So the renderer works to a smaller figure
+#: and does its own trimming, at a property boundary, saying how many it left
+#: out.
+_WHATSAPP_PARAM_BUDGET = 620
+
+#: Separates one property from the next inside a single template variable.
+#: Not a comma: the My Dreams reseller splits parameters on commas, so a comma
+#: here would shift every later variable into the wrong slot.
+_SEGMENT = " • "
+
+#: How many of the template's variables are NOT moved rooms: the count with
+#: its window, and the time. Everything between them carries the moves.
+_FIXED_PARAMS = 2
+
+#: What goes in a slot the window did not fill.
+#:
+#: Never an empty string -- Meta rejects an empty variable as 132005, which is
+#: permanent, so a quiet window would become an undeliverable alert. Words
+#: rather than a dash, because a dash on a line of its own reads as a line that
+#: failed to render rather than as a line with nothing to say.
+_UNUSED_SLOT = "(no further changes)"
+
+
+def render_summary(
+    moved: Sequence[ChangeLine],
+    *,
+    window_hours: int = 0,
+    when: datetime | None = None,
+    param_count: int = WHATSAPP_COMPARISON_MIN_PARAMS,
+) -> RenderedMessage:
+    """How many rooms moved in the window, which ones, and by how much.
+
+    Two things, in the order somebody reads them: the count, then the moves.
+
+    The count leads because it is the question the message answers. "Four rooms
+    moved in the last two hours" is a decision on its own -- on a quiet evening
+    it says the market is asleep and nothing needs doing, and that is worth
+    knowing before a single figure is read.
+
+    WHAT THIS DELIBERATELY DOES NOT CARRY
+    =====================================
+    The comparison grid. A message about a window is about what CHANGED in it,
+    and printing every room of every property alongside four moves buries the
+    four -- the reader has to find them in a table that is mostly rows saying
+    nothing happened. Where a rate sits against the market is a different
+    question, it is asked at a different moment, and /comparison answers it on
+    a screen with room for a table.
+
+    ``param_count`` is how many body variables the approved WhatsApp template
+    has, which the caller reads from configuration. It affects the WhatsApp
+    parameters ONLY -- the text and the HTML always carry every move, because
+    neither channel has a variable to overflow.
+
+    Nothing here touches a database or a clock except through ``when``.
+    """
+    stamp = checked_at_ist(when)
+    headline = _moved_headline(len(moved), window_hours)
+
+    return RenderedMessage(
+        subject=headline,
+        text=_summary_text(headline, moved, stamp),
+        html=_summary_html(headline, moved, stamp),
+        template_params=_summary_params(headline, moved, stamp, param_count),
+        kind=MARKET_COMPARISON,
+    )
+
+
+def _moved_headline(count: int, window_hours: int) -> str:
+    """"4 rooms changed price in the last 2 hours" — the message in one line.
+
+    Both halves are pluralised rather than written "room(s)": this is the
+    subject line and the first WhatsApp variable, the two places a reader
+    decides whether to open anything, and a message that cannot conjugate is a
+    message that looks automated enough to ignore.
+
+    The window is the one actually covered, not the configured interval. A
+    worker that was down for six hours sends a six-hour window on its next
+    tick, and saying "the last 2 hours" over six hours of movement would be a
+    wrong number stated confidently -- which is the failure this whole system
+    exists to prevent.
+    """
+    rooms = "room" if count == 1 else "rooms"
+    if window_hours <= 0:
+        return f"{count} {rooms} changed price"
+    hours = "hour" if window_hours == 1 else "hours"
+    return f"{count} {rooms} changed price in the last {window_hours} {hours}"
+
+
+def _by_hotel(moved: Sequence[ChangeLine]) -> dict[str, list[ChangeLine]]:
+    """The moves grouped under the property each belongs to.
+
+    Grouped because a window can span four properties, and a flat list repeats
+    the property name on every line -- the wrapping that made the per-hotel
+    digest unreadable on a phone before it grouped too.
+    """
+    out: dict[str, list[ChangeLine]] = {}
+    for line in moved:
+        out.setdefault(line.hotel_name, []).append(line)
+    return out
+
+
+def _summary_text(headline: str, moved: Sequence[ChangeLine], stamp: str) -> str:
+    """The plain-text body: the count, then a block per property."""
+    lines = [f"📊 {headline}", ""]
+
+    for hotel, rooms in _by_hotel(moved).items():
+        lines.append(hotel)
+        for line in rooms:
+            lines.append(f"  {_headline(line)}")
+            lines.append(f"      {_stay(line)}")
+        lines.append("")
+
+    if not moved:
+        # Defensive. A window with nothing in it never produces a message at
+        # all, so reaching here means the moves were lost between the query and
+        # the render -- which must say so rather than print a bare count.
+        lines.append("(no change was recorded in this window)")
+        lines.append("")
+
+    lines.append(f"Checked: {stamp}")
+    return "\n".join(lines)
+
+
+def _summary_params(
+    headline: str,
+    moved: Sequence[ChangeLine],
+    stamp: str,
+    param_count: int = WHATSAPP_COMPARISON_MIN_PARAMS,
+) -> list[str]:
+    """Positional variables for the market-summary WhatsApp template.
+
+    Two are fixed and everything between them carries the moves, so a
+    five-variable template lays out as::
+
+        {{1}} how many moved, over what window
+        {{2}} {{3}} {{4}} the rooms that moved
+        {{5}} time
+
+    and a seven-variable one puts moves in {{2}} through {{6}}. The order is a
+    contract with whatever Meta approved, which is why the fixed two sit at the
+    ends: a bigger template is the same message with more room in it, not a
+    different message.
+
+    A template variable cannot contain a newline -- Meta rejects it as 132005 --
+    so the moves arrive as run-on text. Properties are separated by a bullet
+    and rooms by a semicolon, which survives both transports; a comma would not
+    (see the My Dreams provider).
+    """
+    slots = max(1, param_count - _FIXED_PARAMS)
+
+    segments = [
+        f"{hotel}: " + "; ".join(_headline(line) for line in rooms)
+        for hotel, rooms in _by_hotel(moved).items()
+    ]
+    packed, dropped = _fit(segments, slots, _WHATSAPP_PARAM_BUDGET)
+
+    if dropped:
+        # Said in the count rather than appended to a slot, so the sentence the
+        # reader trusts most is the one that admits what is missing.
+        headline += f" ({dropped} more on the dashboard)"
+
+    return [headline, *packed, stamp]
+
+
+def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
+    """Pack whole properties into ``slots`` variables, and say how many did not.
+
+    Trimmed at a property boundary and never mid-figure. A rate cut in half by
+    a character count is a wrong number presented as a right one, which is the
+    one thing these messages may not do -- and it is exactly what the providers'
+    own 700-character ellipsis would do if this did not run first.
+
+    A property longer than the whole budget is still kept rather than skipped:
+    the provider will shorten that one, and a variable reading "…" is better
+    than an empty one, which Meta rejects outright as 132005. Keeping it also
+    guarantees progress, so a single enormous room name cannot stall the loop.
+
+    Slots the window did not fill carry ``_UNUSED_SLOT`` for the same reason:
+    every variable the template declares must arrive, and must not be empty.
+    """
+    if not segments:
+        return ["no room changed price in this window",
+                *([_UNUSED_SLOT] * (slots - 1))], 0
+
+    filled: list[str] = []
+    index = 0
+    while len(filled) < slots and index < len(segments):
+        kept: list[str] = []
+        used = 0
+        while index < len(segments):
+            segment = segments[index]
+            cost = len(segment) + (len(_SEGMENT) if kept else 0)
+            if kept and used + cost > budget:
+                break
+            kept.append(segment)
+            used += cost
+            index += 1
+        filled.append(_SEGMENT.join(kept))
+
+    dropped = len(segments) - index
+    filled.extend([_UNUSED_SLOT] * (slots - len(filled)))
+    return filled, dropped
+
+
+def _summary_html(headline: str, moved: Sequence[ChangeLine], stamp: str) -> str:
+    """The count, then every move, grouped by property.
+
+    Email carries all of them -- the WhatsApp slots have a hard ceiling and
+    email has none, and a reader who opens the email is the one who wanted the
+    detail the message could not carry.
+
+    Table-based and inline-styled for the same reason ``_render_html`` is:
+    Outlook.
+    """
+    blocks = []
+    for hotel, rooms in _by_hotel(moved).items():
+        items = "".join(
+            f'<li style="margin:8px 0">{_esc(_headline(line))}'
+            f'<div style="color:#6b7280;font-size:12px">{_esc(_stay(line))}</div></li>'
+            for line in rooms
+        )
+        blocks.append(
+            f'<div style="margin:16px 0 0"><div style="font-weight:600">{_esc(hotel)}</div>'
+            f'<ul style="margin:6px 0 0;padding-left:18px;font-size:14px">{items}</ul></div>'
+        )
+
+    body = "".join(blocks) or (
+        '<p style="margin:0;color:#b45309;font-size:13px">No change was recorded '
+        "in this window.</p>"
+    )
+
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f9fafb;
+font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827">
+  <table role="presentation" width="100%" style="max-width:640px;margin:0 auto;
+    background:#ffffff;border:1px solid #e5e7eb;border-radius:8px" cellpadding="0" cellspacing="0">
+    <tr><td style="padding:20px 24px;border-bottom:1px solid #e5e7eb">
+      <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280">
+        Market update</div>
+      <div style="font-size:20px;font-weight:700;margin-top:4px">{_esc(headline)}</div>
+    </td></tr>
+    <tr><td style="padding:8px 24px 20px">{body}</td></tr>
+    <tr><td style="padding:16px 24px;color:#6b7280;font-size:12px;border-top:1px solid #e5e7eb">
+      Checked {_esc(stamp)} · Hotel Price Monitor
+    </td></tr>
+  </table>
+</body></html>"""

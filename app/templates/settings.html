@@ -128,6 +128,94 @@
   </div>
 </section>
 
+{#
+  HOW OFTEN THE MARKET IS SUMMARISED, AS OPPOSED TO WHAT EARNS AN ALERT
+  =====================================================================
+  Its own full-width section rather than a fourth column above, because the
+  number needs the explanation underneath it: every other setting on this page
+  decides whether a message is sent at all, and this one adds a message that
+  arrives whether or not anything above it was triggered.
+
+  Below sensitivity and displayed prices in the source, because it is the
+  third question in the order they are actually asked -- how big a move
+  matters, which number we read, and then how often we want the whole picture.
+#}
+<section>
+  <h2>Market summary</h2>
+  <p class="muted">
+    A separate message on a clock: how many rooms changed price in the last
+    few hours, which ones, and by how much. It does not replace the alerts
+    above &mdash; a move that clears the sensitivity is still sent the moment
+    it is confirmed. This is the one that says whether the afternoon was busy.
+    Where those rates sit against the market is a different question, and
+    <a href="/comparison">comparison</a> answers it.
+  </p>
+
+  <form class="panel stack summary-interval-form" id="summary-interval">
+    <div class="field-row">
+      <label for="summary_interval_hours">Send a summary every</label>
+      {# A number rather than a set of preset buttons. Two hours is what this
+         deployment asked for, six is what a quieter one will want, and a
+         control that offers three choices is a control somebody has to come
+         back and widen. Bounded in the schema as well as here: below an hour
+         this stops being a summary and becomes the per-change alert with
+         extra steps. #}
+      <input type="number" id="summary_interval_hours" name="summary_interval_hours"
+             min="0" max="24" step="1"
+             value="{{ alert_defaults.summary_interval_hours }}">
+      <span class="muted">hours</span>
+      <button type="submit" class="btn">Save</button>
+      <span class="form-status" role="status"></span>
+    </div>
+
+    <div class="shape-grid">
+    <span class="muted">
+      <strong>0 turns it off</strong>, which is where every deployment starts.
+      Nothing is sent and nothing changes about the per-change alerts.
+    </span>
+    <span class="muted">
+      <strong>A quiet window sends nothing.</strong> Silence means no room
+      moved. A message saying so every two hours around the clock is a paid
+      WhatsApp that teaches its reader to ignore the number.
+    </span>
+    <span class="muted">
+      <strong>Windows are on the clock, not on a stopwatch.</strong> Set to
+      two, summaries cover midnight&ndash;2, 2&ndash;4, and so on, and each one
+      goes out shortly after its window closes &mdash; so the arrival time is
+      the same every day rather than drifting from whenever the worker last
+      restarted.
+    </span>
+    {% if not comparison_whatsapp_ready %}
+    {# ONE CHILD, DELIBERATELY.
+
+       .note is a flex row -- it exists to sit an icon beside a block of text --
+       so every inline child becomes a flex item with a column of its own. This
+       sentence has a <strong>, a <code> and an <a> in it, which laid themselves
+       out as six narrow columns reading as a broken table rather than a
+       warning. Wrapped in one span it is one flex item, and the emphasis is
+       emphasis again instead of a column heading.
+
+       The other notes on this page are written as bare inline content and
+       fragment the same way, less visibly because they carry fewer elements.
+       Copying that here would have been consistency with a bug. #}
+    <p class="note">
+      <span>
+        <strong>WhatsApp needs a second approved template.</strong> The approved
+        price-change template has seven variables describing one room moving,
+        and a counted window covering several cannot be said in them &mdash;
+        Meta rejects the wrong shape permanently, so the message would be paid
+        for and never arrive. Until a market-summary template is approved and
+        named in
+        <code>WHATSAPP_COMPARISON_TEMPLATE_NAME</code>, summaries reach email
+        recipients and are refused on WhatsApp, with the reason on the
+        <a href="/notifications">Alerts</a> page.
+      </span>
+    </p>
+    {% endif %}
+    </div>
+  </form>
+</section>
+
 {% if not channels %}
 {# Nothing below can send. Said once, at the top, rather than as a surprise
    after someone has filled the form in. #}

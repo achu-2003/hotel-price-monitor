@@ -145,6 +145,21 @@ class Notification(Base):
 
     channel: Mapped[str] = mapped_column(String(20), nullable=False)
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    #: What this message is ABOUT -- ``price_change`` or ``market_comparison``.
+    #:
+    #: Stored rather than derived. A message held for quiet hours is rebuilt
+    #: from this row hours later, and the rebuild has to produce the same kind
+    #: of message that was queued: the setting behind it can be switched off in
+    #: between, and a comparison queued at 11 PM must not be released at 7 AM
+    #: as a price-change alert about whichever hotel happened to be first.
+    #:
+    #: It also decides which approved WhatsApp template carries it, so getting
+    #: this wrong is a paid message that lands in the wrong shape rather than a
+    #: cosmetic mislabel.
+    kind: Mapped[str] = mapped_column(
+        String(20), default="price_change", server_default="price_change", nullable=False
+    )
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
 
     price_change_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)

@@ -1779,6 +1779,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         min_delta_pct=stored.min_delta_pct,
         confirm_checks=stored.confirm_checks,
         show_prices_with_tax=stored.show_prices_with_tax,
+        summary_interval_hours=stored.summary_interval_hours,
         cheapest_room=cheapest,
         dearest_room=dearest,
     )

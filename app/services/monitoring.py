@@ -380,9 +380,25 @@ def record_error(
 #: that a fetch of forty rooms does not make forty queries.
 _DEFAULTS_TTL_SECONDS = 60.0
 
-#: (expires_at, thresholds). Module-level, so each worker process keeps its
+@dataclass(frozen=True, slots=True)
+class StoredDefaults:
+    """The whole of the ``alert_defaults`` row that a worker cares about.
+
+    One object rather than a function per column: the row is read on a TTL, and
+    two independently cached readers would make two queries and could answer
+    from two different reads of the same row -- a dispatch that filtered on the
+    new thresholds while deciding the message shape from the old switch.
+    """
+
+    thresholds: Thresholds
+    #: How often the market summary goes out, in hours; 0 means never.
+    #: See ``AlertDefaults.summary_interval_hours``.
+    summary_interval_hours: int = 0
+
+
+#: (expires_at, defaults). Module-level, so each worker process keeps its
 #: own -- there is nothing to coordinate, they all read the same row.
-_cached_defaults: tuple[float, Thresholds] | None = None
+_cached_defaults: tuple[float, StoredDefaults] | None = None
 
 
 def forget_stored_defaults() -> None:
@@ -391,8 +407,8 @@ def forget_stored_defaults() -> None:
     _cached_defaults = None
 
 
-def default_thresholds(settings: Settings | None = None) -> Thresholds:
-    """The global alert sensitivity, for callers with no target in hand.
+def stored_defaults(settings: Settings | None = None) -> StoredDefaults:
+    """The deployment-wide alert settings, read at most once a minute.
 
     Read from ``alert_defaults`` -- one row, edited from Settings -- and only
     from the environment when that table has no row yet, which is the window
@@ -411,10 +427,17 @@ def default_thresholds(settings: Settings | None = None) -> Thresholds:
         return _cached_defaults[1]
 
     settings = settings or get_settings()
-    thresholds = Thresholds(
-        min_delta_abs=Decimal(str(settings.default_min_delta_abs)),
-        min_delta_pct=Decimal(str(settings.default_min_delta_pct)),
-        confirm_checks=settings.default_confirm_checks,
+    defaults = StoredDefaults(
+        thresholds=Thresholds(
+            min_delta_abs=Decimal(str(settings.default_min_delta_abs)),
+            min_delta_pct=Decimal(str(settings.default_min_delta_pct)),
+            confirm_checks=settings.default_confirm_checks,
+        ),
+        # No environment fallback, and deliberately none: the cadence is an
+        # operating decision made on the page, and a deployment whose table has
+        # not been migrated yet has never been asked the question. Never is
+        # what it did yesterday.
+        summary_interval_hours=0,
     )
 
     try:
@@ -424,16 +447,34 @@ def default_thresholds(settings: Settings | None = None) -> Thresholds:
         with sync_session() as session:
             row = session.get(AlertDefaults, 1)
             if row is not None:
-                thresholds = Thresholds(
-                    min_delta_abs=row.min_delta_abs,
-                    min_delta_pct=row.min_delta_pct,
-                    confirm_checks=row.confirm_checks,
+                defaults = StoredDefaults(
+                    thresholds=Thresholds(
+                        min_delta_abs=row.min_delta_abs,
+                        min_delta_pct=row.min_delta_pct,
+                        confirm_checks=row.confirm_checks,
+                    ),
+                    summary_interval_hours=row.summary_interval_hours,
                 )
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("alert_defaults_unreadable", error=str(exc)[:200])
 
-    _cached_defaults = (now + _DEFAULTS_TTL_SECONDS, thresholds)
-    return thresholds
+    _cached_defaults = (now + _DEFAULTS_TTL_SECONDS, defaults)
+    return defaults
+
+
+def default_thresholds(settings: Settings | None = None) -> Thresholds:
+    """The global alert sensitivity, for callers with no target in hand."""
+    return stored_defaults(settings).thresholds
+
+
+def summary_interval_hours(settings: Settings | None = None) -> int:
+    """How often the market summary goes out, in hours. ``0`` means never.
+
+    Clamped to a day. A window longer than that stops being "what moved
+    recently" and becomes a history report, and the one way to reach a number
+    like that is a typo in a box that accepts integers.
+    """
+    return max(0, min(24, stored_defaults(settings).summary_interval_hours))
 
 
 def build_thresholds(target: MonitorTarget, settings: Settings | None = None) -> Thresholds:

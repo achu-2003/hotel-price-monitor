@@ -212,6 +212,15 @@ class AlertDefaultsIn(ORMModel):
     #: which sends three fields) does not silently switch the whole deployment
     #: back to pre-tax prices on every save.
     show_prices_with_tax: bool = False
+    #: How often the market summary goes out, in hours; 0 means never.
+    #: Defaulted for the same reason as the field above -- this endpoint
+    #: REPLACES the row, so a client sending only the three sensitivity fields
+    #: must not silently switch the summary off.
+    #:
+    #: Bounded rather than free: below an hour this stops being a summary and
+    #: becomes the per-change alert with extra steps, and above a day it stops
+    #: being about what moved recently.
+    summary_interval_hours: int = Field(default=0, ge=0, le=24)
 
 
 class AlertDefaultsOut(AlertDefaultsIn):

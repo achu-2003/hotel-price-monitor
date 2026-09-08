@@ -16,6 +16,8 @@ PriceChange row and provider.send(), which is where the five conditions live.
 from __future__ import annotations
 
 from contextlib import contextmanager
+
+from sqlalchemy.exc import IntegrityError
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -123,6 +125,26 @@ class FakeSession:
 
     def flush(self):
         self.flushes += 1
+
+        # uq_notifications_dedupe, enforced here because Postgres enforces it
+        # there. Without it this double accepts a duplicate silently, and the
+        # one mechanism that stops a scheduled task re-sending the same window
+        # every five minutes is untestable -- which is how a savepoint bug in
+        # _create_notification survived a green suite.
+        seen = set()
+        for obj in self.tables.get("notifications", []):
+            key = getattr(obj, "dedupe_key", None)
+            if key is None:
+                continue
+            if key in seen:
+                raise IntegrityError(
+                    "duplicate key value violates unique constraint "
+                    '"uq_notifications_dedupe"',
+                    None,
+                    Exception("duplicate"),
+                )
+            seen.add(key)
+
         for index, obj in enumerate(self.added, start=1):
             if getattr(obj, "id", None) is None:
                 obj.id = index
@@ -133,7 +155,21 @@ class FakeSession:
 
     @contextmanager
     def begin_nested(self):
-        yield self
+        """A savepoint that actually rolls back, because Postgres' does.
+
+        Without the undo, a row rejected by the unique check above stays in the
+        table and every later assertion counts a message that was never
+        written -- the fake would report a duplicate as delivered, which is the
+        opposite of what the constraint is for.
+        """
+        rows = self.tables.setdefault("notifications", [])
+        mark, added_mark = len(rows), len(self.added)
+        try:
+            yield self
+        except Exception:
+            del rows[mark:]
+            del self.added[added_mark:]
+            raise
 
 
 class RecordingProvider:

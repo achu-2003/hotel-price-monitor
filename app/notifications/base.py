@@ -56,6 +56,40 @@ class ChangeLine:
 #: paid message that can never arrive and is never retried.
 WHATSAPP_TEMPLATE_PARAM_COUNT = 7
 
+#: The FEWEST body variables the market-summary template can have.
+#:
+#: Two of them are fixed -- how many rooms moved and over what window, and the
+#: time -- and at least one carries the moves themselves. See
+#: ``render.render_summary``.
+#:
+#: A LARGER TEMPLATE CARRIES MORE MOVES, WHICH IS THE POINT
+#: ========================================================
+#: Meta caps a single body variable, and both providers cut one at 700
+#: characters. A busy afternoon across four properties does not fit in one, so
+#: every variable above the fixed two holds another slice of the window and the
+#: renderer spreads the moves across them.
+#:
+#: The count is configuration (``whatsapp_comparison_template_params``) rather
+#: than a constant, because the approval is somebody else's decision. But do
+#: not ask Meta for the largest template it will grant here: a template is
+#: refused when it has too many variables for the length of its own text
+#: (error 2388293), and this message has little text to spare. Five is the
+#: shape this deployment settled on.
+WHATSAPP_COMPARISON_MIN_PARAMS = 3
+
+#: Kept under the old name for callers that only need the default.
+WHATSAPP_COMPARISON_PARAM_COUNT = WHATSAPP_COMPARISON_MIN_PARAMS
+
+#: What a message is ABOUT, which decides which approved template carries it.
+#:
+#: The same two words appear on ``notifications.kind``, and deliberately so: a
+#: notification held overnight is rebuilt from its row hours later, and the
+#: rebuild has to produce the same kind of message that was queued. Deriving it
+#: instead -- "no hotel_id, so it must be a summary" -- would silently
+#: reclassify every ops alert.
+PRICE_CHANGE = "price_change"
+MARKET_COMPARISON = "market_comparison"
+
 
 @dataclass(frozen=True, slots=True)
 class RenderedMessage:
@@ -65,12 +99,19 @@ class RenderedMessage:
     things: email takes ``html``, SMS-like channels take ``text``, and the
     WhatsApp Cloud API takes ``template_params`` because business-initiated
     messages must use a pre-approved template rather than free text.
+
+    ``kind`` says which approved template the parameters belong to. It travels
+    on the message rather than being worked out by the provider, because the
+    provider sees a list of strings either way and cannot tell a price move
+    from a market summary by looking at them -- and putting one through the
+    other's template is a paid message that lands wrong.
     """
 
     subject: str
     text: str
     html: str | None = None
     template_params: list[str] | None = None
+    kind: str = PRICE_CHANGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,3 +161,24 @@ class NotificationProvider(Protocol):
 
     def send(self, destination: Destination, message: RenderedMessage) -> SendResult:
         ...
+
+
+def whatsapp_template_for(kind: str, settings) -> tuple[str, int]:
+    """The template name and expected parameter count for a message kind.
+
+    One chokepoint, used by both WhatsApp providers, so the reseller path and
+    the Meta path cannot come to disagree about which template carries what.
+
+    An empty name means the template has not been approved on this deployment
+    yet. The providers refuse the send and say so, rather than falling back to
+    the other template: the fallback would be accepted by Meta, charged for,
+    and delivered as a price-change alert with a whole market summary stuffed
+    into its seven slots -- which reads as a real alert about a room that did
+    not move.
+    """
+    if kind == MARKET_COMPARISON:
+        return (
+            settings.whatsapp_comparison_template_name,
+            settings.whatsapp_comparison_template_params,
+        )
+    return settings.whatsapp_template_name, WHATSAPP_TEMPLATE_PARAM_COUNT

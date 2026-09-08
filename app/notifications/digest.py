@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -57,6 +57,29 @@ def ops_dedupe_key(recipient_id: int, channel: str, token: str) -> str:
     with a price digest: both live under one unique index.
     """
     payload = f"{DEDUPE_VERSION}|ops|{recipient_id}|{channel}|{token}"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def summary_dedupe_key(recipient_id: int, channel: str, window_start: datetime) -> str:
+    """Identity for a market summary, keyed on the WINDOW it covers.
+
+    Not on the change ids, which is what :func:`dedupe_key` uses and what the
+    first draft of this used. The summary task ticks every few minutes and
+    recomputes the last closed window each time, so it offers the same message
+    repeatedly until one is written; keyed on the window, the unique index
+    turns those repeats into one send and the task needs no state of its own.
+
+    Keyed on change ids it would also collide with a hotel's own digest
+    whenever a window happened to contain exactly that hotel's changes -- two
+    different messages, one saying a room moved and the other saying where that
+    leaves you, and the second silently swallowed as a duplicate of the first.
+
+    The window start is rendered to the second in UTC. A window is a closed,
+    clock-aligned slot, so two ticks in the same slot produce the same key and
+    two different slots cannot.
+    """
+    stamp = window_start.astimezone(UTC).strftime("%Y%m%dT%H%M%S")
+    payload = f"{DEDUPE_VERSION}|market|{recipient_id}|{channel}|{stamp}"
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

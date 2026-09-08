@@ -1147,6 +1147,35 @@ code {
 #price-display > span,
 #price-display > p { max-width: 92ch; }
 
+/* The market-summary interval, for the same reason and then one more: it is
+   not in a .setup-pair column, so the 460px cap left it as a narrow strip down
+   the left of a section the full width of the page -- three quarters empty
+   beside a dozen short lines of prose.
+
+   The prose still keeps a reading measure of its own. Full width on a wide
+   screen would be a 180-character line, which is harder to read than the
+   narrow column was, so removing the cap and setting no measure would have
+   traded one layout problem for a worse one. */
+#summary-interval { max-width: none; }
+
+/* The notes under the box explain one setting from three angles -- what zero
+   means, what a quiet window does, and when the message arrives -- so they sit
+   beside each other rather than one under the other. It also fills a section
+   that a single column of prose left three quarters empty.
+ *
+ * Two columns rather than auto-fit, because auto-fit at this width would give
+ * four columns of about forty characters -- the narrow-column problem again,
+ * arrived at from the other direction. Two columns of a full-width section is
+ * roughly an 80-character measure, which is the width prose wants. */
+#summary-interval .shape-grid {
+  display: grid;
+  gap: var(--s3) var(--s5);
+  align-items: start;
+}
+@media (min-width: 1000px) {
+  #summary-interval .shape-grid { grid-template-columns: 1fr 1fr; }
+}
+
 /* -- a switch -------------------------------------------------------- */
 /*
  * One control that IS the setting, rather than a checkbox plus a Save. It

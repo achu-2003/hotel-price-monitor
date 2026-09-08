@@ -164,6 +164,31 @@ class Settings(BaseSettings):
     whatsapp_access_token: SecretStr | None = None
     whatsapp_template_name: str = "price_change_alert"
     whatsapp_template_lang: str = "en"
+
+    # The SECOND approved template, carrying the market summary that goes out
+    # every ``alert_defaults.summary_interval_hours``. Empty until it has been
+    # approved, and empty means summaries do not go out over WhatsApp at all --
+    # see ``notifications.base.whatsapp_template_for``.
+    #
+    # A separate template because it is a different message with a different
+    # shape, and Meta approves a shape rather than a name: the price-change
+    # template's seven variables describe ONE room moving, and no arrangement
+    # of them says "four rooms moved in two hours, and here are ten properties
+    # across seven categories". Sending the summary through it would be
+    # rejected with 132000, which is permanent -- paid for, never delivered,
+    # never retried.
+    whatsapp_comparison_template_name: str = ""
+    # How many body variables that template has. Configurable because the
+    # approval is somebody else's decision, and because a bigger template
+    # carries more of the window: two variables are fixed and every one above
+    # them holds more of the moves.
+    # See ``notifications.base.WHATSAPP_COMPARISON_MIN_PARAMS``.
+    #
+    # Not a number to maximise. Meta refuses a template that has too many
+    # variables for the length of its own text (error 2388293), and this
+    # message is short. Five -- three slots for the moves -- carries about
+    # twenty changed rooms and leaves the body comfortably within the ratio.
+    whatsapp_comparison_template_params: int = 5
     whatsapp_webhook_verify_token: SecretStr | None = None
     # Signs Meta's status callbacks. Without it the POST webhook is an open
     # endpoint that anyone who can guess a provider_message_id may use to mark

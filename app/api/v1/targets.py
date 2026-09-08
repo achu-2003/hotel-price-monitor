@@ -482,6 +482,7 @@ async def _alert_defaults_out(session, row: AlertDefaults) -> AlertDefaultsOut:
         min_delta_pct=row.min_delta_pct,
         confirm_checks=row.confirm_checks,
         show_prices_with_tax=row.show_prices_with_tax,
+        summary_interval_hours=row.summary_interval_hours,
         cheapest_room=extremes[0],
         dearest_room=extremes[1],
     )
@@ -527,12 +528,14 @@ async def replace_alert_defaults(
             "min_delta_pct": str(row.min_delta_pct),
             "confirm_checks": row.confirm_checks,
             "show_prices_with_tax": row.show_prices_with_tax,
+            "summary_interval_hours": row.summary_interval_hours,
         }
 
     row.min_delta_abs = payload.min_delta_abs
     row.min_delta_pct = payload.min_delta_pct
     row.confirm_checks = payload.confirm_checks
     row.show_prices_with_tax = payload.show_prices_with_tax
+    row.summary_interval_hours = payload.summary_interval_hours
 
     await record_audit(
         session, user=admin, action="update", entity="alert_defaults",
@@ -542,6 +545,7 @@ async def replace_alert_defaults(
             "min_delta_pct": str(payload.min_delta_pct),
             "confirm_checks": payload.confirm_checks,
             "show_prices_with_tax": payload.show_prices_with_tax,
+            "summary_interval_hours": payload.summary_interval_hours,
         },
         request=request,
     )
@@ -557,6 +561,7 @@ async def replace_alert_defaults(
              min_delta_abs=str(row.min_delta_abs),
              min_delta_pct=str(row.min_delta_pct),
              confirm_checks=row.confirm_checks,
-             show_prices_with_tax=row.show_prices_with_tax)
+             show_prices_with_tax=row.show_prices_with_tax,
+             summary_interval_hours=row.summary_interval_hours)
     return await _alert_defaults_out(session, row)
 

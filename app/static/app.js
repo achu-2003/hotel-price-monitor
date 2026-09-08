@@ -968,6 +968,7 @@
       return input ? Number(input.value) : null;
     };
     const tax = document.querySelector("input[name=show_prices_with_tax]");
+    const summary = document.querySelector("input[name=summary_interval_hours]");
     return {
       min_delta_abs: number("min_delta_abs"),
       // The comparison engine requires BOTH floors to be cleared, so leaving a
@@ -978,6 +979,10 @@
       min_delta_pct: 0,
       confirm_checks: number("confirm_checks"),
       show_prices_with_tax: tax ? tax.checked : false,
+      // Read off the live input rather than off the page as rendered, so
+      // the sensitivity form -- which PUTs the whole row -- cannot write back
+      // the interval the page loaded with after somebody has edited the box.
+      summary_interval_hours: summary ? Number(summary.value) || 0 : 0,
     };
   };
 
@@ -1003,54 +1008,93 @@
     });
   });
 
-  // -- displayed prices: with tax, or without ------------------------
-  // Reloads on success rather than only reporting it. This switch restates
-  // every price on the site, and leaving the page showing the old numbers
-  // under a green "Saved" invites a second save and a bug report -- the one
-  // thing the operator wants to see is whether the figures moved.
-  document.querySelectorAll("form.price-display-form").forEach(function (form) {
-    const status = form.querySelector(".form-status");
-    form.addEventListener("submit", async function (event) {
-      event.preventDefault();
-      // The switch IS the setting. It used to save whatever a separate
-      // checkbox happened to be showing, which meant the page could sit with
-      // the box ticked and the site still on the old basis until somebody
-      // noticed the Save. Flipping here, before the payload is built, makes
-      // one press the whole action -- and the payload reads the hidden input,
-      // so the sensitivity form on the same page still writes the value we
-      // just chose rather than the one it was rendered with.
-      const box = form.querySelector("input[name=show_prices_with_tax]");
-      const knob = form.querySelector(".switch");
-      if (box) box.checked = !box.checked;
-      const on = box && box.checked;
-
-      // Moved BEFORE the request, not after it. A switch that waits for a
-      // round trip before it moves reads as a switch that did not register
-      // the press, and gets pressed again -- which on this control would send
-      // a second save undoing the first.
-      if (knob) {
-        knob.setAttribute("aria-checked", on ? "true" : "false");
-        knob.disabled = true;
-      }
-
-      const ok = await saveAlertDefaults(
-        form, status,
-        on ? "Saved — prices now include tax." : "Saved — prices now exclude tax."
-      );
-
-      // Put it back if the save failed, both the value and the thing on
-      // screen. Leaving it flipped would show a setting the server never took
-      // and make the next press a no-op against it.
-      if (!ok) {
+  // -- the two switches on Settings ----------------------------------
+  // Both live on the alert_defaults row and both are one press: flip, save,
+  // report. Written once because the awkward parts are identical, and getting
+  // either of them subtly different is how one switch ends up honest and the
+  // other ends up showing a state the server never took.
+  //
+  // The switch IS the setting. A styled checkbox waiting on a separate Save
+  // has two states on screen and one in the database, and the gap between them
+  // is silent -- the page sits with the box ticked while the site goes on
+  // behaving the old way until somebody notices the Save.
+  const wireSwitch = function (selector, name, onText, offText, reload) {
+    document.querySelectorAll(selector).forEach(function (form) {
+      const status = form.querySelector(".form-status");
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        // Flipped BEFORE the payload is built, so the other form on this page
+        // -- which PUTs the whole row -- writes the value we just chose rather
+        // than the one it was rendered with.
+        const box = form.querySelector("input[name=" + name + "]");
+        const knob = form.querySelector(".switch");
         if (box) box.checked = !box.checked;
+        const on = box && box.checked;
+
+        // Moved BEFORE the request, not after it. A switch that waits for a
+        // round trip before it moves reads as a switch that did not register
+        // the press, and gets pressed again -- which on these controls would
+        // send a second save undoing the first.
         if (knob) {
-          knob.setAttribute("aria-checked", box && box.checked ? "true" : "false");
+          knob.setAttribute("aria-checked", on ? "true" : "false");
+          knob.disabled = true;
+        }
+
+        const ok = await saveAlertDefaults(form, status, on ? onText : offText);
+
+        // Put it back if the save failed, both the value and the thing on
+        // screen. Leaving it flipped would show a setting the server never
+        // took and make the next press a no-op against it.
+        if (!ok) {
+          if (box) box.checked = !box.checked;
+          if (knob) {
+            knob.setAttribute("aria-checked", box && box.checked ? "true" : "false");
+            knob.disabled = false;
+          }
+        }
+        if (ok && reload) {
+          window.setTimeout(function () { window.location.reload(); }, 600);
+        } else if (ok && knob) {
           knob.disabled = false;
         }
-      }
-      if (ok) {
-        window.setTimeout(function () { window.location.reload(); }, 600);
-      }
+      });
+    });
+  };
+
+  // Displayed prices reloads on success rather than only reporting it: this
+  // switch restates every price on the site, and leaving the page showing the
+  // old numbers under a green "Saved" invites a second save and a bug report.
+  wireSwitch(
+    "form.price-display-form", "show_prices_with_tax",
+    "Saved — prices now include tax.",
+    "Saved — prices now exclude tax.",
+    true
+  );
+
+  // -- how often the market summary goes out -------------------------
+  // A number with a Save, not a switch: there is no state to flip, and a box
+  // that saved on every keystroke would write 2, then 20, then 24 on the way
+  // to 2 being corrected to 4.
+  //
+  // No reload. Nothing else on this page depends on the interval, and a reload
+  // would only lose the reader's place in the explanation beside the box.
+  document.querySelectorAll("form.summary-interval-form").forEach(function (form) {
+    const status = form.querySelector(".form-status");
+    const input = form.querySelector("input[name=summary_interval_hours]");
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      const hours = input ? Number(input.value) || 0 : 0;
+      // "From the next window" rather than "Saved", because the workers cache
+      // this row for a minute and because the first summary arrives when a
+      // window closes, not now. A message that says Saved and is then followed
+      // by an hour of silence reads as a save that did not take.
+      await saveAlertDefaults(
+        form, status,
+        hours > 0
+          ? "Saved — a summary from the end of the next " + hours +
+            (hours === 1 ? " hour window." : " hour window.")
+          : "Saved — market summaries are off."
+      );
     });
   });
 
