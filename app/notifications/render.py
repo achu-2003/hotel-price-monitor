@@ -402,7 +402,7 @@ def render_summary(
     Nothing here touches a database or a clock except through ``when``.
     """
     stamp = checked_at_ist(when)
-    headline = _moved_headline(len(moved), window_hours)
+    headline = _moved_headline(moved, window_hours)
 
     return RenderedMessage(
         subject=headline,
@@ -413,8 +413,25 @@ def render_summary(
     )
 
 
-def _moved_headline(count: int, window_hours: int) -> str:
+def _moved_headline(moved: Sequence[ChangeLine], window_hours: int) -> str:
     """"4 rooms changed price in the last 2 hours" — the message in one line.
+
+    COUNTS ROOMS, NOT PRICE CHANGES, AND THE TWO ARE NOT THE SAME
+    ============================================================
+    A room can reprice several times inside one window. This counted the moves
+    and called them rooms: a window holding six changes across three rooms --
+    one of them a Treebo room that moved three times in an afternoon -- went
+    out as "6 rooms changed price", above a list where the same room name
+    appeared three times. The reader can see the repeat, and is then reading a
+    headline they know to be wrong, which costs more than the number.
+
+    So the count is distinct ``(property, room)`` pairs, matched to the
+    question actually being asked: how many rooms moved.
+
+    The move count is added ONLY when it differs. Three rooms that moved six
+    times is a busier afternoon than three that moved once, and that is worth a
+    reader's attention -- but on the ordinary window where each room moved
+    once, "(3 moves)" beside "3 rooms" is noise restating the same number.
 
     Both halves are pluralised rather than written "room(s)": this is the
     subject line and the first WhatsApp variable, the two places a reader
@@ -427,11 +444,15 @@ def _moved_headline(count: int, window_hours: int) -> str:
     wrong number stated confidently -- which is the failure this whole system
     exists to prevent.
     """
-    rooms = "room" if count == 1 else "rooms"
-    if window_hours <= 0:
-        return f"{count} {rooms} changed price"
-    hours = "hour" if window_hours == 1 else "hours"
-    return f"{count} {rooms} changed price in the last {window_hours} {hours}"
+    rooms = len({(" ".join(line.hotel_name.split()), line.room_name) for line in moved})
+    moves = len(moved)
+
+    text = f"{rooms} {'room' if rooms == 1 else 'rooms'} changed price"
+    if window_hours > 0:
+        text += f" in the last {window_hours} {'hour' if window_hours == 1 else 'hours'}"
+    if moves > rooms:
+        text += f" ({moves} moves)"
+    return text
 
 
 def _by_hotel(moved: Sequence[ChangeLine]) -> dict[str, list[ChangeLine]]:

@@ -115,6 +115,46 @@ class TestTheMessageIsTheWindow:
         assert message.subject == "4 rooms changed price in the last 2 hours"
         assert message.text.startswith("📊 4 rooms changed price in the last 2 hours")
 
+    def test_a_room_that_moved_twice_is_one_room(self):
+        """The count is ROOMS, not price changes, and a room can reprice
+        several times in one window.
+
+        This shipped counting the moves and calling them rooms: six changes
+        across three rooms -- one of them a Treebo room that moved three times
+        in an afternoon -- went out as "6 rooms changed price", above a list
+        where the same room name appeared three times. The reader can see the
+        repeat, and is then reading a headline they know to be wrong.
+        """
+        twice = [
+            _line("Sunrise Resort", "Deluxe Room", "3000", "2700"),
+            _line("Sunrise Resort", "Deluxe Room", "2700", "2900"),
+        ]
+        assert _message(twice).subject.startswith("1 room changed price")
+
+    def test_the_moves_are_named_when_they_outnumber_the_rooms(self):
+        """Three rooms that moved six times is a busier afternoon than three
+        that moved once, and the reader should not have to count the list to
+        find that out."""
+        twice = [
+            _line("Sunrise Resort", "Deluxe Room", "3000", "2700"),
+            _line("Sunrise Resort", "Deluxe Room", "2700", "2900"),
+        ]
+        assert "(2 moves)" in _message(twice).subject
+
+    def test_no_move_count_when_every_room_moved_once(self):
+        """"(4 moves)" beside "4 rooms" restates the same number, and this is
+        the ordinary window."""
+        assert "moves)" not in _message().subject
+
+    def test_the_same_room_name_at_two_properties_counts_twice(self):
+        """"Classic Room" is a name half the market uses. Counting by room name
+        alone would report two properties repricing as one room."""
+        pair = [
+            _line("Sterling", "Classic Room", "3000", "3100"),
+            _line("MGM Whispering Winds", "Classic Room", "4000", "4200"),
+        ]
+        assert pair and _message(pair).subject.startswith("2 rooms changed price")
+
     def test_one_room_is_not_called_rooms(self):
         """This is the subject line. A message that cannot conjugate looks
         automated enough to ignore."""
@@ -691,6 +731,72 @@ class TestTheSummaryIsOneMessagePerPerson:
         tasks_notify.market_summary()
 
         assert {row.channel for row in _rows(world)} == {"email", "whatsapp"}
+
+
+class TestAWhatsAppAlertNumberIsCovered:
+    """A number added on the Alerts page gets the summary too.
+
+    It has no hotel_recipients row -- that is the whole point of the flag, and
+    it is why this needs its own class. Everything else in the dispatcher works
+    from an assignment, so a number with none would be filtered out at the
+    ``link is None`` check and hear nothing, while the Alerts page went on
+    saying it receives every price change on every hotel.
+
+    The assignment is synthesised instead, WhatsApp-only and with no threshold,
+    by the same helpers the per-change alert uses. These tests exist so the
+    summary cannot quietly stop using them.
+    """
+
+    def _alert_number(self, world):
+        world.tables["recipients"].append(
+            Recipient(
+                id=9, name="Ops WhatsApp", email=None, phone_e164="+919999900000",
+                timezone="Asia/Kolkata", is_active=True,
+                alerts_all_hotels=True,
+                quiet_hours_start=None, quiet_hours_end=None,
+            )
+        )
+
+    def test_it_receives_without_any_assignment(self, world, monkeypatch):
+        self._alert_number(world)
+        tasks_notify.market_summary()
+        assert 9 in {row.recipient_id for row in _rows(world)}
+
+    def test_it_receives_on_whatsapp_not_email(self, world, monkeypatch):
+        """Several of these numbers have no email address at all, so defaulting
+        to email would queue a message with nowhere to go."""
+        self._alert_number(world)
+        tasks_notify.market_summary()
+        channels = {r.channel for r in _rows(world) if r.recipient_id == 9}
+        assert channels == {"whatsapp"}
+
+    def test_it_hears_about_every_property_that_moved(self, world, monkeypatch):
+        """"Every price change, on every hotel" is what the page promises. A
+        summary covering only the hotels it happened to be assigned to would
+        be a quieter promise, kept silently."""
+        self._alert_number(world)
+        tasks_notify.market_summary()
+        row = next(r for r in _rows(world) if r.recipient_id == 9)
+        assert sorted(row.price_change_ids) == [99, 100]
+
+    def test_no_threshold_applies_to_it(self, world, monkeypatch):
+        """The point of an alert number is every move. A per-hotel threshold
+        set for somebody else must not quieten it."""
+        self._alert_number(world)
+        for link in world.tables["links"]:
+            link.min_delta_abs = Decimal("100000")
+
+        tasks_notify.market_summary()
+        assert 9 in {row.recipient_id for row in _rows(world)}
+
+    def test_a_removed_number_hears_nothing(self, world, monkeypatch):
+        """Removal clears is_active and leaves the flag set, so the row stays
+        identifiable. Every reader requires BOTH."""
+        self._alert_number(world)
+        world.tables["recipients"][-1].is_active = False
+
+        tasks_notify.market_summary()
+        assert 9 not in {row.recipient_id for row in _rows(world)}
 
 
 class TestTheSameFiltersAsTheImmediateAlert:

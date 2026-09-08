@@ -153,7 +153,9 @@ def main() -> int:
 
         print(f"To:        {recipient.name!r} {recipient.phone_e164 or recipient.email}")
         print(f"Channel:   {args.channel}")
-        print(f"Moved:     {len(moved)} rooms in the last {args.hours}h")
+        rooms = len({(" ".join(m.hotel_name.split()), m.room_name) for m in moved})
+        print(f"Moved:     {rooms} rooms, {len(moved)} price changes, "
+              f"last {args.hours}h")
         print(f"Template:  {template or '(NOT CONFIGURED)'}  expecting {count} variables")
         print(f"Built:     {len(message.template_params or [])} variables\n")
         for index, value in enumerate(message.template_params or [], 1):
