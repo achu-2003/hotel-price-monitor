@@ -201,6 +201,63 @@ class TestTheWhatsAppTemplateContract:
         assert small[-1] == large[-1]
         assert len(small) == 3 and len(large) == 7
 
+    def test_each_property_gets_its_own_slot_while_slots_remain(self):
+        """A variable cannot hold a newline, so everything packed into one
+        arrives as a run-on paragraph. The template puts each slot on its own
+        line, so spreading them is free and gives the reader the breaks the
+        variable cannot contain.
+
+        The first version packed greedily to 620 characters: three properties
+        became one wall of text while the three slots below it said there was
+        nothing further -- an unreadable line AND three wasted ones."""
+        params = _message(param_count=6).template_params
+        moves = params[1:-1]
+        assert moves[0].startswith("Sunrise Resort –")
+        assert moves[1].startswith("Hilltop Retreat –")
+        assert "Hilltop" not in moves[0]
+
+    def test_the_property_name_is_not_followed_by_a_colon(self):
+        """The template labels the slot "Property:", so a colon here made every
+        line read "Property: STERLING: ▼ Classic Room: ..." -- three colons
+        before the first number."""
+        assert ": " not in _message().template_params[1].split("–")[0]
+
+    def test_slots_beyond_the_properties_are_a_dash_not_a_sentence(self):
+        """The template already labels the line. A full sentence after the
+        label says the same thing twice, three times over on a quiet window --
+        longer, on a phone, than some of the moves above it."""
+        params = _message(param_count=8).template_params
+        assert params[-3] == "—" and params[-2] == "—"
+
+    def test_it_packs_only_when_there_are_more_properties_than_slots(self):
+        """At that point the choice is a dense line or a lost property, and a
+        dense line wins."""
+        many = [
+            _line(f"Property {n} Resort", f"Deluxe Room {n}",
+                  str(5000 + n * 10), str(5400 + n * 10))
+            for n in range(8)
+        ]
+        moves = _message(many, param_count=5).template_params[1:-1]
+        assert any(" • " in m for m in moves), "should have packed"
+
+    def test_a_scraped_name_with_stray_spaces_is_tidied(self):
+        """This deployment stores one as "TREEBO MIDVALLEY  RESIDENCY " --
+        double space, trailing space -- which printed as "RESIDENCY :" with
+        the colon adrift. A message that looks careless about a name invites
+        doubt about the numbers beside it."""
+        messy = [_line("TREEBO MIDVALLEY  RESIDENCY ", "Deluxe Room", "1585", "1763")]
+        text = _message(messy).text
+        assert "TREEBO MIDVALLEY RESIDENCY" in text
+        assert "RESIDENCY :" not in _message(messy).template_params[1]
+
+    def test_two_spellings_of_one_name_do_not_become_two_properties(self):
+        """The same normalisation, seen from the other side."""
+        pair = [
+            _line("Sterling", "Classic Room", "3000", "3100"),
+            _line("Sterling ", "Deluxe Room", "4000", "4200"),
+        ]
+        assert _message(pair).text.count("Sterling") == 1
+
     def test_a_bigger_template_carries_more_of_the_window(self):
         """The reason the count is configuration and not a constant. Meta caps
         a single body variable and both providers cut one at 700 characters,

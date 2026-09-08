@@ -113,10 +113,19 @@ def _headline(line: ChangeLine) -> str:
         return f"✅ {line.room_name} — available again at {money(line.new_price, line.currency)}"
     arrow = "▲" if line.direction == "increase" else "▼"
     word = "Increase" if line.direction == "increase" else "Decrease"
-    basis = " vs last night" if line.is_overnight else ""
+    # NO "vs last night" HERE, though ``line.is_overnight`` still says which
+    # moves are one. It was four words on a line the reader scans for two
+    # numbers, and on WhatsApp -- where every move is one clause in a run-on
+    # paragraph -- repeating it made the whole variable harder to read than
+    # the distinction was worth.
+    #
+    # The distinction itself is not gone: /changes and the overview carry it
+    # as a pill, on screens with room to explain it in a tooltip. This is the
+    # message deciding it has less room than a page does, not the system
+    # deciding a rolled-forward night is the same as a reprice.
     return (
         f"{arrow} {line.room_name}: {money(line.old_price, line.currency)} → "
-        f"{money(line.new_price, line.currency)}{basis}  "
+        f"{money(line.new_price, line.currency)}  "
         f"({word} {money(abs(line.delta) if line.delta else None, line.currency)}, "
         f"{_pct(line.delta_pct)})"
     )
@@ -351,10 +360,13 @@ _FIXED_PARAMS = 2
 #: What goes in a slot the window did not fill.
 #:
 #: Never an empty string -- Meta rejects an empty variable as 132005, which is
-#: permanent, so a quiet window would become an undeliverable alert. Words
-#: rather than a dash, because a dash on a line of its own reads as a line that
-#: failed to render rather than as a line with nothing to say.
-_UNUSED_SLOT = "(no further changes)"
+#: permanent, so a quiet window would become an undeliverable alert.
+#:
+#: A dash rather than a sentence. The template puts a label in front of every
+#: slot, so the line already reads "Continued: ..." and a full sentence after
+#: it says the same thing twice, three times over on a quiet window. On a phone
+#: those repeats are longer than some of the moves above them.
+_UNUSED_SLOT = "—"
 
 
 def render_summary(
@@ -428,10 +440,20 @@ def _by_hotel(moved: Sequence[ChangeLine]) -> dict[str, list[ChangeLine]]:
     Grouped because a window can span four properties, and a flat list repeats
     the property name on every line -- the wrapping that made the per-hotel
     digest unreadable on a phone before it grouped too.
+
+    Names are whitespace-normalised on the way in. They are scraped, and this
+    deployment has one stored as "TREEBO MIDVALLEY  RESIDENCY " -- a double
+    space and a trailing one, which rendered as "RESIDENCY :" with the colon
+    adrift. Normalising here rather than at ingest because the stored name is
+    the hotel's own and correcting it is a different decision; what a message
+    must not do is make the system look careless about the numbers beside it.
+
+    It also merges two spellings that differ only in spacing, which would
+    otherwise print the same property twice under two headings.
     """
     out: dict[str, list[ChangeLine]] = {}
     for line in moved:
-        out.setdefault(line.hotel_name, []).append(line)
+        out.setdefault(" ".join(line.hotel_name.split()), []).append(line)
     return out
 
 
@@ -484,8 +506,11 @@ def _summary_params(
     """
     slots = max(1, param_count - _FIXED_PARAMS)
 
+    # An en dash, not a colon. The template labels each slot -- "Property: ..."
+    # -- so a colon here made every line read "Property: STERLING: ▼ Classic
+    # Room: ..." with three of them before the first number.
     segments = [
-        f"{hotel}: " + "; ".join(_headline(line) for line in rooms)
+        f"{hotel} – " + "; ".join(_headline(line) for line in rooms)
         for hotel, rooms in _by_hotel(moved).items()
     ]
     packed, dropped = _fit(segments, slots, _WHATSAPP_PARAM_BUDGET)
@@ -499,7 +524,21 @@ def _summary_params(
 
 
 def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
-    """Pack whole properties into ``slots`` variables, and say how many did not.
+    """Lay properties out across ``slots`` variables, and say how many did not.
+
+    ONE PROPERTY PER SLOT WHILE THERE ARE SLOTS TO SPARE
+    ===================================================
+    A template variable cannot hold a newline, so everything packed into one
+    arrives as a single run-on paragraph. Packed greedily to the budget, three
+    properties became one wall of text under "Rooms and properties:" while the
+    three slots below it said "no further changes" -- the worst of both: an
+    unreadable line AND three wasted ones. The template already puts each slot
+    on its own line, so spreading them is free and gives the reader the line
+    breaks the variable cannot contain.
+
+    Only when there are more properties than slots does it pack, and then it
+    packs to the budget as before -- because at that point the choice is
+    between a dense line and losing a property, and a dense line wins.
 
     Trimmed at a property boundary and never mid-figure. A rate cut in half by
     a character count is a wrong number presented as a right one, which is the
@@ -511,12 +550,15 @@ def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
     than an empty one, which Meta rejects outright as 132005. Keeping it also
     guarantees progress, so a single enormous room name cannot stall the loop.
 
-    Slots the window did not fill carry ``_UNUSED_SLOT`` for the same reason:
+    Slots nothing was left for carry ``_UNUSED_SLOT``, for the same reason:
     every variable the template declares must arrive, and must not be empty.
     """
     if not segments:
         return ["no room changed price in this window",
                 *([_UNUSED_SLOT] * (slots - 1))], 0
+
+    if len(segments) <= slots:
+        return [*segments, *([_UNUSED_SLOT] * (slots - len(segments)))], 0
 
     filled: list[str] = []
     index = 0

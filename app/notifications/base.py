@@ -38,9 +38,14 @@ class ChangeLine:
     check_out: str
     meal_plan: str | None = None
     # True when the two prices belong to consecutive stay dates rather than to
-    # one night read twice. Without it a digest saying "1,023.75 -> 1,121.25"
-    # reads as an intraday move, and the reader misjudges how fast the hotel
-    # is repricing.
+    # one night read twice.
+    #
+    # No longer printed. ``render._headline`` used to append "vs last night",
+    # and it was four words on a line the reader scans for two numbers -- on
+    # WhatsApp, where every move is one clause of a run-on paragraph, repeating
+    # it cost more than the distinction was worth. Carried on the line anyway,
+    # because it is a fact about the pair of prices and the /changes page still
+    # shows it as a pill: a renderer that wants it back needs no new plumbing.
     is_overnight: bool = False
 
     @property
