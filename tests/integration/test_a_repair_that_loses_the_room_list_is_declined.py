@@ -165,6 +165,38 @@ class TestFourRoomsCollapsingToOne:
         assert len(remaining) == 5  # the fixture's own room, plus the four
 
 
+class TestARepairThatNamesTheRoomAfterTheHotel:
+    """The fault the count guard cannot see, end to end.
+
+    The fixture hotel is "Test Resort" with four rooms, but this is the
+    one-room shape that actually happened: what makes it a regression is not
+    how many came back, it is what they were called.
+    """
+
+    def test_the_repair_is_declined(self, source_with_four_rooms, repair_against):
+        outcome = repair_against(
+            source_with_four_rooms.id, _candidate(4, ["Test Resort"] * 4)
+        )
+        assert outcome["status"] == "named_after_property"
+
+    def test_the_working_selectors_are_still_stored(
+        self, session, source_with_four_rooms, repair_against
+    ):
+        repair_against(source_with_four_rooms.id, _candidate(4, ["Test Resort"] * 4))
+        session.refresh(source_with_four_rooms)
+        assert source_with_four_rooms.adapter_config["room_card"] == "#t-roomTypes"
+
+    def test_a_full_room_list_that_merely_shares_a_word_is_accepted(
+        self, session, source_with_four_rooms, repair_against
+    ):
+        """One genuinely named suite must not condemn the rooms around it."""
+        outcome = repair_against(
+            source_with_four_rooms.id,
+            _candidate(4, ["Test Resort Suite", "Maple", "Oak", "Teak"]),
+        )
+        assert outcome["status"] != "named_after_property"
+
+
 class TestARepairThatIsNotARegression:
     """The guard must not become a reason nothing is ever repaired."""
 

@@ -529,6 +529,87 @@ def is_a_regression(established_rooms: int, discovered_rooms: int) -> bool:
     return discovered_rooms < established_rooms * _ROOM_COUNT_FLOOR
 
 
+#: Words too common to be evidence that a room was named after its hotel.
+#: "Resort" appearing in both names says nothing; "Emerald" does.
+_GENERIC_WORDS = frozenset(
+    {
+        "with", "and", "the", "for", "from", "near", "this", "that",
+        "hotel", "resort", "rooms", "room", "suite", "suites", "villa",
+        "stay", "stays", "inn", "lodge", "house", "palace",
+    }
+)
+
+
+def _words(text: str) -> set[str]:
+    """The distinctive words of a name, lowercased.
+
+    Four characters and up, because shorter tokens are initials and
+    prepositions -- "MGM", "A R" -- and matching on those would make every
+    room at a three-letter chain look like its property.
+    """
+    cleaned = "".join(c.lower() if c.isalnum() else " " for c in text or "")
+    return {w for w in cleaned.split() if len(w) >= 4 and w not in _GENERIC_WORDS}
+
+
+def names_echo_the_property(hotel_name: str, discovered_names: list[str] | None) -> bool:
+    """Did discovery come back naming the rooms after the hotel?
+
+    A room is never called what its property is called. When every name a
+    candidate found is the property title, the selector is not reading a room
+    list -- it has landed on the page heading, and there is exactly one of
+    those however many rooms the page shows.
+
+    THIS IS THE FAULT THE COUNT GUARD DOES NOT SEE
+    ==============================================
+    ``is_a_regression`` defends a room list against shrinking, and needs two
+    established rooms before it will assert anything. Treebo's pages produce
+    ONE room type, so on 3 Sep 2026 the bad repair went from one room to one
+    room and lost nothing by count. What it did was rename it:
+
+        before   Deluxe Room (Maple)
+        after    Treebo Premium Emerald Dove with Swimming Pool - Kottaiyur
+
+    A count cannot express that and a corroboration tally cannot either -- the
+    price beside the heading was a real price. The name is the only place the
+    fault is visible, so the name is where it has to be caught.
+
+    MATCHED ON WORDS, NOT ON SUBSTRINGS
+    ===================================
+    The stored hotel name is whatever was typed when the hotel was onboarded,
+    and it does not have to be spelled correctly -- this one really is
+    ``TREEBO PREMIMUM EMERALD DOVEWITH SWIMMING POOL`` in the database, against
+    a page that says "Premium". Substring containment fails on a single typo,
+    and a typo in a name nobody re-reads is the normal case rather than the
+    exceptional one. Shared distinctive words survive it.
+
+    Two ways to qualify, because the word test needs a name long enough to
+    have words. A short property -- "Sterling" -- is caught by containment
+    instead, which is exact and needs no threshold.
+
+    EVERY NAME, NOT ANY
+    ===================
+    One room out of five sharing a word with its hotel is a coincidence, or a
+    genuinely named suite. All of them being the property is not something a
+    real room list does.
+    """
+    names = [n for n in (discovered_names or []) if n and n.strip()]
+    if not names or not (hotel_name or "").strip():
+        return False
+
+    hotel_words = _words(hotel_name)
+    hotel_flat = "".join(c.lower() for c in hotel_name if c.isalnum())
+
+    for name in names:
+        flat = "".join(c.lower() for c in name if c.isalnum())
+        if hotel_flat and (hotel_flat in flat or flat in hotel_flat):
+            continue
+        shared = hotel_words & _words(name)
+        if len(shared) >= 3 and len(shared) >= len(hotel_words) * 0.6:
+            continue
+        return False
+    return True
+
+
 def is_a_real_change(
     current: dict[str, Any] | None, discovered: dict[str, Any]
 ) -> bool:

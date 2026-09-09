@@ -22,6 +22,7 @@ from app.services.rediscovery import (
     is_a_regression,
     may_attempt,
     merge_config,
+    names_echo_the_property,
     names_to_retire,
 )
 
@@ -472,3 +473,77 @@ class TestARepairThatLosesTheRoomList:
 
     def test_finding_nothing_against_a_real_room_list_is_a_regression(self):
         assert is_a_regression(5, 0) is True
+
+
+class TestARepairThatNamesTheRoomsAfterTheHotel:
+    """The 3 Sep Treebo failure, which the count guard cannot see.
+
+    Treebo's pages produce one room type, so that repair went from one room to
+    one room and lost nothing by count. What it did was rename it after the
+    property, and the price beside the heading was a real price -- so nothing
+    downstream could tell either.
+    """
+
+    TREEBO = "TREEBO PREMIMUM EMERALD DOVEWITH SWIMMING POOL"
+
+    def test_the_production_case(self):
+        assert names_echo_the_property(
+            self.TREEBO,
+            ["Treebo Premium Emerald Dove with Swimming Pool - Kottaiyur"],
+        ) is True
+
+    def test_a_typo_in_the_stored_hotel_name_does_not_save_it(self):
+        """The database really says PREMIMUM against a page saying Premium.
+
+        This is why the match is on words. Substring containment fails on one
+        wrong letter, and a typo in a name nobody re-reads is the normal case
+        rather than the exceptional one -- so the containment arm is shown
+        failing here, and the word arm catching it anyway.
+        """
+        page = "Treebo Premium Emerald Dove with Swimming Pool - Kottaiyur"
+        flat = lambda t: "".join(c.lower() for c in t if c.isalnum())
+        assert flat(self.TREEBO) not in flat(page)  # containment cannot help
+        assert names_echo_the_property(self.TREEBO, [page]) is True
+
+    def test_a_short_hotel_name_is_caught_by_containment(self):
+        """Too few words to score, so the exact form has to do the work."""
+        assert names_echo_the_property("Sterling", ["Sterling"]) is True
+
+    def test_the_real_room_list_is_left_alone(self):
+        assert names_echo_the_property(
+            "Sterling",
+            ["Classic Room", "Classic room with Balcony", "Mountain View Classic Room"],
+        ) is False
+
+    def test_initials_are_not_evidence(self):
+        """Matching on "MGM" or "A R" would brand every room at a chain."""
+        assert names_echo_the_property(
+            "MGM WHISPERING MEADOWS", ["Club Room", "Compact Room"]
+        ) is False
+        assert names_echo_the_property(
+            "A R Thanga Kottai", ["Club Room", "Club Twin Room"]
+        ) is False
+
+    def test_a_generic_word_in_common_is_not_evidence(self):
+        """"Resort" in both names says nothing; "Emerald" would."""
+        assert names_echo_the_property(
+            "Ananthyam Resort", ["Deluxe Double Room", "Family Room", "Suite"]
+        ) is False
+
+    def test_one_room_sharing_the_name_is_a_coincidence(self):
+        """A genuinely named suite must not condemn the room list around it."""
+        assert names_echo_the_property(
+            self.TREEBO,
+            ["Treebo Premium Emerald Dove with Swimming Pool", "Deluxe Room (Maple)"],
+        ) is False
+
+    def test_a_single_shared_word_is_not_enough(self):
+        assert names_echo_the_property("Ananthyam Resort", ["Ananthyam Deluxe"]) is False
+
+    def test_nothing_found_is_not_this_fault(self):
+        """An empty result is somebody else's verdict to give."""
+        assert names_echo_the_property(self.TREEBO, []) is False
+        assert names_echo_the_property(self.TREEBO, None) is False
+
+    def test_a_hotel_with_no_name_asserts_nothing(self):
+        assert names_echo_the_property("", ["Deluxe Room"]) is False

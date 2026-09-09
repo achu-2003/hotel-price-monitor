@@ -28,7 +28,7 @@ from app.adapters.discovery import json_fragment
 from app.adapters.mapping import render_template
 from app.config import get_settings
 from app.core.logging import get_logger
-from app.db.models import AuditLog, HotelSource, MonitoringError, PriceSeries
+from app.db.models import AuditLog, Hotel, HotelSource, MonitoringError, PriceSeries
 from app.db.session import sync_session
 from app.services.dates import local_today
 from app.services.rediscovery import (
@@ -39,6 +39,7 @@ from app.services.rediscovery import (
     identity_selectors_changed,
     is_a_real_change,
     is_a_regression,
+    names_echo_the_property,
     may_attempt,
     merge_config,
     names_to_retire,
@@ -115,6 +116,11 @@ def rediscover_source(
         template = source_row.url
         hotel_id = source_row.hotel_id
         currency = source_row.currency
+        # Read here rather than at the decision, so the whole comparison is
+        # made from one transaction. See rediscovery.names_echo_the_property.
+        hotel_name = session.scalar(
+            select(Hotel.name).where(Hotel.id == source_row.hotel_id)
+        ) or ""
 
         # How many rooms this source is ALREADY reading, counted before the
         # browser runs so it describes the state the repair is meant to
@@ -209,6 +215,24 @@ def rediscover_source(
     # quarters of the room list gone. See rediscovery.is_a_regression for the
     # case this is built from. Declined rather than retried -- the page was
     # read fine, so another attempt reads it the same way.
+    # A room is never called what its property is called. When every name that
+    # came back is the hotel's own, the selector has landed on the page heading
+    # -- which the count guard below cannot see, because a page with one room
+    # still has one room afterwards. See rediscovery.names_echo_the_property.
+    if names_echo_the_property(hotel_name, list(result.best.sample_names)):
+        why = (
+            f"every room it found is named after the property itself "
+            f"({list(result.best.sample_names)[:2]}); the selector is reading "
+            f"the page heading, not the room list"
+        )
+        _finish(hotel_source_id, outcome="named_after_property", now=now)
+        logger.warning(
+            "rediscovery_named_after_property",
+            hotel=hotel_name[:60],
+            names=list(result.best.sample_names[:4]),
+        )
+        return {"status": "named_after_property", "why": why}
+
     if is_a_regression(established_rooms, result.best.room_count):
         why = (
             f"found {result.best.room_count} room(s) where this source already "
