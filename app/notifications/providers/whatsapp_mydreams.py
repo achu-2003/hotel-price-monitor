@@ -195,8 +195,22 @@ class MyDreamsWhatsAppProvider:
             # 919876543210 -- the E.164 '+' is not accepted.
             "Contact": destination.phone_e164.lstrip("+"),
             "Template": template,
-            "Param": ",".join(_param_safe(p) for p in params),
+            "Param": "",
         }
+        # The whole message travels in a query string, so the limit that binds
+        # is the ENCODED length of one -- not the length of any parameter. See
+        # _fit_to_query_budget.
+        fixed = len(_encode(query))
+        safe = _fit_to_query_budget(
+            [_param_safe(p) for p in params], _MAX_QUERY_CHARS - fixed
+        )
+        if sum(map(len, safe)) < sum(len(_param_safe(p)) for p in params):
+            log.warning(
+                "whatsapp_params_trimmed_to_fit_url",
+                template=template,
+                budget=_MAX_QUERY_CHARS,
+            )
+        query["Param"] = ",".join(safe)
 
         url = f"{settings.mydreams_base_url.rstrip('/')}/sendtemplate.php?{_encode(query)}"
         try:
@@ -251,8 +265,67 @@ def _encode(query: dict[str, str]) -> str:
 #: somebody else's page and therefore untrusted in length as much as content.
 _MAX_PARAM_CHARS = 700
 
+#: Ceiling on the whole query string, which is where the message actually goes.
+#:
+#: The reseller takes a GET and puts every parameter in the URL. IIS caps a
+#: query string at 2048 bytes by default and answers a request over it with a
+#: bare 404 -- no code, no message, an HTML error page that says "File or
+#: directory not found" and nothing about length. Seen on 9 Sep 2026 sending a
+#: 24-hour summary: four properties, sixteen rooms, and a 404 from an endpoint
+#: that had worked minutes earlier with less to say.
+#:
+#: 1800 leaves room under the 2048 for the fixed parameters and for a reseller
+#: or proxy with a tighter limit than IIS's default.
+_MAX_QUERY_CHARS = 1800
+
 #: A comma sitting between two digits, i.e. a thousands separator.
 _GROUPING_COMMA = re.compile(r"(?<=\d),(?=\d)")
+
+
+def _fit_to_query_budget(values: list[str], budget: int) -> list[str]:
+    """Shrink the longest parameters until the ENCODED join fits.
+
+    WHY ENCODED LENGTH, AND WHY A TOTAL
+    ===================================
+    ``_MAX_PARAM_CHARS`` bounds one parameter and nothing bounds their sum, so
+    five parameters each under the ceiling could still build a URL far past
+    what the endpoint accepts. And the length that counts is after
+    percent-encoding, which is not a small correction on this content: a rupee
+    sign is one character and nine bytes, a newline one and three. A summary
+    that reads as 1,200 characters goes down the wire as more than 4,000.
+
+    That is why this only started failing on 9 Sep. Parameters used to be
+    flattened to one line, so a property was a run-on sentence and the total
+    stayed under by accident. Laying a slot out as a block -- two lines per
+    room, a blank line between properties -- multiplied both the newlines and
+    the length, and the first busy window after that went over.
+
+    TRUNCATION RATHER THAN REFUSAL
+    ==============================
+    A message the reader can see most of beats a 404 they never hear about.
+    The parameter count is preserved exactly, because the reseller does not
+    check it and Meta rejects the send if it is wrong, and nothing is ever
+    emptied for the same reason: an empty variable is a permanent 132005.
+
+    The longest parameter is cut first, repeatedly, so a single runaway
+    property gives up its tail before a short one loses anything.
+    """
+    out = list(values)
+    while out and _encoded_len(",".join(out)) > budget:
+        longest = max(range(len(out)), key=lambda i: len(out[i]))
+        body = out[longest].rstrip("…").rstrip()
+        # Below this there is nothing left to say and cutting further only
+        # risks emptying the parameter, which is refused outright at Meta.
+        if len(body) <= 16:
+            break
+        body = body[: len(body) - max(24, len(body) // 8)].rstrip()
+        out[longest] = f"{body}…"
+    return out
+
+
+def _encoded_len(value: str) -> int:
+    """How long this is once it is in a URL, which is the only length that binds."""
+    return len(quote(value, safe=""))
 
 
 def _param_safe(value: object) -> str:

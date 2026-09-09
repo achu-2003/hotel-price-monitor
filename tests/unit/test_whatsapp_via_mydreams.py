@@ -36,7 +36,10 @@ from app.notifications.base import (
 from app.notifications.providers import whatsapp_mydreams
 from app.notifications.providers.whatsapp_mydreams import (
     _MAX_PARAM_CHARS,
+    _MAX_QUERY_CHARS,
     MyDreamsWhatsAppProvider,
+    _encoded_len,
+    _fit_to_query_budget,
     _param_safe,
     _scrub,
 )
@@ -429,3 +432,59 @@ def test_scrub_leaves_the_rest_of_the_message_readable():
     assert API_KEY not in scrubbed
     assert "sendtemplate.php" in scrubbed
     assert "failed" in scrubbed
+
+
+class TestTheWholeMessageHasToFitInAUrl:
+    """The reseller takes a GET, so the query string is the real ceiling.
+
+    IIS caps one at 2048 bytes and answers anything longer with a bare 404 --
+    an HTML page saying "File or directory not found", nothing about length.
+    Seen on 9 Sep 2026 sending a 24-hour summary of four properties.
+    """
+
+    #: One property block in the layout that broke it: two lines per room, a
+    #: rupee sign on every figure.
+    BLOCK = "\n".join(
+        f"▲ Deluxe Room (Maple) · mixed tax basis\n₹{i}697 → ₹{i}126 · +₹429 (25.3%)"
+        for i in range(1, 9)
+    )
+
+    def test_encoding_more_than_doubles_it(self):
+        """Why a cap on raw characters could never have bounded this.
+
+        A rupee sign is one character and nine bytes; a newline one and three.
+        """
+        assert _encoded_len(self.BLOCK) > len(self.BLOCK) * 2
+
+    def test_a_summary_that_would_404_is_brought_under(self):
+        values = ["16 rooms changed price", self.BLOCK, self.BLOCK, self.BLOCK, "2:16 PM IST"]
+        assert _encoded_len(",".join(values)) > _MAX_QUERY_CHARS  # the failing case
+        out = _fit_to_query_budget(values, _MAX_QUERY_CHARS)
+        assert _encoded_len(",".join(out)) <= _MAX_QUERY_CHARS
+
+    def test_the_parameter_count_survives(self):
+        """Meta rejects the send outright on a wrong count, and pays for it."""
+        values = [self.BLOCK] * 5
+        assert len(_fit_to_query_budget(values, 400)) == 5
+
+    def test_nothing_is_ever_emptied(self):
+        """An empty variable is a permanent 132005."""
+        for out in (
+            _fit_to_query_budget([self.BLOCK] * 5, 100),
+            _fit_to_query_budget([self.BLOCK] * 5, 1),
+        ):
+            assert all(v.strip() for v in out)
+
+    def test_a_message_that_already_fits_is_untouched(self):
+        values = ["one", "two", "three"]
+        assert _fit_to_query_budget(values, _MAX_QUERY_CHARS) == values
+
+    def test_the_longest_gives_up_its_tail_first(self):
+        """One runaway property must not cost the short ones their content."""
+        short = "Sterling moved"
+        out = _fit_to_query_budget([short, self.BLOCK * 3], 600)
+        assert out[0] == short
+
+    def test_what_survives_is_marked_as_cut(self):
+        out = _fit_to_query_budget([self.BLOCK * 3], 300)
+        assert out[0].endswith("…")
