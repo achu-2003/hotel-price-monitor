@@ -969,6 +969,7 @@
     };
     const tax = document.querySelector("input[name=show_prices_with_tax]");
     const summary = document.querySelector("input[name=summary_interval_hours]");
+    const emailOn = document.querySelector("input[name=email_alerts_enabled]");
     return {
       min_delta_abs: number("min_delta_abs"),
       // The comparison engine requires BOTH floors to be cleared, so leaving a
@@ -979,6 +980,10 @@
       min_delta_pct: 0,
       confirm_checks: number("confirm_checks"),
       show_prices_with_tax: tax ? tax.checked : false,
+      // Read off the page like the others: this endpoint REPLACES the row, so
+      // the sensitivity form saving must not switch a channel back on that
+      // somebody has just switched off.
+      email_alerts_enabled: emailOn ? emailOn.checked : true,
       // Read off the live input rather than off the page as rendered, so
       // the sensitivity form -- which PUTs the whole row -- cannot write back
       // the interval the page loaded with after somebody has edited the box.
@@ -1069,6 +1074,16 @@
     "Saved — prices now include tax.",
     "Saved — prices now exclude tax.",
     true
+  );
+
+  // No reload: nothing else on this page restates itself when email stops,
+  // and reloading would lose the reader's place in the four notes beside it
+  // that explain what the switch does and does not cover.
+  wireSwitch(
+    "form.email-alerts-form", "email_alerts_enabled",
+    "Saved — rate alerts will go out by email.",
+    "Saved — no more rate emails. WhatsApp is unaffected.",
+    false
   );
 
   // -- how often the market summary goes out -------------------------

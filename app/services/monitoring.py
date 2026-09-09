@@ -397,6 +397,11 @@ class StoredDefaults:
     #: Whether a price in a message carries tax, the same switch that decides
     #: it on every screen. See ``AlertDefaults.show_prices_with_tax``.
     show_prices_with_tax: bool = False
+    #: Whether the rate alerts go out by email at all.
+    #: See ``AlertDefaults.email_alerts_enabled``. Defaults TRUE, because the
+    #: fallback is reached when the row cannot be read, and a database blip
+    #: must not silently stop a channel somebody is relying on.
+    email_alerts_enabled: bool = True
 
 
 #: (expires_at, defaults). Module-level, so each worker process keeps its
@@ -458,6 +463,7 @@ def stored_defaults(settings: Settings | None = None) -> StoredDefaults:
                     ),
                     summary_interval_hours=row.summary_interval_hours,
                     show_prices_with_tax=bool(row.show_prices_with_tax),
+                    email_alerts_enabled=bool(row.email_alerts_enabled),
                 )
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("alert_defaults_unreadable", error=str(exc)[:200])
@@ -495,6 +501,21 @@ def alert_prices_with_tax(settings: Settings | None = None) -> bool:
     Missing row means off, which is what every message said before this.
     """
     return stored_defaults(settings).show_prices_with_tax
+
+
+def email_alerts_enabled(settings: Settings | None = None) -> bool:
+    """Whether the rate alerts go out by email at all.
+
+    A deployment-wide kill switch over every recipient's channel choice, for
+    the morning an inbox is drowning or a mail provider starts bouncing. It
+    stops the RATE alerts only: the operator messages about monitoring itself
+    are a different question and answer to nobody's inbox preference.
+
+    Read through the cached row for the same reason the tax switch is, so one
+    sweep cannot filter on one read and render from another. Missing row means
+    ON, which is what every deployment did before this existed.
+    """
+    return stored_defaults(settings).email_alerts_enabled
 
 
 def build_thresholds(target: MonitorTarget, settings: Settings | None = None) -> Thresholds:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index,
-    Integer, Numeric, String, Text, false,
+    Integer, Numeric, String, Text, false, true,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -299,5 +299,23 @@ class AlertDefaults(Base, TimestampMixin):
     #: making a decision; a fresh install is not.
     summary_interval_hours: Mapped[int] = mapped_column(
         Integer, default=2, server_default="2", nullable=False
+    )
+
+    #: Whether the rate alerts go out by email at all.
+    #:
+    #: A kill switch, not a preference. Each recipient already chooses their
+    #: channels, and this overrides all of them at once -- for the morning
+    #: somebody's inbox is drowning, or a mail provider starts bouncing, and
+    #: the answer needs to be one press rather than an edit per recipient.
+    #:
+    #: WhatsApp is untouched, which is the point: the urgent channel keeps
+    #: working while the noisy one stops.
+    #:
+    #: It does NOT silence the operator alerts about the system itself. Those
+    #: report that monitoring has stopped working, and a switch labelled
+    #: "stop email notifications" must not also stop the message that says
+    #: nobody is watching the prices any more.
+    email_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
     )
 

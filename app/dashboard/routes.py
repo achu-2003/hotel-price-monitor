@@ -1761,11 +1761,18 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
     stored = await session.get(AlertDefaults, 1)
     if stored is None:
         current = monitoring_service.default_thresholds()
+        # Column defaults apply on INSERT, and this row is never inserted --
+        # it exists to render the page in the window between deploying the
+        # code and running its migration. Left unset the switches read None,
+        # which renders as OFF and states the opposite of the default.
         stored = AlertDefaults(
             id=1,
             min_delta_abs=current.min_delta_abs,
             min_delta_pct=current.min_delta_pct,
             confirm_checks=current.confirm_checks,
+            show_prices_with_tax=False,
+            summary_interval_hours=2,
+            email_alerts_enabled=True,
         )
     cheapest, dearest = (
         await session.execute(
@@ -1780,6 +1787,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         confirm_checks=stored.confirm_checks,
         show_prices_with_tax=stored.show_prices_with_tax,
         summary_interval_hours=stored.summary_interval_hours,
+        email_alerts_enabled=stored.email_alerts_enabled,
         cheapest_room=cheapest,
         dearest_room=dearest,
     )

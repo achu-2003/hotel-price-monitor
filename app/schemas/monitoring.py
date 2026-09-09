@@ -221,6 +221,11 @@ class AlertDefaultsIn(ORMModel):
     #: becomes the per-change alert with extra steps, and above a day it stops
     #: being about what moved recently.
     summary_interval_hours: int = Field(default=0, ge=0, le=24)
+    #: Whether the rate alerts go out by email at all. Defaulted TRUE for the
+    #: opposite reason to the two above: this endpoint REPLACES the row, and a
+    #: client that predates the field must not silently switch a working
+    #: channel off. Off is a decision somebody makes on purpose.
+    email_alerts_enabled: bool = True
 
 
 class AlertDefaultsOut(AlertDefaultsIn):

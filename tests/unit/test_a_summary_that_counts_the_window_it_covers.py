@@ -1177,3 +1177,67 @@ class TestTheSummaryIsOnByDefault:
         )
         tasks_notify.market_summary()
         assert _rows(world) == []
+
+
+class TestStoppingTheEmailsWithoutEditingAnybody:
+    """A kill switch over every recipient's channel choice at once.
+
+    For the morning an inbox is drowning or a mail provider starts bouncing,
+    when the answer wants to be one press rather than an edit per recipient
+    and an edit back afterwards.
+    """
+
+    def _off(self, monkeypatch):
+        monkeypatch.setattr(
+            tasks_notify.monitoring_service, "email_alerts_enabled", lambda *a: False
+        )
+
+    def test_email_is_dropped_from_the_channels(self):
+        assert tasks_notify._channels_in_use(["email", "whatsapp"], False) == ["whatsapp"]
+
+    def test_whatsapp_is_untouched(self):
+        """The point of the switch: the urgent channel keeps working."""
+        assert "whatsapp" in tasks_notify._channels_in_use(["whatsapp"], False)
+
+    def test_on_changes_nothing(self):
+        assert tasks_notify._channels_in_use(["email", "whatsapp"], True) == [
+            "email", "whatsapp"
+        ]
+
+    def test_somebody_on_email_only_hears_nothing(self):
+        """Which is what switching it off means, and it reverses cleanly."""
+        assert tasks_notify._channels_in_use(["email"], False) == []
+        assert tasks_notify._channels_in_use(["email"], True) == ["email"]
+
+    def test_the_summary_sends_no_email_when_it_is_off(self, world, monkeypatch):
+        self._off(monkeypatch)
+        tasks_notify.market_summary()
+        assert [n.channel for n in _rows(world) if n.channel == "email"] == []
+
+    def test_the_per_change_alert_sends_no_email_when_it_is_off(self, world, monkeypatch):
+        self._off(monkeypatch)
+        ids = [c.id for c in world.tables["changes"]]
+        tasks_notify.dispatch_changes(ids)
+        assert [n.channel for n in _rows(world) if n.channel == "email"] == []
+
+    def test_the_default_is_on(self):
+        """Off is a decision; installing this is not."""
+        from app.db.models import AlertDefaults
+
+        assert AlertDefaults.__table__.c.email_alerts_enabled.default.arg is True
+
+    def test_an_unreadable_row_leaves_email_on(self):
+        """The fallback is reached when the database blips.
+
+        Defaulting a channel OFF there would silently stop alerting on an
+        outage that has nothing to do with anybody's inbox preference.
+        """
+        import dataclasses
+
+        from app.services.monitoring import StoredDefaults
+
+        field = next(
+            f for f in dataclasses.fields(StoredDefaults)
+            if f.name == "email_alerts_enabled"
+        )
+        assert field.default is True

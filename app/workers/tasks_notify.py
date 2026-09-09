@@ -130,6 +130,24 @@ _SEND_BACKOFF = (60, 300, 900, 3600, 10800)
 _PRICE_MOVE_DIRECTIONS = (ChangeDirection.INCREASE, ChangeDirection.DECREASE)
 
 
+def _channels_in_use(channels: list[str], email_enabled: bool) -> list[str]:
+    """A recipient's channels, minus the ones switched off deployment-wide.
+
+    The recipient's own choice is a standing preference and this is a kill
+    switch over all of them at once -- for the morning an inbox is drowning or
+    a mail provider starts bouncing, when the answer has to be one press rather
+    than an edit per recipient and an edit back afterwards.
+
+    A recipient left with NO channel gets no message, which is the honest
+    outcome: somebody on email only, with email switched off, has asked for
+    nothing to be sent. It is not silent -- the caller logs the count -- and it
+    reverses the moment the switch goes back on.
+    """
+    if email_enabled:
+        return list(channels)
+    return [c for c in channels if c != "email"]
+
+
 @shared_task(name="notify.dispatch_changes", ignore_result=True)
 def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
     """Batch changes per (recipient, hotel) and queue one message each."""
@@ -219,6 +237,12 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         # on the Settings page right now, and the two could disagree inside a
         # single message.
         with_tax = monitoring_service.alert_prices_with_tax()
+        # Read once per sweep, like the tax switch beside it: two reads of a
+        # row somebody may be flipping right now could disagree inside one
+        # dispatch, sending to a channel the same run had already skipped.
+        email_ok = monitoring_service.email_alerts_enabled()
+        if not email_ok:
+            log.info("email_alerts_switched_off")
         lines_by_change = _render_lines(session, changes, hotels, with_tax)
 
         batches = group_for_digest(facts, assignments)
@@ -258,7 +282,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
                 with_tax=with_tax,
             )
 
-            for channel in link.channels or ["email"]:
+            for channel in _channels_in_use(link.channels or ["email"], email_ok):
                 notification_id = _create_notification(
                     session,
                     recipient=recipient,
@@ -374,6 +398,12 @@ def market_summary() -> dict[str, int]:
             ).scalars()
         }
         with_tax = monitoring_service.alert_prices_with_tax()
+        # Read once per sweep, like the tax switch beside it: two reads of a
+        # row somebody may be flipping right now could disagree inside one
+        # dispatch, sending to a channel the same run had already skipped.
+        email_ok = monitoring_service.email_alerts_enabled()
+        if not email_ok:
+            log.info("email_alerts_switched_off")
         lines_by_change = _render_lines(session, changes, hotels, with_tax)
         facts_by_id = {c.id: _facts_for(c) for c in changes}
 
@@ -414,7 +444,7 @@ def market_summary() -> dict[str, int]:
             # dropping a channel here would silence a number that was reaching
             # them yesterday.
             bucket = channels.setdefault(recipient_id, [])
-            for channel in link.channels or ["email"]:
+            for channel in _channels_in_use(link.channels or ["email"], email_ok):
                 if channel not in bucket:
                     bucket.append(channel)
 

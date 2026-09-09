@@ -53,6 +53,40 @@
       <span class="form-status" role="status"></span>
     </div>
   </form>
+
+  <h2>Email</h2>
+  <p class="muted">
+    Whether the rate alerts reach an inbox at all. Sensitivity above decides
+    whether a move is worth telling anyone; this decides whether the telling
+    goes by email.
+  </p>
+
+  <form class="panel stack email-alerts-form" id="email-alerts">
+    {# The switch IS the setting: one press, no separate Save, same as the
+       price display opposite. Kept to a switch and two lines -- it is an on/off
+       with no arithmetic to show, and the panel above it is four fields tall. #}
+    <div class="switch-row">
+      <button type="submit" class="switch" role="switch"
+              aria-checked="{{ 'true' if alert_defaults.email_alerts_enabled else 'false' }}">
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-text">Send rate alerts by email</span>
+      </button>
+      <span class="form-status" role="status"></span>
+    </div>
+    <input type="checkbox" name="email_alerts_enabled" value="true" hidden
+           {% if alert_defaults.email_alerts_enabled %}checked{% endif %}>
+    <span class="muted">
+      Off stops every rate email at once &mdash; alerts and summaries, for
+      everyone, whatever channels their own row lists. <strong>WhatsApp is
+      unaffected</strong>, and nobody's row is edited, so turning it back on
+      restores them exactly as they were.
+    </span>
+    <span class="muted">
+      Alerts about the system itself still go out: a source gone quiet is a
+      message saying nobody is watching the prices, and this must not silence
+      that.
+    </span>
+  </form>
   </div>
 
   {#
@@ -183,8 +217,8 @@
 
     <div class="shape-grid">
     <span class="muted">
-      <strong>0 turns it off</strong>, which is where every deployment starts.
-      Nothing is sent and nothing changes about the per-change alerts.
+      <strong>0 turns it off.</strong> Nothing is sent and nothing changes
+      about the per-change alerts. A new deployment starts at two hours.
     </span>
     <span class="muted">
       <strong>A quiet window sends nothing.</strong> Silence means no room
