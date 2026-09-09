@@ -52,6 +52,7 @@ from app.db.models import (  # noqa: E402
     Source,
 )
 from app.db.session import sync_session  # noqa: E402
+from app.services.rediscovery import names_echo_the_property  # noqa: E402
 
 
 def _rooms_for(session, hotel_id: int, source_id: int) -> list[str]:
@@ -70,13 +71,36 @@ def _rooms_for(session, hotel_id: int, source_id: int) -> list[str]:
 
 
 def _looks_wrong(hotel_name: str, rooms: list[str]) -> str | None:
-    """The two shapes of this fault that can be spotted without a browser."""
-    if len(rooms) == 1:
-        return "only ONE room type -- a card selector that found a container"
-    hotel_key = hotel_name.lower()[:14]
+    """A room named after its property, judged by the guard's own rule.
+
+    Deliberately ``names_echo_the_property`` rather than a comparison written
+    here. The first version of this function compared the first fourteen
+    characters of each name, and it did not flag Treebo Emerald Dove -- the
+    one source known to be broken -- because the stored hotel name is spelled
+    PREMIMUM against a page saying Premium. A tool that reports on a guard
+    must apply that guard, or it certifies as healthy exactly what the guard
+    would reject.
+
+    Asked one room at a time. The guard requires EVERY name to echo before it
+    declines a repair, which is right when the question is "should this config
+    be written"; here the question is "is anything in this list wrong", and one
+    bad room among several is still one bad room.
+    """
     for room in rooms:
-        if room.lower()[:14] in hotel_key or hotel_key in room.lower():
+        if names_echo_the_property(hotel_name, [room]):
             return f"a room named after the property: {room!r}"
+    return None
+
+
+def _worth_a_look(rooms: list[str]) -> str | None:
+    """Softer than SUSPECT, because a small property really does have one room.
+
+    A single room type can mean a card selector that landed on a container.
+    It can equally mean a Treebo property with one room, which is what all
+    three of them are. Reported, not accused.
+    """
+    if len(rooms) == 1:
+        return "one room type only -- fine for a small property, worth a look otherwise"
     return None
 
 
@@ -123,6 +147,8 @@ def main() -> int:
             if warning:
                 print(f"  ⚠  SUSPECT    {warning}")
                 suspect.append((hs.id, hotel_name))
+            elif _worth_a_look(rooms):
+                print(f"  ·  note       {_worth_a_look(rooms)}")
             print()
 
         if suspect:
