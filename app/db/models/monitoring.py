@@ -286,7 +286,18 @@ class AlertDefaults(Base, TimestampMixin):
     #: decision about how often this account reads the market, and a deployment
     #: where half the recipients are on a two-hour cadence and half on six is a
     #: deployment where nobody can be told when the summary arrives.
+    #:
+    #: TWO HOURS BY DEFAULT, NOT ZERO
+    #: ==============================
+    #: This defaulted to 0, and 0 means never. A deployment therefore shipped
+    #: with the summary silently switched off, and stayed that way until
+    #: somebody found the switch -- which is not a default, it is a feature
+    #: nobody is told about. The message is the point of the interval, so the
+    #: interval starts at the cadence the message was built for.
+    #:
+    #: 0 remains available and remains "never". An operator turning it off is
+    #: making a decision; a fresh install is not.
     summary_interval_hours: Mapped[int] = mapped_column(
-        Integer, default=0, server_default="0", nullable=False
+        Integer, default=2, server_default="2", nullable=False
     )
 

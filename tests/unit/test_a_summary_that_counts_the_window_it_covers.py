@@ -1148,3 +1148,32 @@ class TestTheImmediateAlertIsAboutRatesToo:
         ids = [c.id for c in world.tables["changes"]]
         tasks_notify.dispatch_changes(ids)
         assert _rows(world), "the real price moves must still be sent"
+
+
+class TestTheSummaryIsOnByDefault:
+    """0 means never, so a default of 0 shipped the feature switched off.
+
+    Every deployment installed the two-hourly summary silent and stayed that
+    way until somebody found the toggle -- which is not a default, it is a
+    feature nobody is told about.
+    """
+
+    def test_a_fresh_deployment_summarises_every_two_hours(self):
+        from app.db.models import AlertDefaults
+
+        assert AlertDefaults.__table__.c.summary_interval_hours.default.arg == 2
+
+    def test_the_database_agrees_with_the_model(self):
+        """A row inserted by anything but the ORM gets the same answer."""
+        from app.db.models import AlertDefaults
+
+        server = AlertDefaults.__table__.c.summary_interval_hours.server_default
+        assert str(getattr(server.arg, "text", server.arg)) == "2"
+
+    def test_zero_still_means_never(self, world, monkeypatch):
+        """Turning it off is a decision the default must not overrule."""
+        monkeypatch.setattr(
+            tasks_notify.monitoring_service, "summary_interval_hours", lambda *a: 0
+        )
+        tasks_notify.market_summary()
+        assert _rows(world) == []
