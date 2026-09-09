@@ -36,6 +36,7 @@ import httpx
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import (
     booking_conditions,
+    dedupe_offers,
     filter_rooms,
     dig,
     offer_from_mapping,

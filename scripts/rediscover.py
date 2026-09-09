@@ -88,7 +88,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import select  # noqa: E402
 
 from app.adapters.engines import parameterise_url  # noqa: E402
-from app.db.models import Hotel, HotelSource, RoomType  # noqa: E402
+from app.db.models import Hotel, HotelSource  # noqa: E402
 from app.db.session import sync_session  # noqa: E402
 
 
