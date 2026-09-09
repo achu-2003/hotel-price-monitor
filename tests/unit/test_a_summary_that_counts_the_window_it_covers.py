@@ -1026,3 +1026,63 @@ class TestAHeldMessageComesBackAsWhatItWas:
         assert message.kind == MARKET_COMPARISON
         assert message.text == "the table as it stood"
         assert message.template_params is None
+
+
+class TestTheSummaryReportsRatesNotAvailability:
+    """A sell-out is news when it happens, not in a digest read hours later.
+
+    One real window on 9 Sep 2026 carried fifteen availability notices against
+    three price lines -- "Anthapuram Suite with 2 Bedrooms, 1 Living room and
+    Private Swimming Pool - sold out" is a whole line saying a room is
+    unavailable now, which the dashboard shows better and sooner.
+
+    The cost is not only the reading. Slots are few and the message is capped
+    by the URL it travels in, so every availability line is a price move that
+    got truncated or pushed to "and N more on the dashboard".
+    """
+
+    def _add(self, world, direction, change_id):
+        world.tables["changes"].append(
+            PriceChange(
+                id=change_id, hotel_id=7, offer_key="offer-1",
+                old_price=Decimal("3000"), new_price=None,
+                delta=None, delta_pct=None,
+                currency="INR", direction=direction,
+                previous_offer_key=None, notified=False,
+                changed_at=NOW - timedelta(minutes=20),
+            )
+        )
+
+    def test_a_sell_out_is_not_in_the_summary(self, world, monkeypatch):
+        self._add(world, "became_unavailable", 201)
+        tasks_notify.market_summary()
+        body = chr(10).join(n.body_rendered or '' for n in _rows(world))
+        assert "sold out" not in body
+
+    def test_a_room_coming_back_is_not_either(self, world, monkeypatch):
+        self._add(world, "became_available", 202)
+        tasks_notify.market_summary()
+        body = chr(10).join(n.body_rendered or '' for n in _rows(world))
+        assert "available again" not in body
+
+    def test_the_price_moves_still_arrive(self, world, monkeypatch):
+        """The filter must not empty the message it is tidying."""
+        self._add(world, "became_unavailable", 203)
+        tasks_notify.market_summary()
+        assert _rows(world), "the two price moves must still send"
+
+    def test_availability_alone_sends_nothing(self, world, monkeypatch):
+        """A window of nothing but sell-outs is a quiet window for this message."""
+        world.tables["changes"] = []
+        self._add(world, "became_unavailable", 204)
+        self._add(world, "became_available", 205)
+        tasks_notify.market_summary()
+        assert _rows(world) == []
+
+    def test_the_headline_counts_only_what_it_lists(self, world, monkeypatch):
+        """A count including sell-outs would disagree with the lines beneath it."""
+        self._add(world, "became_unavailable", 206)
+        self._add(world, "became_unavailable", 207)
+        tasks_notify.market_summary()
+        body = _rows(world)[0].body_rendered
+        assert "2 rooms" in body

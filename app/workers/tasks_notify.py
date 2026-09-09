@@ -44,6 +44,7 @@ from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.ratelimit import consume_recipient_quota, recipient_quota_remaining
 from app.db.models import (
+    ChangeDirection,
     Hotel,
     HotelRecipient,
     Notification,
@@ -243,6 +244,21 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
     return {"notifications": len(created)}
 
 
+#: What the two-hourly summary reports on: rates that moved, and nothing else.
+#:
+#: A sell-out and a return are real events and the per-change alert announces
+#: both the moment they happen, which is when that news is actionable. In a
+#: digest read hours later they are noise with a long name -- "Anthapuram Suite
+#: with 2 Bedrooms, 1 Living room and Private Swimming Pool - sold out" is a
+#: full line saying a room is unavailable now, which the dashboard shows
+#: better. One real window carried fifteen of those against three price lines.
+#:
+#: The cost is not only the reading. Slots are few and the message is capped by
+#: the URL it travels in, so every availability line is a price move that got
+#: truncated or pushed to "and N more on the dashboard".
+_SUMMARY_DIRECTIONS = (ChangeDirection.INCREASE, ChangeDirection.DECREASE)
+
+
 @shared_task(name="notify.market_summary", ignore_result=True)
 def market_summary() -> dict[str, int]:
     """Every N hours: how many rooms moved, which ones, and where that leaves us.
@@ -286,6 +302,16 @@ def market_summary() -> dict[str, int]:
             select(PriceChange).where(
                 PriceChange.changed_at >= window_start,
                 PriceChange.changed_at < window_end,
+                # PRICE MOVES ONLY. A room selling out and coming back is not
+                # a rate the reader can act on, and it crowds out the ones
+                # that are: one real window carried fifteen availability
+                # notices against three price lines, so the message was
+                # mostly a room's inventory flickering.
+                #
+                # The per-change alert still announces a sell-out the moment
+                # it happens, which is when that news is worth having. This
+                # is the digest somebody opens to set tomorrow's rate.
+                PriceChange.direction.in_(_SUMMARY_DIRECTIONS),
             )
         ).scalars().all()
         if not changes:

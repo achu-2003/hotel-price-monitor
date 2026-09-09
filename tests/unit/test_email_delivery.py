@@ -109,6 +109,14 @@ class FakeSession:
                     # The real query filters on is_active; an inactive person
                     # must not be found, or the test proves nothing.
                     rows = [r for r in rows if r.is_active]
+                if model is PriceChange and "direction IN" in str(statement):
+                    # Same argument. market_summary asks for price moves only,
+                    # and dispatch_changes asks for every direction including
+                    # a sell-out -- so this cannot filter unconditionally, and
+                    # a double that ignored the clause would pass whether or
+                    # not the filter existed.
+                    wanted = {"increase", "decrease"}
+                    rows = [c for c in rows if str(c.direction) in wanted]
                 return _Result(rows)
         raise AssertionError(f"FakeSession has no table for {entity}")
 
