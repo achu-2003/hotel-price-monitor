@@ -60,7 +60,7 @@ from app.notifications import registry  # noqa: E402
 from app.notifications.base import Destination  # noqa: E402
 from app.notifications.render import render_summary  # noqa: E402
 from app.services import monitoring as monitoring_service  # noqa: E402
-from app.workers.tasks_notify import _render_lines  # noqa: E402
+from app.workers.tasks_notify import _PRICE_MOVE_DIRECTIONS, _render_lines  # noqa: E402
 
 
 def main() -> int:
@@ -123,7 +123,15 @@ def main() -> int:
         # and seeing the empty case is worth a run of its own.
         since = datetime.now(UTC) - timedelta(hours=args.hours)
         changes = session.scalars(
-            select(PriceChange).where(PriceChange.changed_at >= since)
+            select(PriceChange).where(
+                PriceChange.changed_at >= since,
+                # IMPORTED, not restated. This script exists to show what will
+                # actually go out, so a filter it does not share is a rehearsal
+                # that lies -- and it did: availability was taken out of the
+                # summary and this went on printing nine "sold out" lines,
+                # against a deployment that would not have sent one.
+                PriceChange.direction.in_(_PRICE_MOVE_DIRECTIONS),
+            )
         ).all()
         hotels = {
             h.id: h
