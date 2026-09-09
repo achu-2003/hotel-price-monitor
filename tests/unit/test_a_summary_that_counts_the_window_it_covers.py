@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -220,11 +221,31 @@ class TestTheWhatsAppTemplateContract:
     def test_the_parameter_count_is_the_one_the_template_declares(self):
         assert len(_message().template_params) == WHATSAPP_COMPARISON_PARAM_COUNT
 
-    def test_no_parameter_contains_a_newline(self):
-        """Meta rejects a newline inside a template variable as 132005, which
-        is permanent -- so the moves arrive as run-on text."""
+    def test_a_slot_is_a_block_of_lines_not_a_run_on_sentence(self):
+        """Meta documents a newline inside a variable as 132005, and this
+        message ran on for its whole life on that basis. Sent through the live
+        reseller on 9 Sep 2026, a parameter carrying one came back with a real
+        wamid and arrived broken across the lines it asked for -- so the
+        property heads its own block and each room gets a line.
+
+        Tabs stay out. They are on the same list, they have not been measured,
+        and nothing here needs one."""
+        first = _message(param_count=5).template_params[1].split("\n")
+        assert first[0] == "*Sunrise Resort*", "the heading owns its line"
+        assert first[1] == "▼ Deluxe Room", "the room owns the next"
+        assert first[2] == "₹3,000 → ₹2,700 · -₹300 (10.0%)", "its figures follow"
+        assert first[3] == "▲ Garden Villa"
         for param in _message(param_count=5).template_params:
-            assert "\n" not in param and "\t" not in param
+            assert "\t" not in param
+
+    def test_no_line_of_a_slot_is_wider_than_a_phone(self):
+        """A handset fits roughly forty characters. The one-line form ran to
+        sixty, wrapped, and the remainder started at column 0 -- which looks
+        like a line of its own and undoes the block. Indentation cannot rescue
+        it either: runs of spaces are collapsed before Meta sees them."""
+        for param in _message(param_count=5).template_params[1:-1]:
+            for line in param.split("\n"):
+                assert len(line) <= 44, line
 
     def test_no_parameter_is_empty(self):
         """An empty variable is 132005 as well."""
@@ -250,24 +271,83 @@ class TestTheWhatsAppTemplateContract:
         The first version packed greedily to 620 characters: three properties
         became one wall of text while the three slots below it said there was
         nothing further -- an unreadable line AND three wasted ones."""
-        params = _message(param_count=6).template_params
-        moves = params[1:-1]
-        assert moves[0].startswith("Sunrise Resort –")
-        assert moves[1].startswith("Hilltop Retreat –")
+        pair = [
+            _line("Sunrise Resort", "Deluxe Room", "3000", "2700"),
+            _line("Hilltop Retreat", "Club Room", "4811", "4500"),
+        ]
+        moves = _message(pair, param_count=6).template_params[1:-1]
+        assert moves[0].startswith("*Sunrise Resort*")
+        assert moves[1].startswith("*Hilltop Retreat*")
         assert "Hilltop" not in moves[0]
 
-    def test_the_property_name_is_not_followed_by_a_colon(self):
-        """The template labels the slot "Property:", so a colon here made every
-        line read "Property: STERLING: ▼ Classic Room: ..." -- three colons
-        before the first number."""
-        assert ": " not in _message().template_params[1].split("–")[0]
+    def test_the_rooms_of_one_property_stay_in_one_slot(self):
+        """The template separates its slots with a blank line, which is the
+        only gap this message has -- a variable cannot hold a newline. So the
+        gap has to fall on a property boundary. A second room pushed into the
+        next slot would land under that blank line, detached from the name it
+        belongs to."""
+        moves = _message(param_count=6).template_params[1:-1]
+        assert moves[0].startswith("*Sunrise Resort*")
+        assert "▲ Garden Villa" in moves[0], "its other room, same slot"
+        assert moves[1].startswith("*Hilltop Retreat*")
 
-    def test_slots_beyond_the_properties_are_a_dash_not_a_sentence(self):
-        """The template already labels the line. A full sentence after the
-        label says the same thing twice, three times over on a quiet window --
-        longer, on a phone, than some of the moves above it."""
-        params = _message(param_count=8).template_params
-        assert params[-3] == "—" and params[-2] == "—"
+    def test_the_property_name_carries_weight_in_the_slot(self):
+        """A slot arrives as one run-on line -- Meta allows no newline in a
+        variable -- so without weight on the name the property and the first
+        room read as a single long phrase. WhatsApp renders *asterisks* inside
+        a parameter, not only in the template's own text, which was confirmed
+        on the reseller path before this depended on it."""
+        assert _message().template_params[1].startswith("*Sunrise Resort*")
+
+    def test_the_property_name_owns_its_line(self):
+        """An earlier template labelled the slot "Property:", so the name and
+        the first room shared a line and it read "Property: STERLING: ▼ Classic
+        Room: ..." -- three colons before the first number. A heading that
+        shares a line with its first row is not a heading."""
+        heading = _message().template_params[1].split("\n")[0]
+        assert heading == "*Sunrise Resort*"
+
+    def test_a_spare_slot_carries_the_stay_and_then_the_all_clear(self):
+        """A rate is a rate FOR a night, and the nights are the one thing the
+        text and email bodies carry that the WhatsApp message never had room
+        for. "Nothing else moved" is the other real answer -- it separates a
+        quiet market from a monitor that stopped halfway.
+
+        Each is said once. Three lines of the same sentence under a label was
+        the padding this replaced."""
+        moves = _message(param_count=8).template_params[1:-1]
+        assert moves[2] == "Stay 05 Sep 2026 → 06 Sep 2026"
+        assert moves[3] == "Nothing else moved in this window."
+
+    def test_two_different_stays_are_not_summarised_as_one(self):
+        """Two nights under one heading is a wrong number, which is the one
+        thing these messages may not carry."""
+        spread = [
+            _line("Sunrise Resort", "Deluxe Room", "3000", "2700"),
+            replace(_line("Hilltop Retreat", "Club Room", "4811", "4500"),
+                    check_in="2026-09-12", check_out="2026-09-13"),
+        ]
+        moves = _message(spread, param_count=8).template_params[1:-1]
+        assert not any(move.startswith("Stay ") for move in moves)
+        assert "Nothing else moved in this window." in moves
+
+    def test_a_window_that_lost_properties_does_not_claim_it_is_complete(self):
+        """"Nothing else moved" under a list that was trimmed for space is the
+        message contradicting its own headline."""
+        many = [
+            _line(f"Property Number {n} Resort and Spa", f"Deluxe Room {n}",
+                  str(5000 + n * 10), str(5400 + n * 10))
+            for n in range(30)
+        ]
+        params = _message(many, param_count=4).template_params
+        assert "more on the dashboard" in params[0]
+        assert "Nothing else moved in this window." not in params
+
+    def test_slots_beyond_everything_worth_saying_are_a_dash(self):
+        """Meta rejects an empty variable as 132005, which is permanent, so the
+        last resort has to be a character rather than nothing."""
+        params = _message(MOVED[:1], param_count=8).template_params
+        assert params[-2] == "—"
 
     def test_it_packs_only_when_there_are_more_properties_than_slots(self):
         """At that point the choice is a dense line or a lost property, and a
@@ -278,7 +358,24 @@ class TestTheWhatsAppTemplateContract:
             for n in range(8)
         ]
         moves = _message(many, param_count=5).template_params[1:-1]
-        assert any(" • " in m for m in moves), "should have packed"
+        assert any(m.count("*Property") > 1 for m in moves), "should have packed"
+
+    def test_packing_spreads_the_properties_over_every_slot(self):
+        """Greedy packing filled {{2}} to 620 characters and left {{3}}, {{4}}
+        and {{5}} saying "—": a wall of text AND three wasted lines, the
+        failure the spread above was written to prevent, arriving on the
+        windows that actually happen here. Ten properties are watched and the
+        template has four slots, so packing is the ordinary case, not the
+        exception."""
+        many = [
+            _line(f"Property {n} Resort", "Deluxe Room",
+                  str(5000 + n * 10), str(5400 + n * 10))
+            for n in range(7)
+        ]
+        moves = _message(many, param_count=6).template_params[1:-1]
+        assert all(move != "—" for move in moves), "no slot should be wasted"
+        carried = [move.count("*Property") for move in moves]
+        assert max(carried) - min(carried) <= 1, "the slots should be comparable"
 
     def test_a_scraped_name_with_stray_spaces_is_tidied(self):
         """This deployment stores one as "TREEBO MIDVALLEY  RESIDENCY " --

@@ -655,6 +655,28 @@ def _write_observation(
     return session.execute(statement).scalar_one_or_none()
 
 
+def _baseline_components(
+    series: "PriceSeries | None",
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """What the series' CONFIRMED baseline was made of, pre-tax / tax / all-in.
+
+    The "was" side of any change written against this series. Read before the
+    series is updated, because that update is what moves it.
+
+    All three None for a series being seen for the first time, and for one
+    whose baseline was set before these columns existed. That is the honest
+    answer -- nobody recorded it -- and the renderer marks the basis it falls
+    back to rather than grossing the number up. See services/price_display.py.
+    """
+    if series is None:
+        return (None, None, None)
+    return (
+        series.baseline_price_exclusive,
+        series.baseline_taxes_fees,
+        series.baseline_price_inclusive,
+    )
+
+
 def _apply_comparison(
     session: Session,
     *,
@@ -762,9 +784,25 @@ def _apply_comparison(
         series.last_taxes_fees = offer.taxes_fees
         series.last_price_inclusive = offer.price_inclusive
 
+    # Read before the assignment below overwrites it: this is the "was" side
+    # of any change this check confirms.
+    old_components = _baseline_components(series)
+
+    # The baseline's own components, moved when and only when the baseline
+    # moves. ``last_price_*`` above track every check; these track the number a
+    # change is measured FROM, which after a run of sub-threshold drifts is a
+    # different reading entirely. Keeping them apart is what stops an alert
+    # quoting a "was" price of 9,000 beside this morning's tax.
+    baseline_moved = series.last_price != new_state.last_price
+
     series.last_price = new_state.last_price
     series.last_price_basis = ctx.price_basis
     series.is_available = new_state.is_available
+
+    if baseline_moved:
+        series.baseline_price_exclusive = offer.price_exclusive
+        series.baseline_taxes_fees = offer.taxes_fees
+        series.baseline_price_inclusive = offer.price_inclusive
 
     # The room is on the page, so any half-finished disappearance is abandoned
     # -- the same way a price returning to its baseline abandons a pending
@@ -822,6 +860,16 @@ def _apply_comparison(
             currency=series.currency,
             direction=decision.direction,
             observation_id_new=observation_id,
+            # Frozen here, so the message is renderable from its own row for
+            # as long as the row exists -- including at 7 AM, when a digest
+            # held through quiet hours is rebuilt and this series has been
+            # checked eighteen more times.
+            old_price_exclusive=old_components[0],
+            old_taxes_fees=old_components[1],
+            old_price_inclusive=old_components[2],
+            new_price_exclusive=offer.price_exclusive,
+            new_taxes_fees=offer.taxes_fees,
+            new_price_inclusive=offer.price_inclusive,
             notified=False,
         )
         session.add(change)
@@ -944,6 +992,8 @@ def _carry_over_change(
         )
         return
 
+    previous_components = _baseline_components(previous)
+
     change = compare_across_stay_dates(
         CarryOver(
             last_price=previous.last_price,
@@ -1000,6 +1050,15 @@ def _carry_over_change(
         currency=currency,
         direction=change.direction,
         observation_id_new=observation_id,
+        # The "was" side here is another series entirely -- the same room, the
+        # night before -- so its baseline components are the ones that belong
+        # beside its closing price.
+        old_price_exclusive=previous_components[0],
+        old_taxes_fees=previous_components[1],
+        old_price_inclusive=previous_components[2],
+        new_price_exclusive=offer.price_exclusive,
+        new_taxes_fees=offer.taxes_fees,
+        new_price_inclusive=offer.price_inclusive,
         previous_offer_key=change.previous_offer_key,
         notified=False,
     )
@@ -1115,6 +1174,7 @@ def _handle_disappearances(
 
         # Read before the series is updated, because the update clears it.
         missing_since = series.missing_since
+        old_components = _baseline_components(series)
 
         decision = compare(
             SeriesState(
@@ -1149,6 +1209,13 @@ def _handle_disappearances(
             delta_pct=None,
             currency=series.currency,
             direction=decision.direction,
+            # A sold-out room has no new price and so no new components. The
+            # old side keeps its own, which is what lets "was 9,000 + 1,620
+            # tax, now sold out" read the same as every other line in the
+            # digest it arrives in.
+            old_price_exclusive=old_components[0],
+            old_taxes_fees=old_components[1],
+            old_price_inclusive=old_components[2],
             notified=False,
         )
         session.add(change)

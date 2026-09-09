@@ -192,17 +192,28 @@ _MAX_PARAM_CHARS = 700
 
 
 def _clean(value: object) -> str:
-    """One line, single-spaced, never empty, bounded.
+    """Single-spaced within a line, never empty, bounded — NEWLINES KEPT.
 
-    Meta rejects a utility-template parameter containing a newline, a tab, or
-    four or more consecutive spaces, and rejects an empty one -- all as 132005,
-    which is permanent. Room names come from other people's markup, so any of
-    those can arrive without warning.
+    Meta's documentation rejects a tab, four or more consecutive spaces, and an
+    empty value, all as 132005, which is permanent. Room names come from other
+    people's markup, so any of those can arrive without warning, and collapsing
+    beats refusing: a flattened name still says what moved, a dropped alert
+    says nothing.
 
-    Collapsing beats refusing: a flattened room name still tells the reader
-    exactly what moved, whereas a dropped alert tells them nothing.
+    THE NEWLINE IS NO LONGER ONE OF THEM
+    ====================================
+    The same documentation lists it, and this flattened it for that reason
+    until the claim was actually tested: a parameter carrying "\n" was accepted
+    on 9 Sep 2026 and arrived on the handset broken across the lines it asked
+    for. ``render`` now uses that to lay a slot out as a block, so flattening
+    here would quietly undo the layout of every summary.
+
+    Scraped text is flattened by ``render._flat`` instead, at the point where a
+    newline that means something can still be told apart from one that came out
+    of somebody's <br>.
     """
-    text = " ".join(str(value).split()) or "—"
+    text = "\n".join(" ".join(part.split()) for part in str(value).splitlines())
+    text = text.strip() or "—"
     if len(text) <= _MAX_PARAM_CHARS:
         return text
     return text[: _MAX_PARAM_CHARS - 1] + "…"

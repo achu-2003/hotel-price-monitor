@@ -272,13 +272,25 @@ def _param_safe(value: object) -> str:
     price" label says a false one. If the reseller can confirm an escape or an
     alternate delimiter, that belongs here and the grouping comes back.
 
-    Newlines, tabs and runs of spaces are collapsed as well: those are rejected
-    by Meta inside a template variable regardless of who transports it.
+    Tabs and runs of spaces are collapsed as well -- Meta rejects those inside a
+    template variable regardless of who transports it.
+
+    NEWLINES ARE KEPT, AND THAT WAS MEASURED HERE
+    =============================================
+    Meta's documentation rejects them too, and this collapsed them for that
+    reason. Sent through this very endpoint on 9 Sep 2026, a parameter carrying
+    "\n" came back with a real wamid and arrived on the handset broken across
+    the lines it asked for -- ``quote`` writes it as %0A and the reseller's
+    ``rawurldecode`` hands it back intact. ``render`` lays a slot out as a
+    block on the strength of that, so flattening here would undo it.
+
+    Scraped text is flattened in ``render._flat``, where a newline that means
+    something can still be told from one that came out of somebody's markup.
     """
-    text = " ".join(str(value).split())
+    text = "\n".join(" ".join(part.split()) for part in str(value).splitlines())
     text = _GROUPING_COMMA.sub("", text)
     text = text.replace(",", ";")
-    text = " ".join(text.split()) or "—"
+    text = text.strip() or "—"
     if len(text) <= _MAX_PARAM_CHARS:
         return text
     return text[: _MAX_PARAM_CHARS - 1] + "…"

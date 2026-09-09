@@ -394,6 +394,9 @@ class StoredDefaults:
     #: How often the market summary goes out, in hours; 0 means never.
     #: See ``AlertDefaults.summary_interval_hours``.
     summary_interval_hours: int = 0
+    #: Whether a price in a message carries tax, the same switch that decides
+    #: it on every screen. See ``AlertDefaults.show_prices_with_tax``.
+    show_prices_with_tax: bool = False
 
 
 #: (expires_at, defaults). Module-level, so each worker process keeps its
@@ -454,6 +457,7 @@ def stored_defaults(settings: Settings | None = None) -> StoredDefaults:
                         confirm_checks=row.confirm_checks,
                     ),
                     summary_interval_hours=row.summary_interval_hours,
+                    show_prices_with_tax=bool(row.show_prices_with_tax),
                 )
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("alert_defaults_unreadable", error=str(exc)[:200])
@@ -475,6 +479,22 @@ def summary_interval_hours(settings: Settings | None = None) -> int:
     like that is a typo in a box that accepts integers.
     """
     return max(0, min(24, stored_defaults(settings).summary_interval_hours))
+
+
+def alert_prices_with_tax(settings: Settings | None = None) -> bool:
+    """Whether the prices in a message include tax.
+
+    The SAME switch the dashboard reads, deliberately. A manager who set the
+    matrix to show all-in rates and then received a WhatsApp quoting pre-tax
+    ones had two numbers for one room and no way to tell which was which --
+    and the message, being the one that arrives unprompted, is the one they
+    act on.
+
+    Read through the cached row rather than its own query, so a dispatch
+    cannot filter on one read of ``alert_defaults`` and render from another.
+    Missing row means off, which is what every message said before this.
+    """
+    return stored_defaults(settings).show_prices_with_tax
 
 
 def build_thresholds(target: MonitorTarget, settings: Settings | None = None) -> Thresholds:

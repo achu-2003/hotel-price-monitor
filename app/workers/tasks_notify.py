@@ -80,6 +80,7 @@ from app.notifications.digest import (
 )
 from app.notifications.render import render_digest, render_summary
 from app.services import monitoring as monitoring_service
+from app.services.price_display import Components, displayed_move
 
 log = get_logger("tasks.notify")
 
@@ -168,7 +169,12 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
             h.id: h
             for h in session.execute(select(Hotel).where(Hotel.id.in_(hotel_ids))).scalars()
         }
-        lines_by_change = _render_lines(session, changes, hotels)
+        # Read once for the whole sweep. Twice -- once to pick the numbers and
+        # once to label them -- is two reads of a row somebody may be flipping
+        # on the Settings page right now, and the two could disagree inside a
+        # single message.
+        with_tax = monitoring_service.alert_prices_with_tax()
+        lines_by_change = _render_lines(session, changes, hotels, with_tax)
 
         batches = group_for_digest(facts, assignments)
 
@@ -204,6 +210,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
                 hotels[hotel_id].name,
                 [lines_by_change[cid] for cid in sorted(kept)],
                 when=now,
+                with_tax=with_tax,
             )
 
             for channel in link.channels or ["email"]:
@@ -308,7 +315,8 @@ def market_summary() -> dict[str, int]:
                 select(Hotel).where(Hotel.id.in_(hotel_ids))
             ).scalars()
         }
-        lines_by_change = _render_lines(session, changes, hotels)
+        with_tax = monitoring_service.alert_prices_with_tax()
+        lines_by_change = _render_lines(session, changes, hotels, with_tax)
         facts_by_id = {c.id: _facts_for(c) for c in changes}
 
         # recipient -> the changes that earned a place in their summary, and
@@ -362,6 +370,7 @@ def market_summary() -> dict[str, int]:
                 window_hours=hours,
                 when=now,
                 param_count=_comparison_param_count(),
+                with_tax=with_tax,
             )
             for channel in channels[recipient_id]:
                 notification_id = _create_notification(
@@ -854,14 +863,36 @@ def _links_by_pair(session: Session, hotel_ids: set[int]) -> dict[tuple[int, int
 
 
 def _render_lines(
-    session: Session, changes: list[PriceChange], hotels: dict[int, Hotel]
+    session: Session,
+    changes: list[PriceChange],
+    hotels: dict[int, Hotel],
+    with_tax: bool | None = None,
 ) -> dict[int, ChangeLine]:
     """Join each change to the room and stay it belongs to.
 
     One query for the series rows rather than one per change: a weekend-wide
     reprice can carry a hundred changes, and a hundred round trips inside the
     notification path is how alerts start arriving minutes late.
+
+    THE NUMBERS ARE CHOSEN HERE, NOT IN THE RENDERER
+    ================================================
+    A change stores two prices on the comparison basis and, beside them, what
+    each side was made of. Whether the message quotes ₹9,000 or ₹10,620 is the
+    Settings switch's decision -- the same one every screen obeys -- and
+    honouring it needs a database read, which the renderer deliberately cannot
+    do. So it happens once, here, for both the per-hotel digest and the market
+    summary, and the chosen basis is handed to the renderer alongside the
+    numbers so the message can say which it is.
+
+    The difference is recomputed from the two figures actually printed rather
+    than carried from the row: see ``price_display.displayed_move``.
+
+    ``with_tax=None`` reads the switch. It is a parameter at all so a caller
+    that already read it -- and every one of them does, to pass it on to the
+    renderer -- cannot render on one value and label on another.
     """
+    if with_tax is None:
+        with_tax = monitoring_service.alert_prices_with_tax()
     offer_keys = {c.offer_key for c in changes}
     series = {
         s.offer_key: s
@@ -879,13 +910,34 @@ def _render_lines(
     for change in changes:
         entry = series.get(change.offer_key)
         room = rooms.get(entry.room_type_id) if entry else None
+        move = displayed_move(
+            # ``current_price`` is the last-resort figure the fallback drops to
+            # when no component was recorded -- a change written before the
+            # components existed, or by a source that publishes one bare
+            # number. It is the price this alert has always quoted, and the
+            # switch must not blank it. See services/price_display.py.
+            Components(
+                current_price=change.old_price,
+                last_price_exclusive=change.old_price_exclusive,
+                last_taxes_fees=change.old_taxes_fees,
+                last_price_inclusive=change.old_price_inclusive,
+            ),
+            Components(
+                current_price=change.new_price,
+                last_price_exclusive=change.new_price_exclusive,
+                last_taxes_fees=change.new_taxes_fees,
+                last_price_inclusive=change.new_price_inclusive,
+            ),
+            with_tax,
+        )
         lines[change.id] = ChangeLine(
             hotel_name=hotels[change.hotel_id].name if change.hotel_id in hotels else "Unknown",
             room_name=room.name if room else "(room)",
-            old_price=change.old_price,
-            new_price=change.new_price,
-            delta=change.delta,
-            delta_pct=change.delta_pct,
+            old_price=move.old,
+            new_price=move.new,
+            delta=move.delta,
+            delta_pct=move.delta_pct,
+            basis_note=move.note,
             currency=change.currency,
             direction=str(change.direction),
             check_in=entry.check_in.isoformat() if entry else "",
@@ -927,10 +979,22 @@ def _rebuild_message(session: Session, notification: Notification, subject: str,
     if notification.kind == MARKET_COMPARISON:
         return _rebuild_summary(session, notification, changes, hotels, subject, body)
 
-    lines = _render_lines(session, changes, hotels)
+    # The switch as it stands NOW, not as it stood when this was queued.
+    #
+    # Deliberately unlike ``notification.kind``, which is read off the row: the
+    # kind decides which approved WhatsApp template carries the message and
+    # getting that wrong sends the wrong meaning down the wrong slots. This
+    # decides only which of two true numbers to print, and a message released
+    # at 7 AM should read the way the dashboard reads at 7 AM -- that is the
+    # whole point of one switch for both.
+    with_tax = monitoring_service.alert_prices_with_tax()
+    lines = _render_lines(session, changes, hotels, with_tax)
     hotel_name = hotels[changes[0].hotel_id].name if changes[0].hotel_id in hotels else "Hotel"
     return render_digest(
-        hotel_name, [lines[c.id] for c in changes], when=notification.created_at
+        hotel_name,
+        [lines[c.id] for c in changes],
+        when=notification.created_at,
+        with_tax=with_tax,
     )
 
 
@@ -955,7 +1019,8 @@ def _rebuild_summary(
     parameters, which is the honest outcome, because there is nothing to put in
     them.
     """
-    lines = _render_lines(session, changes, hotels)
+    with_tax = monitoring_service.alert_prices_with_tax()
+    lines = _render_lines(session, changes, hotels, with_tax)
     moved = [lines[c.id] for c in sorted(changes, key=lambda c: c.id) if c.id in lines]
     if not moved:
         log.warning("market_summary_rebuild_empty", notification_id=notification.id)
@@ -974,6 +1039,7 @@ def _rebuild_summary(
         window_hours=_window_hours(window_start, window_end),
         when=notification.created_at,
         param_count=_comparison_param_count(),
+        with_tax=with_tax,
     )
 
 

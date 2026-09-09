@@ -243,12 +243,19 @@ class TestParameterHygiene:
     """
 
     @respx.mock
-    def test_a_newline_in_a_room_name_is_flattened(self, configured):
+    def test_a_newline_is_left_alone_because_the_layout_uses_it(self, configured):
+        """It was flattened here until the rule was measured: a parameter
+        carrying a newline is accepted and arrives broken across its lines, and
+        the summary lays a slot out as a block on that basis.
+
+        A newline out of somebody's ROOM TABLE is a different thing, and
+        ``render._flat`` removes that one at the point where the two can still
+        be told apart."""
         route = respx.post(GRAPH_URL).mock(return_value=_accepted())
 
         configured.send(TO, _message(room_name="Deluxe Room\nwith balcony"))
 
-        assert _sent_params(route)[1] == "Deluxe Room with balcony"
+        assert _sent_params(route)[1] == "Deluxe Room\nwith balcony"
 
     @respx.mock
     def test_a_run_of_spaces_is_collapsed(self, configured):
@@ -286,7 +293,6 @@ class TestParameterHygiene:
 
         for value in _sent_params(route):
             assert value
-            assert "\n" not in value
             assert "\t" not in value
             assert "    " not in value
 

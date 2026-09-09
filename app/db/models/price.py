@@ -115,6 +115,19 @@ class PriceSeries(Base):
     last_price_exclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     last_taxes_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     last_price_inclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+
+    # ── the same three, for ``last_price`` rather than ``current_price`` ──
+    # The columns above track every check. ``last_price`` -- the confirmed
+    # baseline -- deliberately does not, so that a run of sub-threshold drifts
+    # accumulates against one fixed point. After such a run the two disagree,
+    # and these are what the OLD side of a price change is made of: the
+    # components of the reading that SET the baseline, not of this morning's.
+    #
+    # Moved in exactly one place, together with ``last_price`` itself. If they
+    # ever drift apart, an alert quotes a "was" price that never existed.
+    baseline_price_exclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    baseline_taxes_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    baseline_price_inclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -246,6 +259,27 @@ class PriceChange(Base):
     delta: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     delta_pct: Mapped[Decimal | None] = mapped_column(Numeric(7, 2))
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+    # ── what each side was made of, frozen here at confirmation ──────
+    # The four numbers above are all on ONE basis, chosen by PRICE_BASIS, and
+    # a message rendered from them cannot honour the "show prices with tax"
+    # switch -- there is nothing to add. These are the components behind them.
+    #
+    # Copied onto the row rather than looked up, because a digest held for
+    # quiet hours is rebuilt at 7 AM and the market summary replays a window
+    # that closed hours ago. Both must say what was true when the move
+    # happened, and price_series has moved on by then.
+    #
+    # NULL means the site did not publish that component -- or, on a row
+    # written before this shipped, that nobody recorded it. See
+    # services/price_display.py: a missing component is rendered and marked,
+    # never inferred.
+    old_price_exclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    old_taxes_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    old_price_inclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    new_price_exclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    new_taxes_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    new_price_inclusive: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     # BECAME_UNAVAILABLE is a distinct direction, never "price dropped to 0".
     direction: Mapped[ChangeDirection] = mapped_column(

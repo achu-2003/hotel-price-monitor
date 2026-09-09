@@ -16,6 +16,7 @@ from app.services.ownership import owned_hotel_ids
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import (
+    AlertDefaults,
     Hotel,
     HotelRecipient,
     Notification,
@@ -412,7 +413,15 @@ async def send_test_notification(
         check_out="2026-08-21",
         meal_plan="Breakfast Included",
     )
-    message = render_digest("Sample Resort (test)", [sample])
+    # The live switch, so a test message is the shape of a real one. An
+    # operator sending this to check a template is asking "what will they
+    # get?", and a sample on the other basis answers a different question.
+    defaults = await session.get(AlertDefaults, 1)
+    message = render_digest(
+        "Sample Resort (test)",
+        [sample],
+        with_tax=bool(defaults is not None and defaults.show_prices_with_tax),
+    )
     result = provider.send(
         Destination(
             name=recipient.name, email=recipient.email, phone_e164=recipient.phone_e164

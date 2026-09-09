@@ -194,10 +194,19 @@ def test_the_parameter_separator_survives_the_encoding(configured):
     assert len(_sent_query(route)["Param"].split(",")) == WHATSAPP_TEMPLATE_PARAM_COUNT
 
 
-def test_newlines_and_blank_values_are_handled_like_the_meta_path():
-    assert _param_safe("Deluxe\n\tRoom   Sea") == "Deluxe Room Sea"
+def test_blank_values_and_runs_of_space_are_handled_like_the_meta_path():
+    assert _param_safe("Deluxe\tRoom   Sea") == "Deluxe Room Sea"
     assert _param_safe("") == "—"
     assert _param_safe("   ") == "—"
+
+
+def test_a_newline_survives_because_the_layout_depends_on_it():
+    """Measured against the live endpoint on 9 Sep 2026: a parameter carrying a
+    newline came back with a real wamid and arrived on the handset broken
+    across the lines it asked for. ``render`` lays a slot out as a block on the
+    strength of that, so collapsing it here would undo every summary."""
+    assert _param_safe("*Sterling*\n▲ Classic Room") == "*Sterling*\n▲ Classic Room"
+    assert _param_safe("  *Sterling*  \n  ▲ Classic   Room  ") == "*Sterling*\n▲ Classic Room"
 
 
 def test_a_long_room_name_is_truncated_to_the_parameter_ceiling():

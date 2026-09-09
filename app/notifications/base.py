@@ -48,6 +48,17 @@ class ChangeLine:
     # shows it as a pill: a renderer that wants it back needs no new plumbing.
     is_overnight: bool = False
 
+    # Set when the two prices on this line are not both on the basis the
+    # Settings switch asked for -- "incl. tax" on a rate the site publishes
+    # only all-in, "excl. tax" on one it publishes only pre-tax, or
+    # "mixed tax basis" when the two sides disagree with each other.
+    #
+    # None on the ordinary line, deliberately. A marker on every line is noise
+    # the reader learns to skip, and then it is not there on the one line that
+    # needed it. Decided in ``services/price_display.py``, which is the same
+    # rule the matrix marks its cells with.
+    basis_note: str | None = None
+
     @property
     def is_availability_event(self) -> bool:
         return self.direction in {"became_unavailable", "became_available"}

@@ -106,11 +106,27 @@ def _pct(value: Decimal | None) -> str:
     return f"{abs(value):.1f}%"
 
 
+def _flat(text: str) -> str:
+    """One line of whitespace-normalised text, for anything scraped.
+
+    Room names come off other people's markup and arrive with newlines and
+    runs of spaces in them. That used to be the transport's problem -- both
+    providers flattened every parameter on the way out -- but the message now
+    puts DELIBERATE newlines in a slot, so a provider can no longer tell a line
+    break that means something from one that came out of a <br> in somebody's
+    room table. It is decided here, where the difference is known.
+    """
+    return " ".join(str(text).split())
+
+
 def _headline(line: ChangeLine) -> str:
     if line.direction == "became_unavailable":
-        return f"🚫 {line.room_name} — sold out"
+        return f"🚫 {_flat(line.room_name)} — sold out"
     if line.direction == "became_available":
-        return f"✅ {line.room_name} — available again at {money(line.new_price, line.currency)}"
+        return (
+            f"✅ {_flat(line.room_name)} — available again at "
+            f"{money(line.new_price, line.currency)}" + _marker(line)
+        )
     arrow = "▲" if line.direction == "increase" else "▼"
     word = "Increase" if line.direction == "increase" else "Decrease"
     # NO "vs last night" HERE, though ``line.is_overnight`` still says which
@@ -124,11 +140,25 @@ def _headline(line: ChangeLine) -> str:
     # message deciding it has less room than a page does, not the system
     # deciding a rolled-forward night is the same as a reprice.
     return (
-        f"{arrow} {line.room_name}: {money(line.old_price, line.currency)} → "
+        f"{arrow} {_flat(line.room_name)}: {money(line.old_price, line.currency)} → "
         f"{money(line.new_price, line.currency)}  "
         f"({word} {money(abs(line.delta) if line.delta else None, line.currency)}, "
         f"{_pct(line.delta_pct)})"
-    )
+    ) + _marker(line)
+
+
+def _marker(line: ChangeLine) -> str:
+    """The tax note for one line, where it disagrees with the rest of the message.
+
+    Appended rather than given its own line: on a phone the note belongs to
+    the figure beside it, and a message that puts qualifications on their own
+    lines is twice as long for the same content.
+
+    Empty for the ordinary line. The footer already states the basis the whole
+    message is on, and repeating it against every room turns the one line that
+    is genuinely different into more of the same.
+    """
+    return f"  {line.basis_note}" if line.basis_note else ""
 
 
 def _stay(line: ChangeLine) -> str:
@@ -148,6 +178,32 @@ def checked_at_ist(when: datetime | None = None) -> str:
         else when.astimezone(ZoneInfo(_IST)).strftime("%I:%M %p IST").lstrip("0")
 
 
+#: What the message says about the basis its prices are on.
+#:
+#: SAID ONCE, IN THE PLACE EVERY CHANNEL ALREADY HAS
+#: =================================================
+#: Appended to the "checked at" stamp rather than given a line of its own,
+#: because that stamp is the one string that already reaches all three
+#: renderings -- the text body, the email footer, and the last variable of
+#: both approved WhatsApp templates. A separate footer would need a new
+#: template variable, and a new template needs Meta's approval; this needs
+#: nothing and cannot drift between channels.
+#:
+#: SAID IN BOTH DIRECTIONS
+#: =======================
+#: Off is not "no claim", it is the claim that ₹9,000 is a room a guest pays
+#: ₹10,620 for. That silence is what made "are we sending prices with tax?" a
+#: question somebody had to read the source to answer. Rooms whose site
+#: publishes only the other component still carry their own marker -- the
+#: footer is the general case and the marker is the exception, the same way
+#: the matrix labels a cell rather than a column.
+_BASIS_NOTE = {True: "prices incl. tax", False: "prices excl. tax"}
+
+
+def _stamp(when: datetime | None, with_tax: bool) -> str:
+    return f"{checked_at_ist(when)} · {_BASIS_NOTE[bool(with_tax)]}"
+
+
 def _supports_dash() -> bool:
     """``%-I`` is glibc-only; Windows strftime rejects it.
 
@@ -163,15 +219,26 @@ def _supports_dash() -> bool:
 
 
 def render_digest(
-    hotel_name: str, lines: list[ChangeLine], *, when: datetime | None = None
+    hotel_name: str,
+    lines: list[ChangeLine],
+    *,
+    when: datetime | None = None,
+    with_tax: bool = False,
 ) -> RenderedMessage:
     """One message covering every change for one hotel in this window.
 
     Batching is not a nicety. A weekend-wide reprice produces a hundred
     changes in one cycle, and a hundred separate WhatsApps at 5:30 PM gets the
     system muted permanently — after which no alert reaches anyone at all.
+
+    ``with_tax`` does NOT choose the numbers. They arrive already chosen, on
+    the lines, because choosing them needs the components off a database row
+    and this module touches no database. It says which basis was chosen, so
+    the message can state it -- and it must therefore agree with what the
+    caller put in ``line.old_price`` and ``line.new_price``. See
+    ``workers/tasks_notify._render_lines``, which does both in one place.
     """
-    stamp = checked_at_ist(when)
+    stamp = _stamp(when, with_tax)
     count = len(lines)
 
     subject = (
@@ -231,6 +298,14 @@ def _render_html(hotel_name: str, lines: list[ChangeLine], stamp: str) -> str:
                 f" ({_pct(line.delta_pct)})</span>"
             )
             new_cell = money(line.new_price, line.currency)
+
+        # The same marker the text body appends, in the cell it belongs to.
+        # Muted and small: it qualifies the figure, it is not a second figure.
+        if line.basis_note:
+            new_cell += (
+                f'<span style="color:#6b7280;font-weight:400;font-size:12px"> '
+                f"{_esc(line.basis_note)}</span>"
+            )
 
         rows.append(
             "<tr>"
@@ -311,11 +386,24 @@ def _whatsapp_params(hotel_name: str, lines: list[ChangeLine], stamp: str) -> li
         # A priced direction with no delta is a data fault, not a free room.
         delta = "—"
 
+    # The marker goes on the "now" figure, which is the one a reader acts on,
+    # and on the "was" figure when there is no "now" -- a sold-out room still
+    # quotes a price and it still has a basis. Never on both: they sit next to
+    # each other under two labels, and saying it twice in a template that
+    # allows no line breaks costs more room than it buys.
+    old_cell = money(line.old_price, line.currency)
+    new_cell = money(line.new_price, line.currency)
+    if line.basis_note:
+        if line.new_price is not None:
+            new_cell = f"{new_cell} {line.basis_note}"
+        elif line.old_price is not None:
+            old_cell = f"{old_cell} {line.basis_note}"
+
     return [
         hotel_name,
         room,
-        money(line.old_price, line.currency),
-        money(line.new_price, line.currency),
+        old_cell,
+        new_cell,
         delta,
         _stay(line),
         stamp,
@@ -349,9 +437,24 @@ def _esc(text: str) -> str:
 _WHATSAPP_PARAM_BUDGET = 620
 
 #: Separates one property from the next inside a single template variable.
-#: Not a comma: the My Dreams reseller splits parameters on commas, so a comma
-#: here would shift every later variable into the wrong slot.
-_SEGMENT = " • "
+#:
+#: A BLANK LINE, BECAUSE A VARIABLE CAN HOLD ONE
+#: =============================================
+#: Meta documents a newline inside a template parameter as rejected, and both
+#: providers flattened every parameter on that basis for as long as this
+#: message has existed. Measured on the live reseller path on 9 Sep 2026, it is
+#: not true: a parameter carrying "\n" was accepted (a real wamid came back)
+#: and arrived on the handset broken across the lines it asked for.
+#:
+#: That is the difference between a message whose layout is fixed by whatever
+#: Meta approved and one that lays itself out. When two properties have to
+#: share a slot they are still two blocks, separated the way the template
+#: separates its own slots.
+#:
+#: Not a comma, whatever else changes: the My Dreams reseller splits parameters
+#: on commas, so a comma here would shift every later variable into the wrong
+#: slot.
+_SEGMENT = "\n\n"
 
 #: How many of the template's variables are NOT moved rooms: the count with
 #: its window, and the time. Everything between them carries the moves.
@@ -375,6 +478,7 @@ def render_summary(
     window_hours: int = 0,
     when: datetime | None = None,
     param_count: int = WHATSAPP_COMPARISON_MIN_PARAMS,
+    with_tax: bool = False,
 ) -> RenderedMessage:
     """How many rooms moved in the window, which ones, and by how much.
 
@@ -401,7 +505,7 @@ def render_summary(
 
     Nothing here touches a database or a clock except through ``when``.
     """
-    stamp = checked_at_ist(when)
+    stamp = _stamp(when, with_tax)
     headline = _moved_headline(moved, window_hours)
 
     return RenderedMessage(
@@ -520,28 +624,167 @@ def _summary_params(
     ends: a bigger template is the same message with more room in it, not a
     different message.
 
-    A template variable cannot contain a newline -- Meta rejects it as 132005 --
-    so the moves arrive as run-on text. Properties are separated by a bullet
-    and rooms by a semicolon, which survives both transports; a comma would not
-    (see the My Dreams provider).
+    A variable CAN contain a newline -- see ``_SEGMENT`` for the measurement
+    that overturned the opposite belief -- so a slot is a block: the property
+    name on its own line and one room per line under it. A comma still cannot
+    appear in a parameter (see the My Dreams provider).
     """
     slots = max(1, param_count - _FIXED_PARAMS)
 
-    # An en dash, not a colon. The template labels each slot -- "Property: ..."
-    # -- so a colon here made every line read "Property: STERLING: ▼ Classic
-    # Room: ..." with three of them before the first number.
-    segments = [
-        f"{hotel} – " + "; ".join(_headline(line) for line in rooms)
-        for hotel, rooms in _by_hotel(moved).items()
-    ]
+    # An en dash, not a colon. An earlier template labelled each slot
+    # -- "Property: ..." -- so a colon here made every line read
+    # "Property: STERLING: ▼ Classic Room: ..." with three of them before the
+    # first number.
+    #
+    # The property name is bold because WhatsApp renders *asterisks* inside a
+    # PARAMETER, not only in the template's own text -- confirmed on the live
+    # reseller path, which is the one that mangles things. It is the only
+    # hierarchy a template variable can carry, and it is what makes the first
+    # line of a block read as the heading for the lines under it rather than as
+    # another row. Two characters against the slot budget.
+    segments = _blocks(
+        [
+            (hotel, [text for line in rooms for text in _wa_room(line)])
+            for hotel, rooms in _by_hotel(moved).items()
+        ]
+    )
     packed, dropped = _fit(segments, slots, _WHATSAPP_PARAM_BUDGET)
 
     if dropped:
         # Said in the count rather than appended to a slot, so the sentence the
         # reader trusts most is the one that admits what is missing.
         headline += f" ({dropped} more on the dashboard)"
+    else:
+        # Nothing was cut, so the slots still holding a dash are slots this
+        # window genuinely had nothing to put in. See :func:`_context`.
+        packed = _context(packed, moved)
 
     return [headline, *packed, stamp]
+
+
+def _wa_room(line: ChangeLine) -> list[str]:
+    """One moved room as WhatsApp lines: the name, then the figures.
+
+    A PHONE IS FORTY CHARACTERS WIDE AND THE ONE-LINE FORM IS SIXTY
+    ===============================================================
+    ``_headline`` puts the room, both prices and the delta on one line. That
+    reads correctly on WhatsApp Web, which is as wide as the window, and wraps
+    on a handset -- where the remainder starts at column 0 and looks like a
+    line of its own, so the block the newlines just bought falls apart again.
+
+    Indentation cannot rescue a wrapped line: runs of spaces are collapsed
+    before Meta sees them (measured alongside the newline), so a continuation
+    cannot be set in from the margin.
+
+    So the line is split where it can be split honestly -- the name, then the
+    figures -- and every line comes in under forty characters. Chosen on the
+    handset out of three candidates rather than from a character count.
+
+    THE DELTA KEEPS ITS SIGN AND LOSES ITS WORD
+    ===========================================
+    "Increase"/"Decrease" spelled out is worth a lot in the text and email
+    bodies, and ``_headline`` keeps it there: a bare minus is misread by
+    everyone at least once. Here the direction is already said by the arrow at
+    the head of the room name, so the word would be the third statement of the
+    same fact -- and it is the one that pushes the figures line into a wrap.
+
+    Availability keeps its one-line form. "Sold out" is short, and a room that
+    has no price has no figures line to put underneath it.
+    """
+    room = _flat(line.room_name)
+    # The tax note rides on the NAME line, not the figures line. It is the
+    # exception -- one room whose site publishes a different basis from the
+    # rest of the message -- and sixteen characters on a line that is already
+    # near forty is the one thing that would wrap here. The name line has the
+    # room to spare, and "this room, on a different basis" is what the note
+    # means anyway.
+    note = f" · {line.basis_note}" if line.basis_note else ""
+    if line.direction == "became_unavailable":
+        return [f"🚫 {room} — sold out{note}"]
+    if line.direction == "became_available":
+        return [
+            f"✅ {room}{note}",
+            f"available again at {money(line.new_price, line.currency)}",
+        ]
+
+    arrow = "▲" if line.direction == "increase" else "▼"
+    sign = "+" if line.direction == "increase" else "-"
+    figures = f"{money(line.old_price, line.currency)} → {money(line.new_price, line.currency)}"
+    if line.delta is not None:
+        figures += f" · {sign}{money(abs(line.delta), line.currency)} ({_pct(line.delta_pct)})"
+    return [f"{arrow} {room}{note}", figures]
+
+
+def _blocks(groups: list[tuple[str, list[str]]]) -> list[str]:
+    """One property to a slot, its name on the first line and a room per line.
+
+    THE SLOT IS A BLOCK, NOT A SENTENCE
+    ===================================
+    This message spent its whole life cramming a property and its rooms into
+    one run-on line, because a template variable was believed to be unable to
+    hold a newline. It can -- see ``_SEGMENT`` for the measurement -- so the
+    shape a reader actually wants is available::
+
+        *Sterling*
+        ▲ Classic Room
+        ₹3,218.36 → ₹3,390 · +₹171.64 (5.3%)
+        ▼ Classic Room
+        ₹3,228.57 → ₹3,065.10 · -₹163.47 (5.1%)
+
+    The property name gets a line of its own rather than a dash and the first
+    room after it. It is the heading for the lines beneath it, and a heading
+    that shares a line with its first row is not a heading.
+
+    The rooms are two lines each, for the reason in :func:`_wa_room`.
+
+    Rooms stay in ONE slot with their property. The template puts a blank line
+    between slots, so a room pushed into the next slot would land under that
+    gap, reading as though it belonged to nothing.
+    """
+    return [
+        "\n".join([f"*{hotel}*", *rooms])
+        for hotel, rooms in groups
+    ]
+
+
+#: What a spare slot says before it falls back to a dash.
+#:
+#: Only ever said once, and only when the message is complete -- a window that
+#: dropped properties for space says so in the count instead.
+_NOTHING_FURTHER = "Nothing else moved in this window."
+
+
+def _context(packed: list[str], moved: Sequence[ChangeLine]) -> list[str]:
+    """Spend slots the window did not need on something worth reading.
+
+    In order, because that is the order the reader wants them:
+
+    * **The nights these rates are for.** A rate is a rate FOR a night, and
+      this is the one thing the text and email bodies carry that the WhatsApp
+      message never had room for -- there is no variable for it and no line
+      spare on a busy window. Added only when every move shares one stay, since
+      two different stays under one heading would be a wrong number.
+    * **That the list is the whole list.** "Nothing else moved" is a real
+      answer to the question the message is about, and it is the difference
+      between a quiet market and a monitor that stopped halfway.
+
+    Anything still spare keeps its dash. That is the last resort and it stays:
+    Meta rejects an empty variable as 132005, permanently.
+    """
+    spare = [i for i, slot in enumerate(packed) if slot == _UNUSED_SLOT]
+    if not spare or not moved:
+        return packed
+
+    lines = []
+    stays = {(line.check_in, line.check_out) for line in moved}
+    if len(stays) == 1:
+        lines.append(f"Stay {_stay(moved[0])}")
+    lines.append(_NOTHING_FURTHER)
+
+    filled = list(packed)
+    for index, line in zip(spare, lines, strict=False):
+        filled[index] = line
+    return filled
 
 
 def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
@@ -549,13 +792,11 @@ def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
 
     ONE PROPERTY PER SLOT WHILE THERE ARE SLOTS TO SPARE
     ===================================================
-    A template variable cannot hold a newline, so everything packed into one
-    arrives as a single run-on paragraph. Packed greedily to the budget, three
-    properties became one wall of text under "Rooms and properties:" while the
-    three slots below it said "no further changes" -- the worst of both: an
-    unreadable line AND three wasted ones. The template already puts each slot
-    on its own line, so spreading them is free and gives the reader the line
-    breaks the variable cannot contain.
+    Packed greedily to the budget, three properties became one wall of text
+    under "Rooms and properties:" while the three slots below it said "no
+    further changes" -- the worst of both: an unreadable line AND three wasted
+    ones. The template puts each slot on its own line, so spreading them is
+    free and keeps each property at the top of a block of its own.
 
     Only when there are more properties than slots does it pack, and then it
     packs to the budget as before -- because at that point the choice is
@@ -584,9 +825,22 @@ def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
     filled: list[str] = []
     index = 0
     while len(filled) < slots and index < len(segments):
+        # EVENLY, NOT GREEDILY, ONCE PACKING IS UNAVOIDABLE
+        # =================================================
+        # Filling each slot to the budget before starting the next put seven
+        # properties into {{2}} -- one 650-character paragraph -- while {{3}},
+        # {{4}} and {{5}} said "—". That is the wall of text AND the wasted
+        # lines this function exists to avoid, arriving by the other door: the
+        # spread above only covers windows with a slot per property, and this
+        # deployment watches ten.
+        #
+        # So each slot takes its share of what is left, recomputed every time
+        # round: when the budget cuts a slot short, the properties it could not
+        # hold are re-divided over the slots that remain rather than lost.
+        share = -(-(len(segments) - index) // (slots - len(filled)))
         kept: list[str] = []
         used = 0
-        while index < len(segments):
+        while index < len(segments) and len(kept) < share:
             segment = segments[index]
             cost = len(segment) + (len(_SEGMENT) if kept else 0)
             if kept and used + cost > budget:

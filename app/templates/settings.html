@@ -71,7 +71,8 @@
     The hotels do not agree on what a price is: most quote a room before tax
     and state the tax beside it, and a few publish a single all-in figure. This
     decides which of the two every screen shows — the matrix, each hotel page
-    and the overview — for all hotels at once.
+    and the overview — and which one the WhatsApp and email alerts quote, for
+    all hotels at once.
   </p>
 
   {#
@@ -118,10 +119,22 @@
       figure would look authoritative and be wrong.
     </span>
     <span class="muted">
-      <strong>Alerts and price history are unaffected.</strong> What counts as
-      a price change is still measured on the same basis it always was, so
-      switching this cannot fire an alert or restate a move that has already
-      been recorded. Changes still read on the pre-tax figure.
+      <strong>Alerts read the same switch</strong>, so a WhatsApp and the
+      matrix never quote one room at two prices. Every message says which
+      basis it is on, next to the time it was checked.
+    </span>
+    <span class="muted">
+      <strong>What counts as a change is unaffected.</strong> A move is still
+      measured on the same basis it always was, so switching this cannot fire
+      an alert, silence one, or restate a move already recorded — it changes
+      how the two prices in a message are written, never whether there was
+      anything to say. The percentage beside them is recalculated from the two
+      figures actually shown, so the line still adds up.
+    </span>
+    <span class="muted">
+      A change recorded before this shipped has no record of its tax, and none
+      is invented for it: those quote the figure they have, labelled with the
+      basis it is on. Fresh changes carry both components from the next check.
     </span>
 
   </form>

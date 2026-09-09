@@ -59,6 +59,7 @@ from app.db.session import sync_session  # noqa: E402
 from app.notifications import registry  # noqa: E402
 from app.notifications.base import Destination  # noqa: E402
 from app.notifications.render import render_summary  # noqa: E402
+from app.services import monitoring as monitoring_service  # noqa: E402
 from app.workers.tasks_notify import _render_lines  # noqa: E402
 
 
@@ -130,7 +131,10 @@ def main() -> int:
                 select(Hotel).where(Hotel.id.in_({c.hotel_id for c in changes}))
             )
         }
-        lines = _render_lines(session, list(changes), hotels)
+        # The same switch the dispatcher reads, so this rehearsal quotes the
+        # numbers a real summary would.
+        with_tax = monitoring_service.alert_prices_with_tax()
+        lines = _render_lines(session, list(changes), hotels, with_tax)
         moved = [lines[c.id] for c in sorted(changes, key=lambda c: c.id) if c.id in lines]
 
         template = args.template or settings.whatsapp_comparison_template_name
@@ -141,6 +145,7 @@ def main() -> int:
             window_hours=args.hours,
             when=datetime.now(UTC),
             param_count=count,
+            with_tax=with_tax,
         )
 
         if args.shorten:

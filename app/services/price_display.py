@@ -30,6 +30,17 @@ the hotel actually quoted, and be wrong. Adding two figures the site itself
 printed is reporting; inferring a third is guessing, and this codebase does
 not guess at prices.
 
+THE ALERTS READ THE SAME RULE
+============================
+A WhatsApp is a screen too, and for most of the people on the recipient list
+it is the ONLY one they look at. It used to quote ``price_changes.old_price``
+and ``new_price`` verbatim -- both on the comparison basis, neither labelled --
+so a manager who set the matrix to all-in rates got a message contradicting it
+about the same room. ``displayed_move`` puts both sides of a move through the
+fallback above and recomputes the difference from the two figures that will
+actually be printed, because three numbers that do not add up cost more
+credibility than either basis was worth.
+
 PURE
 ====
 No database, no clock, no settings lookup -- the series row and the flag are
@@ -40,7 +51,7 @@ reading it here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol
 
 from sqlalchemy import func
@@ -119,6 +130,143 @@ def displayed_price(series: _HasPriceComponents, show_with_tax: bool) -> Shown:
         # Treebo's case: an all-in rate and no pre-tax figure to strip back to.
         return Shown(inclusive, INCLUSIVE_NOTE)
     return Shown(series.current_price)
+
+
+#: Shown against a MOVE whose two sides could not be put on the same basis.
+#:
+#: One number pre-tax and the other all-in makes the difference between them
+#: arithmetic on two different things -- a 12% "increase" that is the tax
+#: appearing, not the hotel moving. It happens when a site starts or stops
+#: publishing its tax between one confirmed price and the next, which is rare
+#: and is exactly the case a reader must not be left to work out.
+MIXED_NOTE = "mixed tax basis"
+
+#: Money is compared and reported to the paisa; percentages to two places.
+#: The same quantisation ``services/comparison.py`` applies when it writes a
+#: change, so a move recomputed on the display basis rounds the way the stored
+#: one did rather than a hair differently.
+_CENTS = Decimal("0.01")
+_PCT = Decimal("0.01")
+
+
+@dataclass(frozen=True, slots=True)
+class Components:
+    """What one side of a price was made of, in the shape :func:`displayed_price` reads.
+
+    A plain carrier so a ``price_changes`` row -- which holds two sides of a
+    move and no series at all -- can go through the same fallback as a series
+    row on a screen. One rule, one place; the alternative is a second copy of
+    it in the renderer, which is how the dashboard and the alert came to
+    disagree about what a price is in the first place.
+    """
+
+    current_price: Decimal | None = None
+    last_price_exclusive: Decimal | None = None
+    last_taxes_fees: Decimal | None = None
+    last_price_inclusive: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ShownMove:
+    """A confirmed price change, re-read on the basis the switch asked for."""
+
+    old: Decimal | None
+    new: Decimal | None
+    delta: Decimal | None
+    delta_pct: Decimal | None
+    note: str | None = None
+
+
+def displayed_move(
+    old: Components, new: Components, show_with_tax: bool
+) -> ShownMove:
+    """Both sides of a move, and the difference between the two AS SHOWN.
+
+    THE DELTA IS RECOMPUTED, NOT CARRIED
+    ====================================
+    The stored ``delta`` belongs to the stored pair, which are on the
+    comparison basis. Print all-in prices above a pre-tax difference and the
+    three numbers on the line do not add up:
+
+        9,000 -> 9,500 (Increase 500)   became
+        10,620 -> 11,210 (Increase 500) with the switch on, where it is 590
+
+    A reader who checks the arithmetic of one alert and finds it wrong stops
+    checking the others, so the difference is derived from the two numbers
+    actually printed beside it.
+
+    Where a side has no price -- a room that sold out, or one coming back --
+    there is no difference to state and both figures are None. That is the
+    same rule ``compare`` applies, and it is why "sold out" never reads as a
+    drop to zero.
+
+    THE NOTE IS ABOUT THE PAIR
+    ==========================
+    A side that could not be put on the asked-for basis is marked, exactly as
+    a cell is on the matrix. When both are marked the same way the mark is
+    said once. When they are marked DIFFERENTLY the pair is incomparable and
+    says so: see :data:`MIXED_NOTE`.
+
+    A MIXED PAIR IS NOT SHOWN ON THE ASKED-FOR BASIS AT ALL
+    =======================================================
+    Marking an incomparable pair is not enough, because the number beside the
+    mark is the one people act on. Sterling, mid-migration: a baseline written
+    before the components existed and a new reading written after.
+
+        stored     3,228.57 -> 3,065.10   (-163.47, -5.06%)   the real move
+        grossed    3,228.57 -> 3,218.36   ( -10.21, -0.32%)   pre-tax vs all-in
+
+    A five percent drop reported as a third of a percent, because the
+    difference is arithmetic on two different things -- the tax appearing, not
+    the hotel moving. So when the two sides disagree the switch is not honoured
+    for this line: both prices revert to the stored pair, which is one basis by
+    construction, and the mark says the basis is not the one that was asked
+    for. An honest pre-tax pair beats a mixed pair that reads as all-in.
+
+    The stored pair is the last resort, not a preference. It is used only when
+    the asked-for basis is unreachable for one side and reachable for the
+    other; where both sides can be put on it, they are.
+    """
+    shown_old = displayed_price(old, show_with_tax)
+    shown_new = displayed_price(new, show_with_tax)
+
+    # Only the sides that carry a number can qualify one. A sold-out room's
+    # empty side has no basis to disagree about, and letting it vote would
+    # brand every sell-out "mixed".
+    notes = {
+        s.note
+        for s in (shown_old, shown_new)
+        if s.amount is not None and s.note is not None
+    }
+    priced = [s for s in (shown_old, shown_new) if s.amount is not None]
+    if not notes:
+        note = None
+    elif len(notes) == 1 and (len(priced) == 1 or shown_old.note == shown_new.note):
+        note = notes.pop()
+    else:
+        note = MIXED_NOTE
+
+    amount_old, amount_new = shown_old.amount, shown_new.amount
+    if note == MIXED_NOTE and old.current_price is not None and new.current_price is not None:
+        # Both on the comparison basis, so the difference below is arithmetic
+        # on one thing. See the docstring: the mark stays, the numbers revert.
+        amount_old, amount_new = old.current_price, new.current_price
+
+    delta = pct = None
+    if amount_old is not None and amount_new is not None:
+        delta = (amount_new - amount_old).quantize(_CENTS, rounding=ROUND_HALF_UP)
+        pct = _percent(amount_old, amount_new)
+
+    return ShownMove(
+        old=amount_old, new=amount_new, delta=delta, delta_pct=pct, note=note
+    )
+
+
+def _percent(old: Decimal, new: Decimal) -> Decimal:
+    """Percentage change, guarding a zero baseline the way ``comparison`` does."""
+    if old == 0:
+        return Decimal("100.00") if new != 0 else Decimal("0.00")
+    return ((new - old) / old * 100).quantize(_PCT, rounding=ROUND_HALF_UP)
 
 
 def cheapest(shown: list[Shown]) -> Decimal | None:

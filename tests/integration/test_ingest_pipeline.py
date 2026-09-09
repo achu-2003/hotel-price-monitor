@@ -938,3 +938,143 @@ class TestTheNeedsMappingQueueClearsItself:
             select(UnmatchedOffer).where(UnmatchedOffer.resolved_at.is_(None))
         ).all()
         assert [row.raw_room_name for row in still_open] == ["---"]
+
+
+class TestTheTaxComponentsOfAMove:
+    """A confirmed change records what each of its two prices was made of.
+
+    WHY THE ROW CARRIES THEM AT ALL
+    ===============================
+    ``old_price`` and ``new_price`` are one number each, on ``PRICE_BASIS``.
+    An alert rendered from them cannot honour the "show prices with tax"
+    switch on Settings -- there is nothing to add. The components are on
+    ``price_series`` too, but that row is overwritten on every check, and a
+    digest held through quiet hours is rebuilt hours and many checks later.
+    So they are frozen onto the change, once, and never touched again.
+    """
+
+    @staticmethod
+    def _split(price, tax, name="Deluxe Room"):
+        """A site that quotes the room and states the tax beside it."""
+        return NormalizedOffer(
+            raw_room_name=name,
+            price_exclusive=Decimal(price),
+            taxes_fees=Decimal(tax),
+            currency="INR",
+            is_available=True,
+        )
+
+    def _confirm(self, session, fixture, base, offer, minutes):
+        """Feed the same offer twice, which is what the debounce asks for."""
+        for step in (minutes, minutes + 30):
+            ingest_fetch_result(
+                session,
+                _result(offer),
+                _context(
+                    fixture,
+                    checked_at=base + timedelta(minutes=step),
+                    price_basis=PriceBasis.EXCLUSIVE,
+                ),
+            )
+            session.flush()
+
+    def test_both_sides_are_recorded(self, session, hotel_fixture):
+        base = datetime.now(UTC)
+        ingest_fetch_result(
+            session,
+            _result(self._split("9000", "1620")),
+            _context(hotel_fixture, checked_at=base, price_basis=PriceBasis.EXCLUSIVE),
+        )
+        session.flush()
+
+        self._confirm(session, hotel_fixture, base, self._split("9500", "1710"), 30)
+
+        change = session.scalars(select(PriceChange)).one()
+        assert (change.old_price, change.new_price) == (
+            Decimal("9000.00"),
+            Decimal("9500.00"),
+        )
+        assert (change.old_price_exclusive, change.old_taxes_fees) == (
+            Decimal("9000.00"),
+            Decimal("1620.00"),
+        )
+        assert (change.new_price_exclusive, change.new_taxes_fees) == (
+            Decimal("9500.00"),
+            Decimal("1710.00"),
+        )
+
+    def test_a_wobble_too_small_to_alert_does_not_move_the_was_side(self, session, hotel_fixture):
+        """The reason ``baseline_price_*`` exist beside ``last_price_*``.
+
+        ``last_price`` deliberately holds still through a sub-threshold drift,
+        so that a run of them accumulates against one fixed point instead of
+        each step being waved through. Its components have to hold still with
+        it. Reading ``last_price_exclusive`` for the "was" side would have
+        printed a baseline of 9,000 beside the tax from a 9,020 reading -- a
+        pair of numbers that never appeared together on any page.
+        """
+        base = datetime.now(UTC)
+        ingest_fetch_result(
+            session,
+            _result(self._split("9000", "1620")),
+            _context(hotel_fixture, checked_at=base, price_basis=PriceBasis.EXCLUSIVE),
+        )
+        session.flush()
+
+        # 20 rupees: under the 50-rupee floor, so nothing is confirmed and the
+        # baseline stays exactly where it was.
+        ingest_fetch_result(
+            session,
+            _result(self._split("9020", "1623.60")),
+            _context(
+                hotel_fixture,
+                checked_at=base + timedelta(minutes=30),
+                price_basis=PriceBasis.EXCLUSIVE,
+            ),
+        )
+        session.flush()
+
+        series = session.scalars(select(PriceSeries)).one()
+        assert series.last_price == Decimal("9000.00")
+        # The screen follows every check...
+        assert series.last_taxes_fees == Decimal("1623.60")
+        # ...and the baseline does not.
+        assert series.baseline_price_exclusive == Decimal("9000.00")
+        assert series.baseline_taxes_fees == Decimal("1620.00")
+
+        self._confirm(session, hotel_fixture, base, self._split("9500", "1710"), 60)
+
+        change = session.scalars(select(PriceChange)).one()
+        assert change.old_price == Decimal("9000.00")
+        assert change.old_taxes_fees == Decimal("1620.00")
+
+    def test_a_sold_out_room_keeps_the_components_of_the_price_it_had(
+        self, session, hotel_fixture
+    ):
+        base = datetime.now(UTC)
+        ingest_fetch_result(
+            session,
+            _result(self._split("9000", "1620")),
+            _context(hotel_fixture, checked_at=base, price_basis=PriceBasis.EXCLUSIVE),
+        )
+        session.flush()
+
+        # Declared sold out by the page, which needs no debounce.
+        ingest_fetch_result(
+            session,
+            _result(sold_out=True),
+            _context(
+                hotel_fixture,
+                checked_at=base + timedelta(minutes=30),
+                price_basis=PriceBasis.EXCLUSIVE,
+            ),
+        )
+        session.flush()
+
+        change = session.scalars(select(PriceChange)).one()
+        assert change.direction is ChangeDirection.BECAME_UNAVAILABLE
+        assert change.old_price_exclusive == Decimal("9000.00")
+        assert change.old_taxes_fees == Decimal("1620.00")
+        # There is no new price, so there are no new components to invent.
+        assert change.new_price_exclusive is None
+        assert change.new_taxes_fees is None

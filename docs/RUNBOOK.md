@@ -350,6 +350,113 @@ Three things that get templates rejected or silently unusable:
 "Rate update" rather than "Price change" because the same template also carries
 sold-out and available-again events.
 
+**1b. Submit the summary template too.** The two-hourly "what moved" message
+is a DIFFERENT approved template — `WHATSAPP_COMPARISON_TEMPLATE_NAME`, this
+deployment calls it `market_comparison_alert` — and until it exists the summary
+is refused rather than squeezed into the price-change template's slots. Five
+variables, category **Utility**, language to match `WHATSAPP_TEMPLATE_LANG`:
+
+```
+📊 *{{1}}*
+
+*What moved*
+
+▸ {{2}}
+
+▸ {{3}}
+
+▸ {{4}}
+
+🕒 Rates checked at {{5}}
+Open your dashboard for the full comparison table and the history behind every figure.
+```
+
+Sample values for the submission form:
+
+```
+{{1}} 4 rooms changed price in the last 2 hours
+{{2}} *STERLING* – ▲ Classic Room: ₹3030.48 → ₹3124.76 (Increase ₹94.28; 3.1%)
+{{3}} *Ananthyam Resort* – ▼ Deluxe Double Room: ₹5775 → ₹5490 (Decrease ₹285; 4.9%)
+{{4}} Stay 12 Sep 2026 → 13 Sep 2026
+{{5}} 2:36 PM IST · prices excl. tax
+```
+
+Then `WHATSAPP_COMPARISON_TEMPLATE_PARAMS=5`, which must equal the number of
+variables approved: `render._summary_params` produces exactly that many and the
+provider refuses any other count before it spends a message.
+
+**Why three move slots and not five.** Two variables are fixed — the count and
+the stamp — and the rest are lines for the moves. Three quarters of the
+two-hour windows here move one, two or three rooms, so a template with more
+slots than that spends most evenings printing "—" under a single price. Three
+is the count at which `_spread` and `_context` can always fill the message:
+spare lines take the property's other rooms, then the stay, then "Nothing else
+moved in this window." A busier window packs several properties into one slot
+and says in the headline how many did not fit.
+
+**Change the body by submitting a NEW NAME, not by editing the live one.**
+Meta allows one edit per 24 hours on an active template and about ten a month;
+a second attempt is refused with
+
+    code 100, error_subcode 2388124
+    "You can only edit an active template once in 24 hours."
+
+and an edit that *is* accepted sends the template back to PENDING — so the
+summary stops going out until it clears review again. A new name
+(`market_comparison_alert_v2`) has neither problem: the approved template keeps
+sending while the replacement is reviewed, and the switch is two lines of
+`.env` — `WHATSAPP_COMPARISON_TEMPLATE_NAME` and
+`WHATSAPP_COMPARISON_TEMPLATE_PARAMS`, changed together, since a name and a
+variable count that disagree is error 132000 on every send. The name is
+configuration for exactly this reason.
+
+**A PARAMETER CAN CONTAIN A NEWLINE. Meta's documentation says otherwise.**
+It lists newlines, tabs and runs of spaces as rejected inside a template
+variable (132005), and both providers flattened every parameter on that basis
+for as long as this message existed — which is why the summary read as one
+run-on line per property. Measured against the live reseller endpoint on
+9 Sep 2026:
+
+```
+Param=...*Sterling*%0A▲ Classic Room: ₹3218.36 → ₹3390%0A▼ ...
+-> {"ApiResponse":"Success", ... "message_status":"accepted"}   real wamid
+```
+
+and it arrived on the handset broken across the lines it asked for. `quote`
+writes the newline as `%0A` and the reseller's `rawurldecode` hands it back
+intact. So a slot is a **block** — `render._blocks` puts the property name on
+its own line with one room per line under it — and the template's blank lines
+separate one property from the next. Two properties sharing a slot are
+separated by `render._SEGMENT`, which is a blank line for the same reason.
+
+Do not re-flatten this in a provider. `whatsapp_cloud._clean` and
+`whatsapp_mydreams._param_safe` still collapse tabs and runs of spaces (those
+are on the same list and have NOT been measured, and nothing needs one), still
+refuse an empty value, and still handle the reseller's comma — but they leave
+newlines alone. Scraped text is flattened instead in `render._flat`, at the one
+point where a line break that means something can be told apart from one that
+came out of somebody's room table.
+
+**Every line has to fit forty characters, because a handset is forty
+characters wide.** WhatsApp Web is as wide as the window, so a sixty-character
+room line looks correct there and wraps on the phone -- and a wrapped
+continuation starts at column 0, where it reads as a line of its own and undoes
+the block. Indentation is not available to fix it: runs of spaces are collapsed
+before Meta sees them, measured alongside the newline. So `render._wa_room`
+gives each room two lines, the name and then the figures, and drops the
+spelled-out "Increase"/"Decrease" that the text and email bodies keep -- the
+arrow at the head of the name already says the direction, and the word is what
+pushed the figures line into a wrap. A room's tax-basis note rides on the name
+line for the same reason.
+
+**Formatting inside a variable works too.** `*asterisks*` render bold in a
+PARAMETER, not just in the template's own text — confirmed on the same path.
+That is what makes the first line of a block read as a heading. Padding with
+spaces does not work: they collapse.
+
+Slots the properties do not need go to `render._context`, whose lines belong to
+the window rather than to any one property and so read correctly across a gap.
+
 **2. Fill in `.env`.**
 
 Through the reseller (the live path):
