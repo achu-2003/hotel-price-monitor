@@ -62,6 +62,41 @@ from sqlalchemy import select  # noqa: E402
 from app.db.models import Hotel, HotelSource, PriceSeries, RoomType, Source  # noqa: E402
 from app.db.session import sync_session  # noqa: E402
 from app.services.rediscovery import names_echo_the_property  # noqa: E402
+from app.workers.tasks_repair import purge_changes_for_rooms  # noqa: E402
+
+
+def _orphan_changes(session, hotel_id: int):
+    from app.db.models import PriceChange
+
+    live = select(PriceSeries.offer_key).where(PriceSeries.hotel_id == hotel_id)
+    return session.scalars(
+        select(PriceChange).where(
+            PriceChange.hotel_id == hotel_id,
+            PriceChange.offer_key.not_in(live),
+        )
+    ).all()
+
+
+def _count_orphan_changes(session, hotel_id: int) -> int:
+    return len(_orphan_changes(session, hotel_id))
+
+
+def _purge_orphan_changes(session, hotel_id: int) -> int:
+    """Changes whose series no longer exists, and which therefore have no name.
+
+    A price_change joins to its room through price_series on offer_key. When
+    the series is gone -- retired with an invented room, or dropped because a
+    repair changed the offer key -- the change survives with nothing to
+    resolve, and the renderer prints "(room)".
+
+    Scoped to one hotel because that is the blast radius of the action this
+    script just took, and a global sweep is not a thing to do as a side effect
+    of fixing one source.
+    """
+    doomed = _orphan_changes(session, hotel_id)
+    for change in doomed:
+        session.delete(change)
+    return len(doomed)
 
 #: Keys that describe the PAGE and are safe to copy between sources on the same
 #: site. Everything else on a config belongs to the source that owns it -- the
@@ -181,6 +216,14 @@ def main() -> int:
             if not doomed:
                 print("   (none -- no room type here is named after the hotel)")
 
+        # Counted before the write so a deletion is never a surprise. These are
+        # changes whose series is already gone -- they render as "(room)".
+        orphans = _count_orphan_changes(session, target.hotel_id)
+        if orphans:
+            print(f"\nUNRESOLVABLE CHANGES TO DELETE: {orphans}")
+            print("   Their price series no longer exists, so the renderer has")
+            print("   no room name for them and prints the literal '(room)'.")
+
         if not args.yes:
             print("\nDRY RUN — nothing written. Re-run with --yes.")
             return 0
@@ -203,11 +246,22 @@ def main() -> int:
         )
         target.adapter_config = restored
 
+        purged = 0
         for room in doomed:
+            # Before the delete: the cascade takes the series with the room,
+            # and the series is the only thing joining a change to a name.
+            purged += purge_changes_for_rooms(session, [room.id])
             session.delete(room)  # cascades to its price series and aliases
 
+        # Changes left unresolvable by an EARLIER retirement -- including one
+        # this script itself performed before it knew to do this.
+        purged += _purge_orphan_changes(session, target.hotel_id)
+
         session.commit()
-        print(f"\nWritten. {len(doomed)} room type(s) retired.")
+        print(
+            f"\nWritten. {len(doomed)} room type(s) retired, "
+            f"{purged} unresolvable change(s) removed."
+        )
         print("Re-run scripts/inspect_source_config.py to confirm.")
     return 0
 

@@ -435,11 +435,56 @@ def _retire_invented_rooms(
     removed = []
     for room in rooms:
         removed.append(room.name)
+        # BEFORE the delete: the cascade takes the series with the room, and
+        # the series is the only thing connecting a change to a room name.
+        purge_changes_for_rooms(session, [room.id])
         session.delete(room)   # cascades to its price series and aliases
 
     if removed:
         logger.info("invented_rooms_retired", rooms=removed[:8])
     return removed
+
+
+def purge_changes_for_rooms(session, room_ids: list[int]) -> int:
+    """Delete the recorded moves of rooms that are being retired.
+
+    A price_change names its room by joining through price_series on
+    ``offer_key`` -- there is no room_type_id on the change itself. Retiring a
+    room cascades its series away, and every change it ever produced is then
+    unresolvable: ``tasks_notify._render_lines`` finds no series, no room, and
+    prints the literal ``(room)``.
+
+    Observed on 9 Sep 2026, immediately after retiring the room type Treebo
+    Emerald Dove's broken config had invented:
+
+        *TREEBO PREMIMUM EMERALD DOVEWITH SWIMMING POOL*
+        ▼ (room)     ₹2,752 → ₹2,640
+        🚫 (room) — sold out
+
+    Which is worse than the name it replaced. "Treebo Premium Emerald Dove"
+    was at least a string somebody could recognise as wrong; "(room)" is the
+    renderer admitting it has nothing, in a message going to a client.
+
+    The same argument that retires the room retires its history: these moves
+    were measured between two readings of a page heading. There is nothing in
+    them to keep, and no other room can claim them -- an offer_key belongs to
+    one series, and that series is going.
+    """
+    from app.db.models import PriceChange
+
+    keys = list(
+        session.scalars(
+            select(PriceSeries.offer_key).where(PriceSeries.room_type_id.in_(room_ids))
+        ).all()
+    )
+    if not keys:
+        return 0
+    doomed = session.scalars(
+        select(PriceChange).where(PriceChange.offer_key.in_(keys))
+    ).all()
+    for change in doomed:
+        session.delete(change)
+    return len(doomed)
 
 
 def _retire_superseded_series(

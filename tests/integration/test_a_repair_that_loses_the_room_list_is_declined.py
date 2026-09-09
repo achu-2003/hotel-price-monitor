@@ -223,3 +223,113 @@ def select_rooms(hotel_id):
     from sqlalchemy import select
 
     return select(RoomType).where(RoomType.hotel_id == hotel_id)
+
+
+class TestRetiringARoomTakesItsRecordedMovesWithIt:
+    """Otherwise the alert says "(room)", which is worse than a wrong name.
+
+    A price_change carries no room_type_id. It names its room by joining
+    through price_series on offer_key, so retiring a room -- which cascades
+    the series away -- leaves every move that room produced with nothing to
+    resolve. Seen in production on 9 Sep 2026, minutes after retiring the room
+    Treebo Emerald Dove's broken config invented:
+
+        ▼ (room)     ₹2,752 → ₹2,640
+        🚫 (room) — sold out
+    """
+
+    def _a_change_on(self, session, series):
+        from datetime import UTC, datetime
+        from decimal import Decimal
+
+        from app.db.models import ChangeDirection, PriceChange
+
+        change = PriceChange(
+            offer_key=series.offer_key,
+            hotel_id=series.hotel_id,
+            changed_at=datetime.now(UTC),
+            first_seen_at=datetime.now(UTC),
+            old_price=Decimal("2752"),
+            new_price=Decimal("2640"),
+            delta=Decimal("-112"),
+            currency="INR",
+            direction=ChangeDirection.DECREASE,
+            notified=False,
+        )
+        session.add(change)
+        session.flush()
+        return change
+
+    def test_the_moves_go_when_the_room_goes(self, session, hotel_fixture):
+        from app.db.models import PriceChange, PriceSeries, RoomType
+        from app.workers.tasks_repair import purge_changes_for_rooms
+        from sqlalchemy import select
+
+        hotel = hotel_fixture["hotel"]
+        room = session.scalars(
+            select(RoomType).where(RoomType.hotel_id == hotel.id)
+        ).first()
+        series = _series_for(session, hotel, hotel_fixture["source"], room)
+        change = self._a_change_on(session, series)
+
+        assert purge_changes_for_rooms(session, [room.id]) == 1
+        session.flush()
+        assert session.get(PriceChange, change.id) is None
+
+    def test_another_rooms_moves_are_untouched(self, session, hotel_fixture):
+        """An offer_key belongs to one series, and only that one is going."""
+        from app.db.models import PriceChange, RoomType
+        from app.workers.tasks_repair import purge_changes_for_rooms
+
+        hotel = hotel_fixture["hotel"]
+        source = hotel_fixture["source"]
+        keep = RoomType(
+            hotel_id=hotel.id, name="Real Room", canonical_name="real", capacity=2
+        )
+        doomed = RoomType(
+            hotel_id=hotel.id, name="Invented", canonical_name="invented", capacity=2
+        )
+        session.add_all([keep, doomed])
+        session.flush()
+        kept_change = self._a_change_on(
+            session, _series_for(session, hotel, source, keep, key="keep")
+        )
+        self._a_change_on(
+            session, _series_for(session, hotel, source, doomed, key="doom")
+        )
+
+        assert purge_changes_for_rooms(session, [doomed.id]) == 1
+        session.flush()
+        assert session.get(PriceChange, kept_change.id) is not None
+
+    def test_a_room_that_never_moved_purges_nothing(self, session, hotel_fixture):
+        from app.db.models import RoomType
+        from app.workers.tasks_repair import purge_changes_for_rooms
+        from sqlalchemy import select
+
+        room = session.scalars(
+            select(RoomType).where(RoomType.hotel_id == hotel_fixture["hotel"].id)
+        ).first()
+        assert purge_changes_for_rooms(session, [room.id]) == 0
+
+
+def _series_for(session, hotel, source, room, key="offer"):
+    from datetime import UTC, datetime
+
+    from app.db.models import PriceSeries
+
+    series = PriceSeries(
+        offer_key=f"{key}-{room.id}",
+        hotel_id=hotel.id,
+        room_type_id=room.id,
+        source_id=source.id,
+        check_in=date(2026, 12, 20),
+        check_out=date(2026, 12, 21),
+        adults=2,
+        currency="INR",
+        first_seen_at=datetime.now(UTC),
+        last_checked_at=datetime.now(UTC),
+    )
+    session.add(series)
+    session.flush()
+    return series
