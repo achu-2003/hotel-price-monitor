@@ -214,10 +214,19 @@ SUPPRESSED_NO_RECIPIENTS = "no_recipients"       # nobody is assigned to the hot
 SUPPRESSED_RECIPIENT_INACTIVE = "recipient_inactive"  # assigned, but switched off
 SUPPRESSED_BELOW_THRESHOLD = "below_threshold"   # too small for everyone assigned
 
+#: Not a price move, and the alerts are about price moves.
+#:
+#: Unlike the three above, this is not a misconfiguration with a fix. The
+#: change is real, it is recorded, and the dashboard shows it -- it is simply
+#: not what these messages are for. Recorded separately so that a room going
+#: quiet is never mistaken for one nobody was assigned to.
+SUPPRESSED_NOT_A_PRICE_MOVE = "not_a_price_move"  # sold out, or back on sale
+
 SUPPRESSION_LABELS = {
     SUPPRESSED_NO_RECIPIENTS: "nobody is assigned to this hotel",
     SUPPRESSED_RECIPIENT_INACTIVE: "everyone assigned is deactivated",
     SUPPRESSED_BELOW_THRESHOLD: "below everyone's alert threshold",
+    SUPPRESSED_NOT_A_PRICE_MOVE: "an availability change, not a rate move",
 }
 
 

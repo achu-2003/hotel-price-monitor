@@ -11,7 +11,10 @@ TWO MESSAGES, TWO TRIGGERS
 ==========================
 ``dispatch_changes`` fires the moment a change is confirmed and sends one
 message per (recipient, hotel) naming the rooms that moved and by how much.
-This is what the system has always sent and none of it changes.
+
+Both are about RATES. A room selling out or coming back is confirmed, stored
+and shown on the dashboard, and neither message carries it — see
+``_PRICE_MOVE_DIRECTIONS``.
 
 ``market_summary`` fires on a clock — every ``alert_defaults``
 ``summary_interval_hours`` — and sends ONE message per recipient: how many
@@ -56,6 +59,7 @@ from app.db.models import (
 )
 from app.db.models.price import (
     SUPPRESSED_BELOW_THRESHOLD,
+    SUPPRESSED_NOT_A_PRICE_MOVE,
     SUPPRESSED_NO_RECIPIENTS,
     SUPPRESSED_RECIPIENT_INACTIVE,
 )
@@ -106,6 +110,26 @@ _MAX_SEND_ATTEMPTS = 5
 _SEND_BACKOFF = (60, 300, 900, 3600, 10800)
 
 
+#: What BOTH messages report on: rates that moved, and nothing else.
+#:
+#: A sell-out and a return are real events, recorded and shown on the
+#: dashboard. They are not rate moves, and neither message is about them:
+#:
+#:     Room: Club Room
+#:     Was: ₹7139   Now: ₹7139   Change: now available
+#:
+#: — a paid WhatsApp whose two prices are the same number. And in the
+#: two-hourly digest they crowd out what it is for: one real window carried
+#: fifteen availability notices against three price lines, "Anthapuram Suite
+#: with 2 Bedrooms, 1 Living room and Private Swimming Pool - sold out" among
+#: them, each a full line saying a room is unavailable now.
+#:
+#: The cost is not only the reading. Slots are few and the digest is capped by
+#: the URL it travels in, so every availability line was a price move that got
+#: truncated or pushed into "and N more on the dashboard".
+_PRICE_MOVE_DIRECTIONS = (ChangeDirection.INCREASE, ChangeDirection.DECREASE)
+
+
 @shared_task(name="notify.dispatch_changes", ignore_result=True)
 def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
     """Batch changes per (recipient, hotel) and queue one message each."""
@@ -116,6 +140,26 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         changes = session.execute(
             select(PriceChange).where(PriceChange.id.in_(change_ids))
         ).scalars().all()
+        if not changes:
+            return {"notifications": 0}
+
+        # A sell-out and a return are not rate moves, and these alerts are
+        # about rate moves. "Was ₹7139 / Now ₹7139 / Change: now available" is
+        # a paid message whose two prices are the same number.
+        #
+        # Marked notified rather than skipped. A change left pending comes
+        # back in every later dispatch forever -- the trap the no-recipients
+        # branch below is written around -- and the reason is recorded so a
+        # room going quiet is never read afterwards as one nobody was
+        # assigned to. It stays on the dashboard, where availability belongs.
+        availability = [c for c in changes if c.direction not in _PRICE_MOVE_DIRECTIONS]
+        for change in availability:
+            change.notified = True
+            change.suppressed_reason = SUPPRESSED_NOT_A_PRICE_MOVE
+        if availability:
+            log.info("availability_changes_not_alerted", count=len(availability))
+
+        changes = [c for c in changes if c.direction in _PRICE_MOVE_DIRECTIONS]
         if not changes:
             return {"notifications": 0}
 
@@ -244,19 +288,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
     return {"notifications": len(created)}
 
 
-#: What the two-hourly summary reports on: rates that moved, and nothing else.
-#:
-#: A sell-out and a return are real events and the per-change alert announces
-#: both the moment they happen, which is when that news is actionable. In a
-#: digest read hours later they are noise with a long name -- "Anthapuram Suite
-#: with 2 Bedrooms, 1 Living room and Private Swimming Pool - sold out" is a
-#: full line saying a room is unavailable now, which the dashboard shows
-#: better. One real window carried fifteen of those against three price lines.
-#:
-#: The cost is not only the reading. Slots are few and the message is capped by
-#: the URL it travels in, so every availability line is a price move that got
-#: truncated or pushed to "and N more on the dashboard".
-_SUMMARY_DIRECTIONS = (ChangeDirection.INCREASE, ChangeDirection.DECREASE)
+
 
 
 @shared_task(name="notify.market_summary", ignore_result=True)
@@ -311,7 +343,7 @@ def market_summary() -> dict[str, int]:
                 # The per-change alert still announces a sell-out the moment
                 # it happens, which is when that news is worth having. This
                 # is the digest somebody opens to set tomorrow's rate.
-                PriceChange.direction.in_(_SUMMARY_DIRECTIONS),
+                PriceChange.direction.in_(_PRICE_MOVE_DIRECTIONS),
             )
         ).scalars().all()
         if not changes:

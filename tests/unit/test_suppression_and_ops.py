@@ -83,9 +83,15 @@ class TestWhyNobodyWasTold:
         assert change.suppressed_reason == SUPPRESSED_BELOW_THRESHOLD
         assert sent_notifications(session) == []
 
-    def test_the_three_reasons_stay_distinct(self):
-        """A shared label would put the fixes back in one bucket."""
-        assert len(set(SUPPRESSION_LABELS.values())) == 3
+    def test_every_reason_stays_distinct(self):
+        """A shared label would put the fixes back in one bucket.
+
+        Counted against the mapping rather than a literal. This asserted == 3
+        and broke when a fourth reason was added for an availability change --
+        a change that was correct, against a test whose own docstring says the
+        invariant is distinctness, not arithmetic.
+        """
+        assert len(set(SUPPRESSION_LABELS.values())) == len(SUPPRESSION_LABELS)
 
 
 class TestSuppressionIsClearedOnRedelivery:

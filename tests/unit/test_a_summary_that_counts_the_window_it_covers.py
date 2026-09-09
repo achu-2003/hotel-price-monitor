@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.db.models.price import SUPPRESSED_NOT_A_PRICE_MOVE
 from app.db.models import (
     Hotel,
     HotelRecipient,
@@ -1086,3 +1087,64 @@ class TestTheSummaryReportsRatesNotAvailability:
         tasks_notify.market_summary()
         body = _rows(world)[0].body_rendered
         assert "2 rooms" in body
+
+
+class TestTheImmediateAlertIsAboutRatesToo:
+    """A sell-out is not a rate move, in either message.
+
+    The alert that prompted this:
+
+        Room: Club Room
+        Was: 7139   Now: 7139   Change: now available
+
+    -- a paid WhatsApp whose two prices are the same number.
+    """
+
+    def _availability(self, world, direction, change_id):
+        world.tables["changes"] = [
+            PriceChange(
+                id=change_id, hotel_id=7, offer_key="offer-1",
+                old_price=Decimal("3848.80"), new_price=None,
+                delta=None, delta_pct=None,
+                currency="INR", direction=direction,
+                previous_offer_key=None, notified=False,
+                changed_at=NOW - timedelta(minutes=5),
+            )
+        ]
+        return world.tables["changes"][0]
+
+    def test_a_sell_out_sends_nothing(self, world, monkeypatch):
+        self._availability(world, "became_unavailable", 301)
+        tasks_notify.dispatch_changes([301])
+        assert _rows(world) == []
+
+    def test_a_return_sends_nothing(self, world, monkeypatch):
+        self._availability(world, "became_available", 302)
+        tasks_notify.dispatch_changes([302])
+        assert _rows(world) == []
+
+    def test_it_is_marked_notified_so_it_cannot_come_back(self, world, monkeypatch):
+        """A change left pending reappears in every later dispatch forever."""
+        change = self._availability(world, "became_unavailable", 303)
+        tasks_notify.dispatch_changes([303])
+        assert change.notified is True
+
+    def test_it_records_why_rather_than_looking_delivered(self, world, monkeypatch):
+        """Otherwise a quiet room reads afterwards as one nobody was assigned to."""
+        change = self._availability(world, "became_unavailable", 304)
+        tasks_notify.dispatch_changes([304])
+        assert change.suppressed_reason == SUPPRESSED_NOT_A_PRICE_MOVE
+
+    def test_a_price_move_in_the_same_batch_still_sends(self, world, monkeypatch):
+        """The filter must not swallow the batch it is travelling in."""
+        sold_out = PriceChange(
+            id=305, hotel_id=7, offer_key="offer-9",
+            old_price=Decimal("3000"), new_price=None, delta=None, delta_pct=None,
+            currency="INR", direction="became_unavailable",
+            previous_offer_key=None, notified=False,
+            changed_at=NOW - timedelta(minutes=5),
+        )
+        world.tables["changes"].append(sold_out)
+        ids = [c.id for c in world.tables["changes"]]
+        tasks_notify.dispatch_changes(ids)
+        assert _rows(world), "the real price moves must still be sent"
