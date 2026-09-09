@@ -456,6 +456,79 @@ def names_to_retire(
     return suspect - kept
 
 
+#: Below this share of the rooms a source already produces, a repair is read as
+#: a regression rather than a repair.
+#:
+#: Half, because the two cases either side of it are different in kind. A
+#: hotel that genuinely retires one room type of four still shows three, and
+#: the repair should stand. A config that has stopped finding the room list
+#: altogether does not degrade gently -- it lands on one element, because the
+#: thing it settles on is a container or a heading, and there is only ever one
+#: of those. Every real instance of this has been "several rooms became one".
+_ROOM_COUNT_FLOOR = 0.5
+
+
+def is_a_regression(established_rooms: int, discovered_rooms: int) -> bool:
+    """Did this "repair" lose most of the room list?
+
+    A repair writes to live configuration with nobody reading the result, so
+    the only thing standing between a bad candidate and production is the bar
+    it has to clear. That bar asked whether the prices found were really
+    prices -- at least one printed with a currency beside it -- and never
+    asked how MANY rooms came back.
+
+    A candidate that finds one room passes it trivially. Its single price is
+    on the page, it has a rupee sign, corroboration is 1/1, and the note it
+    writes reads "1 rooms, 1/1 prices confirmed" -- a perfect score and a
+    near-total failure, in the same sentence. Observed on Treebo's site on
+    3 Sep 2026: four rooms collapsed to one, and the one was the property
+    title, because the card selector had settled on the container that wraps
+    the room list rather than the rooms inside it.
+
+    WHY THE EXISTING GUARD CANNOT CATCH IT
+    ======================================
+    ``resolveNameSelector`` already refuses a name that reads the same on
+    every card -- that is what stops an amenity chip winning. It compares
+    cards against each other, so with ONE card it has nothing to compare and
+    cannot fire at all. The pathology that produces a single card is therefore
+    invisible to precisely the check that would otherwise reject its name.
+    The count has to be looked at separately, and from outside the scan.
+
+    WHAT "ESTABLISHED" MEANS
+    ========================
+    How many rooms this source was already reading, which is a fact about
+    history rather than about the page -- a candidate cannot argue with it.
+    Zero or one means there is no history worth defending: a source still
+    being onboarded, or one that has only ever found a single room, gets no
+    protection here, because the guard would then be asserting a floor it has
+    no evidence for.
+
+    TWO RULES, BECAUSE THE RATIO ALONE MISSES THE SMALL CASE
+    ========================================================
+    Losing more than half the rooms is the general shape. But a source with
+    two rooms collapsing to one loses exactly half, which the ratio permits --
+    and one room is not half a room list, it is the signature of the fault.
+    The pathology lands on a single element every time, because a container
+    and a heading are things there is only ever one of.
+
+    So collapsing to one room is a regression whenever there were several to
+    lose, whatever the ratio says about it. A hotel that has genuinely shrunk
+    to a single room type trips this and gets a person instead of a silent
+    rewrite, which is the right way round: declining costs an alert somebody
+    already has, and accepting costs the room list.
+
+    A regression is not a failure to be retried. The page is still there and
+    still readable; the finding is that what came back is worse than what is
+    stored. So the caller declines the write and leaves the alert standing,
+    which is the outcome that fetches a person.
+    """
+    if established_rooms < 2 or discovered_rooms >= established_rooms:
+        return False
+    if discovered_rooms <= 1:
+        return True
+    return discovered_rooms < established_rooms * _ROOM_COUNT_FLOOR
+
+
 def is_a_real_change(
     current: dict[str, Any] | None, discovered: dict[str, Any]
 ) -> bool:

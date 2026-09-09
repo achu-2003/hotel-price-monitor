@@ -22,13 +22,13 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from celery import shared_task
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 
 from app.adapters.discovery import json_fragment
 from app.adapters.mapping import render_template
 from app.config import get_settings
 from app.core.logging import get_logger
-from app.db.models import AuditLog, HotelSource, MonitoringError
+from app.db.models import AuditLog, HotelSource, MonitoringError, PriceSeries
 from app.db.session import sync_session
 from app.services.dates import local_today
 from app.services.rediscovery import (
@@ -38,6 +38,7 @@ from app.services.rediscovery import (
     RepairState,
     identity_selectors_changed,
     is_a_real_change,
+    is_a_regression,
     may_attempt,
     merge_config,
     names_to_retire,
@@ -115,6 +116,22 @@ def rediscover_source(
         hotel_id = source_row.hotel_id
         currency = source_row.currency
 
+        # How many rooms this source is ALREADY reading, counted before the
+        # browser runs so it describes the state the repair is meant to
+        # improve on. Distinct room types rather than series: the same room
+        # across four stay dates is one room, and counting series would set a
+        # floor no candidate could clear. See rediscovery.is_a_regression.
+        established_rooms = (
+            session.scalar(
+                select(func.count(distinct(PriceSeries.room_type_id))).where(
+                    PriceSeries.hotel_id == source_row.hotel_id,
+                    PriceSeries.source_id == source_row.source_id,
+                    PriceSeries.room_type_id.is_not(None),
+                )
+            )
+            or 0
+        )
+
         # The claim itself. The outcome is overwritten below; recording it as
         # "started" means a task killed mid-flight still leaves a truthful
         # trail rather than looking like it never ran.
@@ -186,6 +203,26 @@ def rediscover_source(
         _finish(hotel_source_id, outcome="unverified", now=now)
         logger.info("rediscovery_unverified", why=note[:200])
         return {"status": "unverified", "why": note[:200]}
+
+    # A candidate that clears the corroboration bar can still be worse than
+    # what is stored: one room, one price, a rupee sign beside it, and three
+    # quarters of the room list gone. See rediscovery.is_a_regression for the
+    # case this is built from. Declined rather than retried -- the page was
+    # read fine, so another attempt reads it the same way.
+    if is_a_regression(established_rooms, result.best.room_count):
+        why = (
+            f"found {result.best.room_count} room(s) where this source already "
+            f"reads {established_rooms}; declined as a regression rather than "
+            f"written over a working config"
+        )
+        _finish(hotel_source_id, outcome="regressed", now=now)
+        logger.warning(
+            "rediscovery_regressed",
+            established=established_rooms,
+            discovered=result.best.room_count,
+            names=list(result.best.sample_names[:8]),
+        )
+        return {"status": "regressed", "why": why}
 
     best = result.best
     fragment = json_fragment(best.source_url)

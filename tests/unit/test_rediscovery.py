@@ -19,6 +19,7 @@ from app.services.rediscovery import (
     RepairState,
     identity_selectors_changed,
     is_a_real_change,
+    is_a_regression,
     may_attempt,
     merge_config,
     names_to_retire,
@@ -411,3 +412,63 @@ class TestAHandSetIdentitySelectorSurvivesARepair:
         merged = merge_config(self.WITH_PLAN, to_json)
         assert "selectors" not in merged
         assert "meal_plan" not in merged["fields"]
+
+
+class TestARepairThatLosesTheRoomList:
+    """One room, one price, a currency beside it -- and three rooms gone.
+
+    The corroboration bar asks whether what was found is really a price. It
+    never asked how much of the page was found, so a config that settles on
+    the container wrapping the rooms scores 1/1 and reads as perfect. This is
+    the Treebo case of 3 Sep 2026, where the one surviving "room" was the
+    property title.
+    """
+
+    def test_four_rooms_down_to_one_is_a_regression(self):
+        assert is_a_regression(4, 1) is True
+
+    def test_the_container_case_at_every_size(self):
+        """The pathology lands on ONE element whatever the room list held."""
+        assert all(is_a_regression(n, 1) for n in (2, 3, 6, 12))
+
+    def test_losing_one_room_of_four_is_allowed(self):
+        """A hotel really can retire a room type, and three of four still read."""
+        assert is_a_regression(4, 3) is False
+
+    def test_exactly_half_still_stands_when_half_is_a_room_list(self):
+        """The floor is a floor: half is not below half."""
+        assert is_a_regression(4, 2) is False
+
+    def test_two_rooms_down_to_one_is_a_regression_despite_being_half(self):
+        """One room is not half a room list, it is the signature of the fault.
+
+        The ratio alone would permit this, and the ratio is the wrong
+        instrument at this size: the pathology lands on a single element
+        whether the page held two rooms or twelve.
+        """
+        assert is_a_regression(2, 1) is True
+
+    def test_below_half_does_not(self):
+        assert is_a_regression(6, 2) is True
+
+    def test_finding_more_rooms_is_never_a_regression(self):
+        assert is_a_regression(2, 9) is False
+
+    def test_finding_the_same_number_is_never_a_regression(self):
+        assert is_a_regression(3, 3) is False
+
+    def test_a_source_with_one_room_is_not_defended(self):
+        """No history worth protecting, so the guard asserts nothing.
+
+        A floor derived from a single room would be a claim the source has
+        never supplied evidence for, and it would block the repair of exactly
+        the sources most likely to have been onboarded through a bad config.
+        """
+        assert is_a_regression(1, 0) is False
+        assert is_a_regression(1, 1) is False
+
+    def test_a_source_still_being_onboarded_is_not_defended(self):
+        assert is_a_regression(0, 1) is False
+
+    def test_finding_nothing_against_a_real_room_list_is_a_regression(self):
+        assert is_a_regression(5, 0) is True
