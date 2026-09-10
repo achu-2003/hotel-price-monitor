@@ -1,0 +1,36 @@
+{#
+  A dead link, in the reader's terms.
+
+  The alternative was a bare 404, which on a phone reads as the business having
+  gone offline rather than as a link having aged out. Somebody tapping a
+  three-month-old WhatsApp message should be told which of those it is, and
+  told the thing that is still true: the rates have moved on since.
+
+  Deliberately says nothing about whether the token ever existed. An unknown
+  token and an expired one render this same page, so guessing at one tells the
+  guesser nothing.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Link expired</title>
+  <link rel="stylesheet" href="/static/shared.css?v={{ asset_version('shared.css') }}">
+  <link rel="icon" href="data:,">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+</head>
+<body>
+<main class="sheet">
+  <header class="sheet-head">
+    <h1>This link has expired</h1>
+  </header>
+  <p class="empty">
+    Rate comparison links stay open for a limited time. The rates this one
+    showed have moved on since &mdash; ask for a current link, or open the
+    dashboard if you have an account.
+  </p>
+</main>
+</body>
+</html>

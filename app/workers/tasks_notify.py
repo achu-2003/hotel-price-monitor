@@ -84,6 +84,7 @@ from app.notifications.digest import (
     summary_dedupe_key,
 )
 from app.notifications.render import render_digest, render_summary
+from app.services import comparison_links
 from app.services import monitoring as monitoring_service
 from app.services.price_display import Components, displayed_move
 
@@ -280,6 +281,14 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
                 [lines_by_change[cid] for cid in sorted(kept)],
                 when=now,
                 with_tax=with_tax,
+                # Scoped to the hotel that moved: the owner of THIS property,
+                # and the night these changes were measured on.
+                link=_comparison_url(
+                    session,
+                    [by_id[cid] for cid in sorted(kept)],
+                    hotels[hotel_id].owner_user_id,
+                    now,
+                ),
             )
 
             for channel in _channels_in_use(link.channels or ["email"], email_ok):
@@ -450,15 +459,34 @@ def market_summary() -> dict[str, int]:
 
         hours = _window_hours(window_start, window_end)
 
+        changes_by_id = {c.id: c for c in changes}
+
         for recipient_id, change_ids in pending.items():
             recipient = recipients[recipient_id]
             ids = sorted(set(change_ids))
+            mine = [changes_by_id[cid] for cid in ids if cid in changes_by_id]
+            # Whose hotels this reader is being shown. Taken from the changes
+            # in THEIR message rather than from the sweep as a whole: two
+            # accounts alerted in the same window must not be handed each
+            # other's link. One owner per message follows from assignments
+            # being ownership-scoped, so this is the owner, not a sample.
+            owner_ids = {
+                hotels[c.hotel_id].owner_user_id
+                for c in mine
+                if c.hotel_id in hotels
+            }
             message = render_summary(
                 [lines_by_change[cid] for cid in ids if cid in lines_by_change],
                 window_hours=hours,
                 when=now,
                 param_count=_comparison_param_count(),
                 with_tax=with_tax,
+                link=_comparison_url(
+                    session,
+                    mine,
+                    owner_ids.pop() if len(owner_ids) == 1 else None,
+                    now,
+                ),
             )
             for channel in channels[recipient_id]:
                 notification_id = _create_notification(
@@ -821,6 +849,47 @@ def release_quiet_hours() -> dict[str, int]:
 
 
 # -- helpers ---------------------------------------------------------
+def _comparison_url(
+    session: Session,
+    changes: list[PriceChange],
+    owner_user_id: int | None,
+    now: datetime,
+) -> str | None:
+    """The link to print at the bottom of this message, or ``None``.
+
+    None is the ordinary answer on a deployment that has not been published on
+    a domain yet, and it must stay ordinary: ``public_base_url`` empty means no
+    link is added, because a message carrying http://127.0.0.1:8000 is a dead
+    tap for every reader and looks like the feature working.
+
+    NO ROW IS WRITTEN WHEN THERE IS NOWHERE TO POINT. Checked before the insert
+    rather than after, or a deployment with no public address would accumulate
+    a link table nobody can open.
+
+    A message with no owner behind it -- which should not happen, since every
+    hotel is owned and assignments are ownership-scoped -- gets no link rather
+    than a guess. There is no safe default here: picking an owner would show
+    one account's rates to another's recipients.
+    """
+    if not get_settings().public_base_url.strip():
+        return None
+    if owner_user_id is None:
+        return None
+    stay = comparison_links.stay_of(session, changes)
+    if stay is None:
+        return None
+    check_in, check_out, adults = stay
+    row = comparison_links.ensure_link(
+        session,
+        owner_user_id=owner_user_id,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        now=now,
+    )
+    return comparison_links.public_url(row.token)
+
+
 def _all_hotel_recipient_ids(session: Session) -> list[int]:
     """Recipients that follow every hotel, present and future.
 
@@ -1083,6 +1152,19 @@ def _rebuild_message(session: Session, notification: Notification, subject: str,
         [lines[c.id] for c in changes],
         when=notification.created_at,
         with_tax=with_tax,
+        # Rebuilt, not remembered. The link is not stored on the notification,
+        # so a message held overnight is re-linked here rather than released
+        # carrying whatever was true when it was queued -- and ensure_link
+        # returns the SAME row for the same night, so the URL a reader may
+        # already have from an earlier message keeps working.
+        link=_comparison_url(
+            session,
+            list(changes),
+            hotels[changes[0].hotel_id].owner_user_id
+            if changes[0].hotel_id in hotels
+            else None,
+            notification.created_at,
+        ),
     )
 
 
@@ -1122,12 +1204,21 @@ def _rebuild_summary(
     interval = monitoring_service.summary_interval_hours() or 1
     window_start, window_end = _last_closed_window(notification.created_at, interval)
 
+    owner_ids = {
+        hotels[c.hotel_id].owner_user_id for c in changes if c.hotel_id in hotels
+    }
     return render_summary(
         moved,
         window_hours=_window_hours(window_start, window_end),
         when=notification.created_at,
         param_count=_comparison_param_count(),
         with_tax=with_tax,
+        link=_comparison_url(
+            session,
+            list(changes),
+            owner_ids.pop() if len(owner_ids) == 1 else None,
+            notification.created_at,
+        ),
     )
 
 

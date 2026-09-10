@@ -21,7 +21,12 @@ from app.db.models.monitoring import (
     MonitoringError,
     MonitorTarget,
 )
-from app.db.models.notification import HotelRecipient, Notification, Recipient
+from app.db.models.notification import (
+    ComparisonLink,
+    HotelRecipient,
+    Notification,
+    Recipient,
+)
 from app.db.models.price import (
     OFFER_KEY_LEN,
     PriceChange,
@@ -38,6 +43,7 @@ __all__ = [
     "ChangeDirection",
     "CheckRun",
     "CheckRunStatus",
+    "ComparisonLink",
     "CircuitState",
     "DateStrategy",
     "Hotel",

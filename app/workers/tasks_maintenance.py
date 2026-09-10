@@ -21,7 +21,7 @@ from sqlalchemy import select, text
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.session import sync_session
-from app.services import monitoring, retention
+from app.services import comparison_links, monitoring, retention
 from app.services.dates import local_today, resolve_stay_window
 from app.services.rediscovery import DISCOVERY_VERSION, needs_rescan
 
@@ -78,9 +78,17 @@ def retention_sweep(keep_months: int = RETENTION_MONTHS) -> dict[str, int]:
     immediately. The equivalent ``DELETE`` would take minutes, lock rows, and
     leave the space to be reclaimed by a vacuum that may never come. This is
     the payoff for partitioning from day one.
+
+    Expired comparison links go in the same pass. They are already dead --
+    ``comparison_links.resolve`` checks the expiry on every open, so a link
+    that lapsed an hour ago stops working then rather than when this next runs
+    -- so this is housekeeping on a table that would otherwise grow by a row
+    per night per owner forever, and it belongs with the other deletions rather
+    than on a schedule of its own.
     """
     cutoff = _add_months(date.today().replace(day=1), -keep_months)
     dropped = 0
+    links = 0
 
     with sync_session() as session:
         rows = session.execute(
@@ -99,7 +107,12 @@ def retention_sweep(keep_months: int = RETENTION_MONTHS) -> dict[str, int]:
                 log.info("partition_dropped", partition=name)
                 dropped += 1
 
-    return {"dropped": dropped}
+        links = comparison_links.sweep_expired(session)
+        if links:
+            log.info("comparison_links_swept", deleted=links)
+        session.commit()
+
+    return {"dropped": dropped, "links": links}
 
 
 @shared_task(name="maintenance.alert_on_silence", ignore_result=True)

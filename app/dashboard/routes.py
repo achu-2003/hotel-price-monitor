@@ -65,6 +65,7 @@ from app.db.models.price import SUPPRESSION_LABELS
 from app.notifications import registry
 from app.schemas.notifications import MAX_ALERT_NUMBERS
 from app.notifications.render import money
+from app.services import comparison_links
 from app.services import monitoring as monitoring_service
 from app.services import rate_gap
 from app.services import retention
@@ -198,6 +199,21 @@ async def dashboard_user(
         return None
     try:
         payload = decode_token(hpm_session)
+        # A SESSION IS ONE KIND OF TOKEN, NOT ANY TOKEN THIS KEY SIGNED.
+        #
+        # This used to accept whatever decoded and load ``sub`` as a user id,
+        # which was safe only while access tokens were the sole thing signed
+        # with the secret. The moment a second kind exists, anything carrying a
+        # user id in ``sub`` is a login here for whoever holds it -- pasted
+        # into this cookie, a link meant to open one read-only page would open
+        # the whole dashboard as its owner.
+        #
+        # Checked rather than left to the sharing code to avoid ``sub``,
+        # because that is a rule every future token would have to remember and
+        # this is a rule none of them can break. Existing cookies already carry
+        # typ=access, so nobody is signed out by this arriving.
+        if payload.get("typ") != "access":
+            return None
         user = await session.get(User, int(payload.get("sub", 0)))
     except (jwt.PyJWTError, TypeError, ValueError):
         return None
@@ -1119,6 +1135,98 @@ async def comparison(
         adults=adults,
         default_note=default_note,
         show_with_tax=show_with_tax,
+    )
+
+
+# -- the page an alert links to --------------------------------------
+@router.get("/c/{token}", response_class=HTMLResponse)
+async def shared_comparison(request: Request, token: str, session: DbSession):
+    """The comparison, opened from the bottom of an alert. No login.
+
+    The recipients of a WhatsApp alert are phone numbers, not accounts. A
+    login-walled link would reach none of them, so this is a bearer page: the
+    token is the whole of the authorisation, and it expires.
+
+    WHAT KEEPS IT FROM BEING A HOLE
+    ===============================
+    The token names a row, and the row names an owner, a night and an
+    occupancy. Every query below is the SAME helper the signed-in page calls,
+    filtered by the owner on that row -- not by anything the visitor sent. So
+    the widest thing a stolen link can be made to show is the page it already
+    showed: there is no parameter here to widen, re-date, or point at somebody
+    else's hotels.
+
+    ``_render`` is deliberately not used. It builds the attention badge and the
+    navigation, and a page for somebody with no account must not carry a nav
+    into screens they cannot open -- every item a dead end at the login form.
+
+    A DEAD LINK SAYS SO, in the reader's terms. An expired or unknown token
+    renders a page explaining that the link has expired and prices move on,
+    rather than a bare 404 that reads as the business having gone offline.
+    """
+    link = await comparison_links.resolve(session, token)
+    if link is None:
+        return templates.TemplateResponse(
+            request=request, name="shared_gone.html", context={}, status_code=404
+        )
+
+    owner = await session.get(User, link.owner_user_id)
+    if owner is None or not owner.is_active:
+        # The account the link belongs to is gone or switched off. Same page as
+        # an expired token, on purpose: which of the two it was is not the
+        # reader's business, and saying would tell an unknown holder whether a
+        # token they guessed at ever existed.
+        return templates.TemplateResponse(
+            request=request, name="shared_gone.html", context={}, status_code=404
+        )
+
+    own = (
+        await session.scalars(
+            select(Hotel)
+            .where(
+                Hotel.owner_user_id == owner.id,
+                Hotel.is_own_property.is_(True),
+                Hotel.is_active.is_(True),
+            )
+            .order_by(Hotel.name)
+        )
+    ).all()
+    chosen = (
+        next((h for h in own if h.id == link.baseline_hotel_id), None)
+        or (own[0] if own else None)
+    )
+
+    rows = await _priced_rows(session, owner, link.check_in, link.check_out, link.adults)
+    show_with_tax = await _show_prices_with_tax(session)
+    grid = rate_gap.build(
+        rows,
+        baseline_hotel_id=chosen.id if chosen else None,
+        show_with_tax=show_with_tax,
+    )
+
+    seen = {grid.baseline.hotel.id} if grid.baseline else set()
+    seen |= {r.hotel.id for r in grid.rivals}
+    full = [
+        hotel
+        for hotel, _ in await _sold_out_hotels(
+            session, owner, link.check_in, link.check_out, link.adults
+        )
+        if hotel.id not in seen
+    ]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="shared_comparison.html",
+        context={
+            "grid": grid,
+            "baseline": chosen,
+            "full": full,
+            "check_in": link.check_in,
+            "check_out": link.check_out,
+            "adults": link.adults,
+            "show_with_tax": show_with_tax,
+            "expires_at": link.expires_at,
+        },
     )
 
 

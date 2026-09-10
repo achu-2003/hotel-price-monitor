@@ -1,12 +1,12 @@
 """Who gets told, and what was actually delivered."""
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    ARRAY, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer,
+    ARRAY, BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer,
     Numeric, String, Text, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -185,3 +185,83 @@ class Notification(Base):
 
     def __repr__(self) -> str:
         return f"<Notification {self.id} {self.channel} {self.status}>"
+
+
+class ComparisonLink(Base, TimestampMixin):
+    """The page a recipient opens from the bottom of an alert.
+
+    WHY A ROW AND NOT A SIGNED TOKEN
+    ================================
+    A JWT carrying the same facts is around 250 characters, and percent-encodes
+    to about 350 in a query string. The whole WhatsApp message travels in one
+    URL against a 2,048-byte cap -- see ``_fit_to_query_budget`` in the My
+    Dreams provider, and the 404 that taught us -- so a self-describing token
+    would spend a fifth of the message budget on itself and push real price
+    lines into "and N more on the dashboard".
+
+    Sixteen opaque characters cost 45 including the host, and buy two things a
+    signed token cannot: the link can be revoked, and what it opens can be
+    corrected after it has been sent.
+
+    WHAT IT GRANTS
+    ==============
+    Read access to ONE night's comparison for ONE owner's hotels, and nothing
+    else. It is not a login: the token names no user to authenticate as, the
+    page it opens has no navigation, and the row is the only thing that can
+    turn it into a query. Anybody the message is forwarded to can open it until
+    it expires, which is the deliberate trade for a recipient who has no
+    dashboard account -- and why ``expires_at`` is not optional.
+
+    ONE ROW PER (OWNER, NIGHT, OCCUPANCY, BASELINE), NOT ONE PER MESSAGE. Four
+    numbers times a two-hourly summary times ten hotels is a row every ten
+    minutes, all opening the identical page. Reuse also means the link in this
+    morning's message and the one in this afternoon's are the same URL, so a
+    reader who kept the first still lands somewhere current.
+    """
+
+    __tablename__ = "comparison_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "check_in", "check_out", "adults", "baseline_hotel_id",
+            name="uq_comparison_links_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    #: What appears in the URL. Opaque, so it says nothing about who or what it
+    #: opens to somebody who intercepts the message.
+    token: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+
+    #: Whose hotels the page is scoped to. Every query behind it is filtered by
+    #: this, exactly as the signed-in page filters by the logged-in user, so a
+    #: link can never widen to somebody else's properties.
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: The night the message was about. Pinned rather than resolved at open
+    #: time: an alert names last night's move, and a link that quietly rolled
+    #: forward would show a reader different numbers from the ones that made
+    #: them tap it.
+    check_in: Mapped[date] = mapped_column(Date, nullable=False)
+    check_out: Mapped[date] = mapped_column(Date, nullable=False)
+    adults: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+
+    #: Which of the owner's properties the gaps are measured against. NULL
+    #: means "the first of theirs", the same fallback the signed-in page uses.
+    #: SET NULL rather than CASCADE: retiring a property should not delete a
+    #: link and turn every message quoting it into a dead end.
+    baseline_hotel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hotels.id", ondelete="SET NULL")
+    )
+
+    #: Not nullable, and not defaulted in the database. A link with no expiry
+    #: is a standing credential handed to a phone number, and the one thing
+    #: nobody would notice is that it never stopped working.
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<ComparisonLink {self.token} owner={self.owner_user_id}>"

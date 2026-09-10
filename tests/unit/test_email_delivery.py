@@ -24,6 +24,7 @@ from decimal import Decimal
 import pytest
 
 from app.db.models import (
+    ComparisonLink,
     Hotel,
     HotelRecipient,
     Notification,
@@ -120,6 +121,25 @@ class FakeSession:
                 return _Result(rows)
         raise AssertionError(f"FakeSession has no table for {entity}")
 
+    def scalar(self, statement):
+        """One row or None. Used by ``comparison_links.ensure_link``.
+
+        Absent until the alert link existed, and its absence is why twenty
+        tests went from green to AttributeError the moment PUBLIC_BASE_URL was
+        set: the link path had never run under test. See tests/conftest.py.
+
+        Reuse is what it is really modelling. ``ensure_link`` looks for an
+        existing row for this (owner, night, occupancy, baseline) and creates
+        one only if there is none, so a fake that always answered None would
+        report a fresh link per message and hide the one behaviour that keeps
+        the table from growing with every dispatch.
+        """
+        entity = statement.column_descriptions[0]["entity"]
+        for row in self.tables.get("comparison_links", []):
+            if isinstance(row, entity):
+                return row
+        return None
+
     def get(self, model, pk):
         for name in ("notifications", "recipients", "changes", "hotels"):
             for row in self.tables.get(name, []):
@@ -129,7 +149,12 @@ class FakeSession:
 
     def add(self, obj):
         self.added.append(obj)
-        self.tables.setdefault("notifications", []).append(obj)
+        # Filed by what it is. Everything used to land in "notifications",
+        # which was true while notifications were the only thing added; a
+        # comparison link put there is then returned by ``get`` as a
+        # notification and the failure surfaces somewhere else entirely.
+        table = "comparison_links" if isinstance(obj, ComparisonLink) else "notifications"
+        self.tables.setdefault(table, []).append(obj)
 
     def flush(self):
         self.flushes += 1

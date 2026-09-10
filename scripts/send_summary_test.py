@@ -60,7 +60,11 @@ from app.notifications import registry  # noqa: E402
 from app.notifications.base import Destination  # noqa: E402
 from app.notifications.render import render_summary  # noqa: E402
 from app.services import monitoring as monitoring_service  # noqa: E402
-from app.workers.tasks_notify import _PRICE_MOVE_DIRECTIONS, _render_lines  # noqa: E402
+from app.workers.tasks_notify import (  # noqa: E402
+    _PRICE_MOVE_DIRECTIONS,
+    _comparison_url,
+    _render_lines,
+)
 
 
 def main() -> int:
@@ -148,12 +152,36 @@ def main() -> int:
         template = args.template or settings.whatsapp_comparison_template_name
         count = args.params or settings.whatsapp_comparison_template_params
 
+        # MINTED THE WAY THE DISPATCHER MINTS IT, for the same reason the
+        # direction filter above is imported rather than restated: a rehearsal
+        # that leaves out what the real message carries is a rehearsal that
+        # lies. The link is the last thing in the last parameter, so a preview
+        # without it is a preview of a shorter message -- and length is the one
+        # thing this script exists to let somebody eyeball before paying for it.
+        #
+        # Returns None when PUBLIC_BASE_URL is unset, which is exactly what the
+        # worker would do, so the preview still matches.
+        owner_ids = {
+            hotels[c.hotel_id].owner_user_id for c in changes if c.hotel_id in hotels
+        }
+        link = _comparison_url(
+            session,
+            list(changes),
+            owner_ids.pop() if len(owner_ids) == 1 else None,
+            datetime.now(UTC),
+        )
+        if link:
+            print(f"link      : {link}")
+        else:
+            print("link      : none -- PUBLIC_BASE_URL is not set, so no link is added")
+
         message = render_summary(
             moved,
             window_hours=args.hours,
             when=datetime.now(UTC),
             param_count=count,
             with_tax=with_tax,
+            link=link,
         )
 
         if args.shorten:

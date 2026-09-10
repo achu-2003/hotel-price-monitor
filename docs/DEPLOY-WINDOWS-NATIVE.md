@@ -459,6 +459,140 @@ Caddy — it cannot get a certificate for a name that does not resolve to it.
 Only once HTTPS answers should you set `APP_ENV=production` and restart the
 API and worker services.
 
+### Before the domain exists: a free tunnel, in two commands
+
+You do not need a domain to see the whole thing working on the server. A
+Cloudflare **Quick Tunnel** gives a real HTTPS address, free, with no account
+and no card:
+
+```powershell
+.\scripts\tunnel-start.ps1
+```
+
+It downloads `cloudflared` into `.local\` on first run, checks something is
+actually listening on 8000, opens the tunnel and prints the address:
+
+```
+tunnel    : https://springs-assessments-tennis-cbs.trycloudflare.com
+
+  Put this in .env, then restart the API, the workers AND beat:
+
+      PUBLIC_BASE_URL=https://springs-assessments-tennis-cbs.trycloudflare.com
+```
+
+Set that, restart the services, and the links in the alerts open from any phone.
+Close it with `.\scripts\tunnel-stop.ps1` — worth doing, because while it is up
+the dashboard login is on the public internet too.
+
+**This is a testing tool, not the production answer,** for one reason that has
+nothing to do with security: the hostname changes every time the tunnel
+restarts. A reboot gives a new name and every link already sent in a WhatsApp
+message goes dead. A second, smaller one: a few DNS resolvers refuse
+`*.trycloudflare.com`. Most open it — this was tested on three handsets and two
+worked untouched — but the third needed Private DNS set to `dns.google`, which
+is not something a hotel client can be asked to do.
+
+Both problems disappear with a domain, which is what the rest of this section is
+about.
+
+### If the server has no public IP
+
+A box behind an office ISP or a NAT gateway cannot take an A record, and no
+amount of firewall rules will change that. Use a [Cloudflare
+Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+instead: `cloudflared` runs as a Windows service beside the others, dials out,
+and needs no inbound port and no public address. TLS is Cloudflare's. Everything
+below applies unchanged — the app still binds `127.0.0.1` and still only learns
+its own public name from `PUBLIC_BASE_URL`.
+
+A **named** tunnel, not the quick one above: it keeps its hostname across
+restarts, which is the whole difference. It needs the domain added to Cloudflare
+(free plan, nameservers pointed there) — `cloudflared` replaces Caddy, not the
+domain.
+
+```powershell
+New-Item -ItemType Directory -Force C:\cloudflared
+Invoke-WebRequest -UseBasicParsing `
+  -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+  -OutFile C:\cloudflared\cloudflared.exe
+
+C:\cloudflared\cloudflared.exe tunnel login          # browser; pick the domain
+C:\cloudflared\cloudflared.exe tunnel create hotel-monitor
+```
+
+`create` prints a UUID and writes `<UUID>.json`. **Copy the credentials next to
+the config** — the service runs as LocalSystem and cannot read your user
+profile, which is the single most common way this fails:
+
+```powershell
+Copy-Item "$env:USERPROFILE\.cloudflared\*.json" C:\cloudflared\
+```
+
+`C:\cloudflared\config.yml`:
+
+```yaml
+tunnel: <UUID>
+credentials-file: C:\cloudflared\<UUID>.json
+
+ingress:
+  - hostname: monitor.yourdomain.com
+    service: http://127.0.0.1:8000
+  - service: http_status:404
+```
+
+Create the DNS record — no manual A record needed — then try it in the
+foreground before installing anything:
+
+```powershell
+C:\cloudflared\cloudflared.exe tunnel route dns hotel-monitor monitor.yourdomain.com
+C:\cloudflared\cloudflared.exe tunnel --config C:\cloudflared\config.yml run
+```
+
+Once the site answers, Ctrl-C and install it as a ninth service, the same way as
+the rest:
+
+```powershell
+C:\nssm\nssm.exe install HotelMonitor-Tunnel "C:\cloudflared\cloudflared.exe" `
+    "tunnel --config C:\cloudflared\config.yml run"
+C:\nssm\nssm.exe set HotelMonitor-Tunnel AppDirectory C:\cloudflared
+C:\nssm\nssm.exe set HotelMonitor-Tunnel AppStdout   C:\cloudflared\tunnel.log
+C:\nssm\nssm.exe set HotelMonitor-Tunnel AppStderr   C:\cloudflared\tunnel.err.log
+C:\nssm\nssm.exe set HotelMonitor-Tunnel Start SERVICE_AUTO_START
+C:\nssm\nssm.exe start HotelMonitor-Tunnel
+```
+
+If this service stops, only outside access stops. Fetching, change detection and
+WhatsApp go on exactly as before — the tunnel is a door on the side of the
+building, not part of the structure.
+
+### Then tell the app its own address
+
+```
+PUBLIC_BASE_URL=https://monitor.yourdomain.com
+```
+
+This is what puts a **See the full comparison** link at the bottom of every
+alert. Tapping it opens a read-only page of that night's rates — your rate
+against every competitor's, laid out for a phone — with no login, because the
+people receiving WhatsApp alerts are phone numbers rather than accounts.
+
+Three things worth knowing before you set it:
+
+* **It is a bearer link.** Anybody the message is forwarded to can open it
+  until it expires. `COMPARISON_LINK_DAYS` (default 30) is how long that is.
+  The page is read-only and scoped to one night of one account's hotels: there
+  is no parameter on it to widen, re-date, or point at somebody else's
+  properties.
+* **Leave it empty until the domain resolves.** Empty means no link is added,
+  which is the safe answer. A message carrying `http://127.0.0.1:8000` is a
+  dead tap for every reader *and* looks like the feature working.
+* **Restart the workers after setting it.** Beat and the Celery workers read
+  configuration at boot; uvicorn reloads on its own but does not build the
+  messages.
+
+Expired links are deleted by the weekly `maintenance.retention_sweep`. They
+stop working at the moment they expire, not when the sweep next runs.
+
 ---
 
 ## Checklist

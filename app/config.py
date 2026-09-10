@@ -38,6 +38,24 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     timezone: str = "Asia/Kolkata"
 
+    # Where this deployment answers from on the public internet, e.g.
+    # "https://monitor.example.com". The one place a link inside an alert can
+    # come from: a message is read on a phone that has never been on this
+    # network, so a request's own Host header is not an answer -- the worker
+    # that builds the message has no request.
+    #
+    # EMPTY MEANS NO LINK IS ADDED, and that is the safe default rather than a
+    # guess. A message carrying http://127.0.0.1:8000 is worse than one
+    # carrying nothing: it is a dead tap for every reader, and it looks like
+    # the feature is working. See docs/DEPLOY-WINDOWS-NATIVE.md step 12.
+    public_base_url: str = ""
+
+    # How long a link inside an alert keeps working. Thirty days: long enough
+    # that somebody scrolling back a fortnight still lands on the page the
+    # message described, short enough that a message forwarded out of the
+    # business stops being a window into it.
+    comparison_link_days: int = 30
+
     # ── database ─────────────────────────────────────────────────────
     postgres_host: str = "postgres"
     postgres_port: int = 5432

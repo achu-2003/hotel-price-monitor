@@ -204,6 +204,40 @@ def _stamp(when: datetime | None, with_tax: bool) -> str:
     return f"{checked_at_ist(when)} · {_BASIS_NOTE[bool(with_tax)]}"
 
 
+#: What the link is called in the message. A bare URL under a bare timestamp
+#: reads as something the sender forgot to strip out; four words say what
+#: tapping it is for, which is the difference between a link that gets opened
+#: and one that gets ignored.
+_LINK_LABEL = "See the full comparison:"
+
+
+def _stamp_with_link(stamp: str, link: str | None) -> str:
+    """The last template parameter, with the link on its own lines beneath it.
+
+    IT RIDES IN THE LAST PARAMETER RATHER THAN IN A BUTTON, which is a choice
+    about cost rather than a compromise. A WhatsApp URL button lives inside the
+    approved template, so adding one means editing the template: back to
+    PENDING at Meta, one edit per 24 hours, and the reseller's sendtemplate.php
+    has no field to pass a button variable through at all. Appending to a
+    parameter needs no approval, ships the day it is written, and WhatsApp
+    makes a bare URL tappable on its own.
+
+    Last rather than first because the message is read for the prices. A link
+    above them is an instruction; a link under them is the next step for
+    somebody who has already decided the numbers are interesting.
+
+    A NEWLINE IS SAFE HERE and a comma is not. The newline was measured on the
+    live reseller path -- see ``_SEGMENT`` and the runbook. The comma is what
+    the provider joins parameters with and the reseller splits them on, so a
+    URL carrying one would arrive as two parameters and be rejected for its
+    count. Nothing interpolated here can contain one: the token is base64url,
+    whose alphabet has no comma.
+    """
+    if not link:
+        return stamp
+    return stamp + "\n\n" + _LINK_LABEL + "\n" + link
+
+
 def _supports_dash() -> bool:
     """``%-I`` is glibc-only; Windows strftime rejects it.
 
@@ -224,6 +258,7 @@ def render_digest(
     *,
     when: datetime | None = None,
     with_tax: bool = False,
+    link: str | None = None,
 ) -> RenderedMessage:
     """One message covering every change for one hotel in this window.
 
@@ -258,12 +293,18 @@ def render_digest(
                           + (f"   Plan: {line.meal_plan}" if line.meal_plan else ""))
         body_lines.append("")
     body_lines.append(f"Checked: {stamp}")
+    if link:
+        body_lines.extend(["", _LINK_LABEL, link])
 
     return RenderedMessage(
         subject=subject,
         text="\n".join(body_lines),
-        html=_render_html(hotel_name, lines, stamp),
-        template_params=_whatsapp_params(hotel_name, lines, stamp),
+        html=_render_html(hotel_name, lines, stamp, link),
+        # The link travels in the LAST parameter, which is the stamp, so the
+        # approved template is untouched. See _stamp_with_link.
+        template_params=_whatsapp_params(
+            hotel_name, lines, _stamp_with_link(stamp, link)
+        ),
     )
 
 
@@ -274,7 +315,30 @@ def _headline_summary(lines: list[ChangeLine]) -> str:
     return f"{line.room_name} {money(line.new_price, line.currency)}"
 
 
-def _render_html(hotel_name: str, lines: list[ChangeLine], stamp: str) -> str:
+def _link_html(link: str | None) -> str:
+    """The link as a row of the email table, or nothing.
+
+    A real button here, unlike on WhatsApp: email has no approved template to
+    keep in step with, so the one channel that can afford the affordance gets
+    it. Inline-styled and table-based like everything around it -- Outlook
+    ignores a stylesheet, and a link that renders as unstyled blue text still
+    works, which is the fallback this degrades to.
+    """
+    if not link:
+        return ""
+    return (
+        '<tr><td style="padding:4px 24px 20px">'
+        f'<a href="{_esc(link)}" '
+        'style="display:inline-block;padding:10px 16px;background:#0f7a5a;'
+        'color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;'
+        f'font-weight:600">{_LINK_LABEL.rstrip(":")}</a>'
+        "</td></tr>"
+    )
+
+
+def _render_html(
+    hotel_name: str, lines: list[ChangeLine], stamp: str, link: str | None = None
+) -> str:
     """Deliberately table-based and inline-styled.
 
     Email clients — Outlook above all — do not support the CSS that would make
@@ -340,6 +404,7 @@ font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1118
         {"".join(rows)}
       </table>
     </td></tr>
+    {_link_html(link)}
     <tr><td style="padding:16px 24px;color:#6b7280;font-size:12px;border-top:1px solid #e5e7eb">
       Checked {_esc(stamp)} · Hotel Price Monitor
     </td></tr>
@@ -479,6 +544,7 @@ def render_summary(
     when: datetime | None = None,
     param_count: int = WHATSAPP_COMPARISON_MIN_PARAMS,
     with_tax: bool = False,
+    link: str | None = None,
 ) -> RenderedMessage:
     """How many rooms moved in the window, which ones, and by how much.
 
@@ -510,9 +576,15 @@ def render_summary(
 
     return RenderedMessage(
         subject=headline,
-        text=_summary_text(headline, moved, stamp),
-        html=_summary_html(headline, moved, stamp),
-        template_params=_summary_params(headline, moved, stamp, param_count),
+        text=_summary_text(headline, moved, stamp, link),
+        html=_summary_html(headline, moved, stamp, link),
+        # Into the LAST slot, which is the stamp, so the number of variables is
+        # unchanged and the approved template needs no edit. The slots between
+        # carry the moves and are budgeted per property; the link must not
+        # compete with them for that room.
+        template_params=_summary_params(
+            headline, moved, _stamp_with_link(stamp, link), param_count
+        ),
         kind=MARKET_COMPARISON,
     )
 
@@ -582,7 +654,9 @@ def _by_hotel(moved: Sequence[ChangeLine]) -> dict[str, list[ChangeLine]]:
     return out
 
 
-def _summary_text(headline: str, moved: Sequence[ChangeLine], stamp: str) -> str:
+def _summary_text(
+    headline: str, moved: Sequence[ChangeLine], stamp: str, link: str | None = None
+) -> str:
     """The plain-text body: the count, then a block per property."""
     lines = [f"📊 {headline}", ""]
 
@@ -601,6 +675,8 @@ def _summary_text(headline: str, moved: Sequence[ChangeLine], stamp: str) -> str
         lines.append("")
 
     lines.append(f"Checked: {stamp}")
+    if link:
+        lines.extend(["", _LINK_LABEL, link])
     return "\n".join(lines)
 
 
@@ -855,7 +931,9 @@ def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
     return filled, dropped
 
 
-def _summary_html(headline: str, moved: Sequence[ChangeLine], stamp: str) -> str:
+def _summary_html(
+    headline: str, moved: Sequence[ChangeLine], stamp: str, link: str | None = None
+) -> str:
     """The count, then every move, grouped by property.
 
     Email carries all of them -- the WhatsApp slots have a hard ceiling and
@@ -893,6 +971,7 @@ font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1118
       <div style="font-size:20px;font-weight:700;margin-top:4px">{_esc(headline)}</div>
     </td></tr>
     <tr><td style="padding:8px 24px 20px">{body}</td></tr>
+    {_link_html(link)}
     <tr><td style="padding:16px 24px;color:#6b7280;font-size:12px;border-top:1px solid #e5e7eb">
       Checked {_esc(stamp)} · Hotel Price Monitor
     </td></tr>

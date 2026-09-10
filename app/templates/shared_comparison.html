@@ -1,0 +1,167 @@
+{#
+  THE PAGE AN ALERT LINKS TO
+  ==========================
+  Same reading as /comparison, laid out for the device it is actually opened
+  on. The dashboard grid is resorts down the side and categories across the
+  top, which needs a screen; this arrives by WhatsApp and is read on a phone
+  held in one hand, so it stacks: your rate first, then one card per
+  competitor, each saying where they sit against you.
+
+  It is a different LAYOUT, not a second calculation. Every gap on this page
+  comes out of app/services/rate_gap.py exactly as the dashboard's does — a
+  template that did its own subtraction would be a second place for a pre-tax
+  rate to be quietly differenced against an all-in one.
+
+  DELIBERATELY NOT extending base.html. The reader has no account: a nav bar
+  offering Matrix, Changes and Settings is six links to a login form they
+  cannot pass, on a page that is otherwise theirs to read.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rate comparison · {{ check_in.strftime('%d %b') }}</title>
+  <link rel="stylesheet" href="/static/shared.css?v={{ asset_version('shared.css') }}">
+  <link rel="icon" href="data:,">
+  {# A link pasted into a chat should not be crawled or kept. It is a bearer
+     URL: an index entry for one is a permanent copy of a private page. #}
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+</head>
+<body>
+<main class="sheet">
+
+  <header class="sheet-head">
+    <h1>Rate comparison</h1>
+    <p class="stay">
+      {{ check_in.strftime('%a %d %b %Y') }} &rarr; {{ check_out.strftime('%a %d %b %Y') }}
+      &middot; {{ adults }} adult{{ '' if adults == 1 else 's' }}
+    </p>
+    {# Said once, at the top, rather than on every figure. The switch is
+       deployment-wide, so every price on the page is on the same basis and
+       repeating it per cell is noise. #}
+    <p class="basis">All prices {{ 'include tax' if show_with_tax else 'exclude tax' }}.</p>
+  </header>
+
+  {% if grid.is_empty or not grid.baseline %}
+    {#
+      NOT AN ERROR PAGE. Nothing was collected for this night, which happens
+      when every property is full, or when a link is opened for a night that
+      has since passed. Saying so plainly beats an empty table that reads as
+      the page having failed to load.
+    #}
+    <p class="empty">
+      No rates were collected for this night. This usually means every
+      property was full, or the night has passed.
+    </p>
+  {% else %}
+
+    <section class="mine">
+      <h2>{{ grid.baseline.hotel.name }}</h2>
+      <p class="mine-tag">Your rate</p>
+      <ul class="tiers">
+        {% for col in grid.columns %}
+          {% set c = grid.baseline.cells[loop.index0] %}
+          {% if c.has_price or c.sold_out %}
+          <li>
+            <span class="tier">{{ col.label }}</span>
+            {% if c.has_price %}
+              <span class="price">{{ money(c.price, c.currency) }}</span>
+              <span class="room">{{ c.room_name }}</span>
+            {% else %}
+              <span class="price soldout">Sold out</span>
+            {% endif %}
+          </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </section>
+
+    {% for row in grid.rivals %}
+    <section class="rival">
+      <h2>{{ row.hotel.name }}</h2>
+      {#
+        The one-line verdict before the detail. On a phone the reader scrolls
+        past four or five of these looking for the ones that matter, and
+        "undercutting you in 2 of 3" is what tells them where to stop.
+      #}
+      {% if row.compared %}
+      <p class="verdict">
+        {% if row.cheaper_in and row.dearer_in %}
+          Cheaper in {{ row.cheaper_in }}, dearer in {{ row.dearer_in }} of {{ row.compared }}
+        {% elif row.cheaper_in %}
+          Undercutting you in {{ row.cheaper_in }} of {{ row.compared }}
+        {% elif row.dearer_in %}
+          Above you in {{ row.dearer_in }} of {{ row.compared }}
+        {% else %}
+          Level with you
+        {% endif %}
+      </p>
+      {% endif %}
+
+      <ul class="tiers">
+        {% for col in grid.columns %}
+          {% set c = row.cells[loop.index0] %}
+          {% if c.has_price or c.sold_out %}
+          <li>
+            <span class="tier">{{ col.label }}</span>
+            {% if c.has_price %}
+              <span class="price">{{ money(c.price, c.currency) }}</span>
+              <span class="room">{{ c.room_name }}</span>
+              {% if c.note %}<span class="note">{{ c.note }}</span>{% endif %}
+              {#
+                A WORD, NOT ONLY A COLOUR — the same rule the dashboard page
+                keeps, and it matters more here: this is read on a phone in
+                daylight and forwarded as a screenshot.
+              #}
+              {% if c.gap is none %}
+              {% elif c.gap == 0 %}
+                <span class="gap level">Same rate</span>
+              {% else %}
+                <span class="gap {{ 'under' if c.cheaper else 'over' }}">
+                  {{ '&minus;' if c.cheaper else '+' }}{{ money(c.gap|abs, c.currency) }}
+                  {{ 'cheaper' if c.cheaper else 'dearer' }}
+                  {% if c.gap_pct is not none %}&middot; {{ '%.1f'|format(c.gap_pct|abs) }}%{% endif %}
+                  {% if c.mixed_basis %}<span class="approx">&dagger;</span>{% endif %}
+                </span>
+              {% endif %}
+            {% else %}
+              <span class="price soldout">Sold out</span>
+            {% endif %}
+          </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+
+    {% if full %}
+    {#
+      Named rather than omitted. A competitor missing from the list otherwise
+      reads as a competitor nobody checked, which is the opposite of the truth:
+      these were checked and had nothing for sale.
+    #}
+    <section class="full">
+      <h2>Full for this night</h2>
+      <p>{{ full|map(attribute='name')|join(' &middot; ') }}</p>
+    </section>
+    {% endif %}
+
+    <p class="approx-key">
+      &dagger; One of the two prices includes tax and the other does not,
+      because one site published only the one figure. Treat that gap as
+      approximate.
+    </p>
+
+  {% endif %}
+
+  <footer class="sheet-foot">
+    {# Says what the link is, so nobody treats it as a login they have lost the
+       password to — and so a reader who finds it dead later knows why. #}
+    <p>Read-only. This link stops working on {{ expires_at.strftime('%d %b %Y') }}.</p>
+  </footer>
+
+</main>
+</body>
+</html>
