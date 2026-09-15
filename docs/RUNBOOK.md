@@ -853,9 +853,11 @@ build from source, and `psycopg-binary==3.2.3` has no 3.14 wheel at all.
 
 ### Reloading after a change
 
-The API runs under `uvicorn --reload`, so routes, templates and schemas take
-effect on save. Celery does not reload — after changing a task, an adapter, or
-anything under `app\services\`, restart the workers:
+Nothing reloads on save. The API used to run under `uvicorn --reload`, but on
+Windows the restart it attempted never completed: the reloader logged
+"Reloading...", the old server kept answering, and the watcher stopped
+watching — so an edit looked applied and was not. After changing anything
+under `app\` — a route, a template, a task, an adapter — restart the stack:
 
 ```powershell
 .\scripts\dev-stop.ps1 ; .\scripts\dev-start.ps1
