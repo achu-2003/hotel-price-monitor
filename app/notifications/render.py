@@ -336,6 +336,59 @@ def _link_html(link: str | None) -> str:
     )
 
 
+_TD = 'style="padding:8px 12px;border-bottom:1px solid #e5e7eb'
+
+
+def _move_cells(line: ChangeLine) -> str:
+    """One move as the cells of a table row: room, was, now, change, stay.
+
+    Shared by the per-hotel digest and the two-hourly summary, so a sold-out
+    room is drawn the same way in both -- its own words, no percentage, never
+    a price of zero -- and the two emails cannot drift into two readings of
+    the same move. The caller owns the ``<tr>``: the summary puts a property
+    cell in front of these, the digest does not need one.
+    """
+    if line.direction == "became_unavailable":
+        change_cell = '<span style="color:#b45309;font-weight:600">Sold out</span>'
+        new_cell = "—"
+    elif line.direction == "became_available":
+        change_cell = '<span style="color:#047857;font-weight:600">Available again</span>'
+        new_cell = money(line.new_price, line.currency)
+    else:
+        colour = "#b91c1c" if line.direction == "increase" else "#047857"
+        sign = "+" if line.direction == "increase" else "−"
+        change_cell = (
+            f'<span style="color:{colour};font-weight:600">{sign}'
+            f"{money(abs(line.delta) if line.delta else None, line.currency)}"
+            f" ({_pct(line.delta_pct)})</span>"
+        )
+        new_cell = money(line.new_price, line.currency)
+
+    # The same marker the text body appends, in the cell it belongs to.
+    # Muted and small: it qualifies the figure, it is not a second figure.
+    if line.basis_note:
+        new_cell += (
+            f'<span style="color:#6b7280;font-weight:400;font-size:12px"> '
+            f"{_esc(line.basis_note)}</span>"
+        )
+
+    return (
+        f'<td {_TD}">{_esc(line.room_name)}</td>'
+        f'<td {_TD};color:#6b7280">{money(line.old_price, line.currency)}</td>'
+        f'<td {_TD};font-weight:600">{new_cell}</td>'
+        f'<td {_TD}">{change_cell}</td>'
+        f'<td {_TD};color:#6b7280;white-space:nowrap">{_esc(_stay(line))}</td>'
+    )
+
+
+#: The heading cells above ``_move_cells``, in the same order.
+_MOVE_HEAD = (
+    '<th style="padding:8px 12px">Room</th><th style="padding:8px 12px">Was</th>'
+    '<th style="padding:8px 12px">Now</th><th style="padding:8px 12px">Change</th>'
+    '<th style="padding:8px 12px">Stay</th>'
+)
+
+
 def _render_html(
     hotel_name: str, lines: list[ChangeLine], stamp: str, link: str | None = None
 ) -> str:
@@ -345,43 +398,7 @@ def _render_html(
     this pleasant to write. A layout that renders correctly everywhere is
     worth more than clean markup nobody sees.
     """
-    rows = []
-    for line in lines:
-        if line.direction == "became_unavailable":
-            change_cell = '<span style="color:#b45309;font-weight:600">Sold out</span>'
-            new_cell = "—"
-        elif line.direction == "became_available":
-            change_cell = '<span style="color:#047857;font-weight:600">Available again</span>'
-            new_cell = money(line.new_price, line.currency)
-        else:
-            colour = "#b91c1c" if line.direction == "increase" else "#047857"
-            sign = "+" if line.direction == "increase" else "−"
-            change_cell = (
-                f'<span style="color:{colour};font-weight:600">{sign}'
-                f"{money(abs(line.delta) if line.delta else None, line.currency)}"
-                f" ({_pct(line.delta_pct)})</span>"
-            )
-            new_cell = money(line.new_price, line.currency)
-
-        # The same marker the text body appends, in the cell it belongs to.
-        # Muted and small: it qualifies the figure, it is not a second figure.
-        if line.basis_note:
-            new_cell += (
-                f'<span style="color:#6b7280;font-weight:400;font-size:12px"> '
-                f"{_esc(line.basis_note)}</span>"
-            )
-
-        rows.append(
-            "<tr>"
-            f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">{_esc(line.room_name)}</td>'
-            f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280">'
-            f"{money(line.old_price, line.currency)}</td>"
-            f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600">{new_cell}</td>'
-            f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb">{change_cell}</td>'
-            f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;'
-            f'white-space:nowrap">{_esc(_stay(line))}</td>'
-            "</tr>"
-        )
+    rows = [f"<tr>{_move_cells(line)}</tr>" for line in lines]
 
     return f"""<!doctype html>
 <html><body style="margin:0;padding:24px;background:#f9fafb;
@@ -396,11 +413,7 @@ font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1118
     <tr><td style="padding:8px 12px">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
         style="border-collapse:collapse;font-size:14px">
-        <tr style="text-align:left;color:#6b7280;font-size:12px">
-          <th style="padding:8px 12px">Room</th><th style="padding:8px 12px">Was</th>
-          <th style="padding:8px 12px">Now</th><th style="padding:8px 12px">Change</th>
-          <th style="padding:8px 12px">Stay</th>
-        </tr>
+        <tr style="text-align:left;color:#6b7280;font-size:12px">{_MOVE_HEAD}</tr>
         {"".join(rows)}
       </table>
     </td></tr>
@@ -934,30 +947,45 @@ def _fit(segments: list[str], slots: int, budget: int) -> tuple[list[str], int]:
 def _summary_html(
     headline: str, moved: Sequence[ChangeLine], stamp: str, link: str | None = None
 ) -> str:
-    """The count, then every move, grouped by property.
+    """The count, then every move, as one table grouped by property.
 
     Email carries all of them -- the WhatsApp slots have a hard ceiling and
     email has none, and a reader who opens the email is the one who wanted the
     detail the message could not carry.
 
+    A TABLE, NOT A LIST PER PROPERTY. The moves were bullet points under a
+    heading per hotel, each one a sentence with three figures in it; four
+    properties made a page of prose the reader had to parse to find the one
+    number they wanted. Laid out as columns -- was, now, change -- the figures
+    line up down the page and the eye can go straight down the "Change" column
+    and stop at the loud one. The property is a cell spanning its moves rather
+    than repeated on every row, so the grouping the list had is kept.
+
     Table-based and inline-styled for the same reason ``_render_html`` is:
     Outlook.
     """
-    blocks = []
-    for hotel, rooms in _by_hotel(moved).items():
-        items = "".join(
-            f'<li style="margin:8px 0">{_esc(_headline(line))}'
-            f'<div style="color:#6b7280;font-size:12px">{_esc(_stay(line))}</div></li>'
-            for line in rooms
-        )
-        blocks.append(
-            f'<div style="margin:16px 0 0"><div style="font-weight:600">{_esc(hotel)}</div>'
-            f'<ul style="margin:6px 0 0;padding-left:18px;font-size:14px">{items}</ul></div>'
-        )
+    rows = []
+    for hotel, lines in _by_hotel(moved).items():
+        for index, line in enumerate(lines):
+            first = (
+                f'<td rowspan="{len(lines)}" {_TD};font-weight:600;'
+                f'vertical-align:top">{_esc(hotel)}</td>'
+                if index == 0
+                else ""
+            )
+            rows.append(f"<tr>{first}{_move_cells(line)}</tr>")
 
-    body = "".join(blocks) or (
-        '<p style="margin:0;color:#b45309;font-size:13px">No change was recorded '
-        "in this window.</p>"
+    body = (
+        f'''<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+        style="border-collapse:collapse;font-size:14px">
+        <tr style="text-align:left;color:#6b7280;font-size:12px">
+          <th style="padding:8px 12px">Property</th>{_MOVE_HEAD}
+        </tr>
+        {"".join(rows)}
+      </table>'''
+        if rows
+        else '<p style="margin:0 12px;color:#b45309;font-size:13px">No change was '
+        "recorded in this window.</p>"
     )
 
     return f"""<!doctype html>
@@ -970,7 +998,7 @@ font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1118
         Market update</div>
       <div style="font-size:20px;font-weight:700;margin-top:4px">{_esc(headline)}</div>
     </td></tr>
-    <tr><td style="padding:8px 24px 20px">{body}</td></tr>
+    <tr><td style="padding:8px 12px 20px">{body}</td></tr>
     {_link_html(link)}
     <tr><td style="padding:16px 24px;color:#6b7280;font-size:12px;border-top:1px solid #e5e7eb">
       Checked {_esc(stamp)} · Hotel Price Monitor

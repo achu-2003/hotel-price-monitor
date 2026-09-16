@@ -87,18 +87,27 @@ if (Test-Port 6379) {
 }
 
 # -- API -------------------------------------------------------------
-# --reload watches app\ and restarts on save, so editing a route or a template
-# needs nothing from you.
+# NO --reload. It ran with one, and the promise was that editing a route or a
+# template needed nothing from you. On this machine the promise was false in
+# the worst way: WatchFiles noticed the save and logged "Reloading...", then
+# sent the server child a CTRL_C_EVENT that never arrived (the process has no
+# console to deliver it through), and sat in process.join() forever. The old
+# code kept serving, the reloader stopped watching, and the next save was not
+# even logged. That is where "hours-old code serving the dashboard" came from,
+# and why dev-stop.ps1 has to hunt for orphaned reload children. Without the
+# flag the rule is the same as for the workers, and it is at least true:
+# after editing anything under app\, run dev-stop.ps1 then dev-start.ps1.
+#
 # "Already listening" is reported, never assumed to be ours and never assumed
 # to be current: a survivor from before a stop is exactly what this used to
 # skip past, leaving hours-old code serving the dashboard.
 if (Test-Port 8000) {
-    Write-Host "api       : already listening on 8000 -- if you just edited an" -ForegroundColor Yellow
-    Write-Host "            adapter, run .\scripts\dev-stop.ps1 first: this is" -ForegroundColor Yellow
-    Write-Host "            an EXISTING process and it has the OLD code loaded." -ForegroundColor Yellow
+    Write-Host "api       : already listening on 8000 -- if you just edited" -ForegroundColor Yellow
+    Write-Host "            anything under app\, run .\scripts\dev-stop.ps1 first:" -ForegroundColor Yellow
+    Write-Host "            this is an EXISTING process with the OLD code loaded." -ForegroundColor Yellow
 } else {
     Start-Process -FilePath "$py\uvicorn.exe" `
-        -ArgumentList "app.main:app","--host","127.0.0.1","--port","8000","--reload","--reload-dir","app" `
+        -ArgumentList "app.main:app","--host","127.0.0.1","--port","8000" `
         -WorkingDirectory $proj -WindowStyle Hidden `
         -RedirectStandardOutput "$local\api.log" -RedirectStandardError "$local\api.err.log"
     if (Wait-Port 8000 30) { Write-Host "api       : started" -ForegroundColor Green }

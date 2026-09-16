@@ -587,8 +587,8 @@ Three things worth knowing before you set it:
   which is the safe answer. A message carrying `http://127.0.0.1:8000` is a
   dead tap for every reader *and* looks like the feature working.
 * **Restart the workers after setting it.** Beat and the Celery workers read
-  configuration at boot; uvicorn reloads on its own but does not build the
-  messages.
+  configuration at boot, and they are what build the messages; the API can
+  stay up.
 
 Expired links are deleted by the weekly `maintenance.retention_sweep`. They
 stop working at the moment they expire, not when the sweep next runs.

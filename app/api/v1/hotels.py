@@ -172,7 +172,12 @@ async def get_hotel(hotel_id: int, session: DbSession, user: CurrentUser):
         )
     ).all()
 
-    detail = HotelDetail.model_validate(hotel)
+    # Built from HotelOut, not validated straight off the ORM row. HotelDetail
+    # declares room_types and recipients, and validating the Hotel object
+    # reads those names as relationships -- a lazy load, which under the async
+    # session is a MissingGreenlet and a 500 on every hotel. The lists are
+    # queried explicitly above and attached below.
+    detail = HotelDetail(**HotelOut.model_validate(hotel).model_dump())
     detail.sources = [
         HotelSourceOut(
             **{k: getattr(hs, k) for k in
