@@ -273,21 +273,43 @@ class BrowserPool:
         return self._local.browser
 
     @contextmanager
-    def context(self, *, locale: str, timezone: str) -> Generator[BrowserContext, None, None]:
+    def context(
+        self,
+        *,
+        locale: str,
+        timezone: str,
+        as_person: bool = False,
+        storage_state: dict | None = None,
+    ) -> Generator[BrowserContext, None, None]:
+        """A fresh context. ``as_person`` makes it look like an ordinary browser.
+
+        The default is the scraper's: a user agent that names this monitor,
+        so a site can tell who is reading it, and no images, fonts or media,
+        because a price page is read for its numbers. Both are wrong for
+        SIGNING IN AS THE OWNER to their own application. That is not a
+        scrape, it is the owner's browser with the owner's password in it,
+        and it should look like one: RMS Cloud answered the announced user
+        agent with "Object reference not set to an instance of an object"
+        where a plain Chrome string got an ordinary login.
+        """
         settings = get_settings()
         browser = self._ensure_browser()
         ctx = browser.new_context(
             locale=locale,
             timezone_id=timezone,
             viewport={"width": 1366, "height": 900},
-            user_agent=build_user_agent(settings.browser_user_agent_suffix),
+            user_agent=build_user_agent("" if as_person else settings.browser_user_agent_suffix),
             color_scheme="light",
             java_script_enabled=True,
             ignore_https_errors=False,
+            # Cookies and local storage from an earlier visit: how a site
+            # that trusted this "device" once recognises it again.
+            storage_state=storage_state,
         )
         ctx.set_default_timeout(settings.browser_nav_timeout_ms)
         ctx.set_default_navigation_timeout(settings.browser_nav_timeout_ms)
-        _install_resource_blocking(ctx)
+        if not as_person:
+            _install_resource_blocking(ctx)
         try:
             yield ctx
         finally:
@@ -350,6 +372,8 @@ def open_page(
     timezone: str = "Asia/Kolkata",
     wait_until: str = "domcontentloaded",
     artifact_label: str = "fetch",
+    as_person: bool = False,
+    storage_state: dict | None = None,
 ) -> Generator[BrowserFetch, None, None]:
     """Open ``url`` in a fresh, pinned context and hand back the page.
 
@@ -360,7 +384,9 @@ def open_page(
     settings = get_settings()
     started = time.monotonic()
 
-    with browser_pool.context(locale=locale, timezone=timezone) as ctx:
+    with browser_pool.context(
+        locale=locale, timezone=timezone, as_person=as_person, storage_state=storage_state
+    ) as ctx:
         page = ctx.new_page()
         captured: list[CapturedResponse] = []
         _install_json_capture(page, captured)

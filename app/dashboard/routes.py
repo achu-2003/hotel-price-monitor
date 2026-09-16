@@ -35,6 +35,7 @@ from annotated_types import Ge, Le
 from pydantic import BeforeValidator
 from sqlalchemy import ARRAY, BigInteger, func, or_, select
 from sqlalchemy import cast as sa_cast
+from sqlalchemy.exc import ProgrammingError
 
 from app.adapters.engines import known_engines
 from app.api.deps import SESSION_COOKIE, DbSession
@@ -55,6 +56,7 @@ from app.db.models import (
     Notification,
     PriceChange,
     PriceSeries,
+    RateApplication,
     Recipient,
     RoomType,
     Source,
@@ -1854,6 +1856,52 @@ def _people_not_just_numbers(recipients, assignments) -> list:
         r for r in recipients
         if assignments.get(r.id) or not r.alerts_all_hotels
     ]
+
+
+# -- rate application ------------------------------------------------
+@router.get("/rate-application", response_class=HTMLResponse)
+async def rate_application_page(request: Request, user: DashUser, session: DbSession):
+    """Where the owner's own rate is set, and the login that opens it.
+
+    The row is the caller's, looked up by their id and never by a parameter:
+    this page shows one owner's login to one owner's application, and there
+    is nothing in the URL to point it at anybody else's.
+
+    The password is not in the context at all. The template describes it as
+    set or not set, which is everything a form that never shows it back
+    needs, and a value that is not handed to the renderer cannot leak through
+    a template mistake.
+    """
+    if user is None:
+        return _redirect_to_login(request)
+
+    # The window between deploying this code and running its migration. An
+    # empty form with a note beats a 500 that reads as the page being broken,
+    # and a save in that window fails with the real reason from the API.
+    try:
+        row = await session.scalar(
+            select(RateApplication).where(RateApplication.owner_user_id == user.id)
+        )
+    except ProgrammingError:
+        await session.rollback()
+        row = None
+    app = (
+        SimpleNamespace(
+            login_url=row.login_url,
+            client_number=row.client_number,
+            username=row.username,
+            has_password=bool(row.encrypted_password),
+            updated_at=row.updated_at,
+            last_test_at=row.last_test_at,
+            last_test_ok=row.last_test_ok,
+            last_test_message=row.last_test_message,
+            has_screenshot=bool(row.last_test_screenshot),
+            session_state_saved_at=row.session_state_saved_at,
+        )
+        if row is not None
+        else None
+    )
+    return await _render(request, user, session, "rate_application.html", app=app)
 
 
 @router.get("/settings", response_class=HTMLResponse)

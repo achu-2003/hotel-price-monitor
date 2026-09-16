@@ -18,7 +18,10 @@ this task is that nothing happens.
 """
 from __future__ import annotations
 
+import json
+
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 from celery import shared_task
@@ -667,3 +670,117 @@ def inspect_pasted_url(
         "sample_count": len(best.sample_prices),
         "fields": best.fields,
     }
+
+
+@shared_task(name="rate_app.test_login")
+def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
+    """Try the saved login to the owner's rate application, and record how it went.
+
+    On the browser queue for the same reason ``inspect_pasted_url`` is: it
+    opens a real browser, and the API process does not have one everywhere.
+
+    The password is read from the row, unsealed in this process, handed to
+    the probe and dropped. It is not in the task arguments -- those travel
+    through Redis -- and it is not in the result.
+
+    WAITS FOR THE OWNER when the application asks for a one-time code. The
+    browser stays open on this worker; the page is told through
+    ``rate_app_test_state`` and the code comes back the same way. Three
+    minutes at most, which fits inside the worker's soft time limit with the
+    login itself.
+
+    The verdict is written to the row here, not by the API, so a test whose
+    page was closed halfway still leaves its answer where the page will show
+    it next time -- and the trusted-device cookies are sealed and kept, so
+    the code is not asked for again.
+    """
+    import time
+
+    from app.core.crypto import decrypt, encrypt
+    from app.db.models import RateApplication
+    from app.services import rate_app_test_state as state
+    from app.services.rate_app_login import attempt_login
+
+    with sync_session() as session:
+        row = session.scalar(
+            select(RateApplication).where(RateApplication.owner_user_id == owner_user_id)
+        )
+        if row is None:
+            return state.write(owner_user_id, "done", ok=False,
+                               message="No rate application is saved for this account.")
+        login_url, client_number, username = row.login_url, row.client_number, row.username
+        try:
+            password = decrypt(row.encrypted_password)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rate_app_password_unreadable", owner_user_id=owner_user_id, error=str(exc))
+            return state.write(owner_user_id, "done", ok=False, message=(
+                "The saved password could not be read -- the encryption key on this "
+                "server is not the one it was saved under. Save the password again."
+            ))
+        storage_state = None
+        if row.encrypted_session_state:
+            try:
+                storage_state = json.loads(decrypt(row.encrypted_session_state))
+            except Exception as exc:  # noqa: BLE001
+                # A stale or unreadable memory is the same as none: log in fresh.
+                log.warning("rate_app_session_state_unreadable", owner_user_id=owner_user_id, error=str(exc))
+
+    state.write(owner_user_id, "running", message="Opening the login page and signing in…")
+
+    def on_code_needed(prompt: str) -> None:
+        state.write(owner_user_id, "needs_code", message=prompt)
+
+    def wait_for_code() -> str | None:
+        deadline = time.monotonic() + state.CODE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            code = state.take_code(owner_user_id)
+            if code:
+                state.write(owner_user_id, "running", message="Entering the code…")
+                return code
+            time.sleep(1)
+        return None
+
+    probe = attempt_login(
+        login_url=login_url,
+        client_number=client_number,
+        username=username,
+        password=password,
+        owner_user_id=owner_user_id,
+        storage_state=storage_state,
+        on_code_needed=on_code_needed,
+        wait_for_code=wait_for_code,
+    )
+    del password
+
+    with sync_session() as session:
+        row = session.scalar(
+            select(RateApplication).where(RateApplication.owner_user_id == owner_user_id)
+        )
+        if row is not None:
+            # One screenshot per row: the previous one is evidence for a
+            # verdict nobody can see any more.
+            if row.last_test_screenshot and row.last_test_screenshot != probe.screenshot_path:
+                try:
+                    Path(row.last_test_screenshot).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            row.last_test_at = datetime.now(UTC)
+            row.last_test_ok = probe.ok
+            row.last_test_message = probe.message
+            row.last_test_screenshot = probe.screenshot_path
+            if probe.ok and probe.storage_state is not None:
+                row.encrypted_session_state = encrypt(json.dumps(probe.storage_state))
+                row.session_state_saved_at = datetime.now(UTC)
+            session.commit()
+
+    log.info(
+        "rate_app_login_tested", owner_user_id=owner_user_id, ok=probe.ok,
+        used_code=probe.used_code, kept_session=probe.storage_state is not None,
+        landed=(probe.landed_url or "")[:120],
+    )
+    return state.write(
+        owner_user_id, "done",
+        ok=probe.ok, message=probe.message, landed_url=probe.landed_url,
+        has_screenshot=bool(probe.screenshot_path), used_code=probe.used_code,
+        tested_at=datetime.now(UTC).isoformat(),
+    )

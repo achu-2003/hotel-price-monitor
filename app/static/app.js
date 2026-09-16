@@ -71,6 +71,10 @@
   document.querySelectorAll("form.api-form").forEach(function (form) {
     form.addEventListener("submit", async function (event) {
       event.preventDefault();
+      // A form that destroys something says so first. Native confirm rather
+      // than a modal: it cannot be dismissed by a stray click and needs no
+      // markup on every page that uses it.
+      if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) return;
       const status = form.querySelector(".form-status");
       const payload = {};
 
@@ -95,6 +99,14 @@
           } catch (e) {
             jsonError = key + " is not valid JSON: " + e.message;
           }
+          return;
+        }
+        // Fields marked data-text are sent as typed. A client number or a
+        // password of digits is not a number: Number("00123") is 123, and a
+        // login that fails because its leading zeros were dropped on the way
+        // to the server fails with nothing on screen to say why.
+        if (form.querySelector('[name="' + key + '"][data-text]')) {
+          payload[key] = value;
           return;
         }
         if (/^-?\d+$/.test(value)) { payload[key] = Number(value); return; }
@@ -147,6 +159,117 @@
             window.location.reload();
           }
         }, 600);
+      }
+    });
+  });
+
+  // -- rate application: test the saved login ------------------------
+  // Not a form.api-form: that handler says "Saved." and reloads, and the
+  // useful part of this answer is the sentence the probe came back with --
+  // "logged in, landed on X" or "refused: the page says Y" -- shown in
+  // place, verdict and all, and replaced by the next attempt.
+  //
+  // A POLL, NOT ONE REQUEST. The browser on the worker may stop at a
+  // one-time-code screen and wait for the owner; the page asks every two
+  // seconds where the test is, shows the code box when it is wanted, and
+  // sends the code back through the same status channel.
+  document.querySelectorAll("form.test-login-form").forEach(function (form) {
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector(".form-status");
+    const box = form.querySelector(".test-result");
+    const ask = form.querySelector(".code-ask");
+    const codeInput = ask.querySelector("input[name=code]");
+    const sendCode = ask.querySelector(".send-code");
+    const endpoint = form.dataset.endpoint;
+    let polling = null;
+
+    function note(text, cls) {
+      status.hidden = !text;
+      status.className = "form-status " + (cls || "");
+      status.textContent = text || "";
+    }
+
+    function showVerdict(r) {
+      box.hidden = false;
+      box.className = "test-result " + (r.ok ? "ok" : "error");
+      box.querySelector(".test-verdict").textContent = r.ok ? "Logged in" : "Not logged in";
+      box.querySelector(".test-when").textContent = " \u00b7 tested just now";
+      box.querySelector(".test-message").textContent = r.message || "";
+      const shot = box.querySelector(".test-shot");
+      shot.hidden = !r.has_screenshot;
+      // Same URL, new picture: a cache-buster so the link opens this
+      // attempt's screenshot rather than the browser's copy of the last one.
+      if (r.has_screenshot) shot.href = "/api/v1/rate-application/screenshot?t=" + Date.now();
+    }
+
+    function finish() {
+      if (polling) { clearInterval(polling); polling = null; }
+      button.disabled = false;
+      button.textContent = "Test login";
+      ask.hidden = true;
+      sendCode.disabled = false;
+      codeInput.value = "";
+    }
+
+    function apply(state) {
+      if (state.status === "running") {
+        ask.hidden = true;
+        note(state.message || "Signing in\u2026");
+      } else if (state.status === "needs_code") {
+        note("");
+        ask.hidden = false;
+        ask.querySelector(".code-prompt").textContent =
+          "The application asked for a one-time code: \u201c" + (state.message || "") + "\u201d";
+        if (document.activeElement !== codeInput && !codeInput.value) codeInput.focus();
+      } else if (state.status === "done") {
+        note("");
+        showVerdict(state);
+        finish();
+      } else {
+        note("The test stopped without an answer. Try again.", "error");
+        finish();
+      }
+    }
+
+    async function poll() {
+      const result = await api(endpoint + "/status", "GET");
+      if (!result.ok) { note(problemText(result), "error"); finish(); return; }
+      apply(result.body);
+    }
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      button.disabled = true;
+      button.textContent = "Signing in\u2026";
+      box.hidden = true;
+      note("Opening the login page in a browser and signing in. This can take up to a minute.");
+      const result = await api(endpoint, "POST", {});
+      if (!result.ok) { note(problemText(result), "error"); finish(); return; }
+      apply(result.body);
+      if (!polling) polling = setInterval(poll, 2000);
+    });
+
+    async function submitCode() {
+      const code = codeInput.value.trim();
+      if (!code) { codeInput.focus(); return; }
+      sendCode.disabled = true;
+      const result = await api(endpoint + "/code", "POST", { code: code });
+      if (!result.ok) { note(problemText(result), "error"); sendCode.disabled = false; return; }
+      apply(result.body);
+    }
+    sendCode.addEventListener("click", submitCode);
+    codeInput.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") { event.preventDefault(); submitCode(); }
+    });
+
+    // A test left waiting when the page was refreshed is still waiting on
+    // the worker; pick it up rather than offering to start a second one.
+    api(endpoint + "/status", "GET").then(function (result) {
+      if (result.ok && result.body && (result.body.status === "running" || result.body.status === "needs_code")) {
+        button.disabled = true;
+        button.textContent = "Signing in\u2026";
+        apply(result.body);
+        polling = setInterval(poll, 2000);
       }
     });
   });

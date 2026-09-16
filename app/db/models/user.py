@@ -122,3 +122,64 @@ class SourceCredential(Base, TimestampMixin):
     def __repr__(self) -> str:
         # Never include the value, not even truncated.
         return f"<SourceCredential source={self.source_id} label={self.label!r}>"
+
+
+class RateApplication(Base, TimestampMixin):
+    """The application an owner's rates are changed in, and how to log into it.
+
+    The rest of this system READS prices: every adapter opens somebody else's
+    booking page and copies what it says. This row is the first thing that
+    points the other way -- the channel manager or extranet where the owner's
+    own rate is actually set, so that "Sterling is ₹700 under you" can one day
+    be answered with a new rate rather than a phone call.
+
+    ONE ROW PER OWNER. It is the owner's login to the owner's application; a
+    second property of theirs lives inside that application, not in a second
+    row here. Unique on ``owner_user_id`` so the page can PUT without a
+    create-or-update dance.
+
+    THE PASSWORD IS WRITE-ONLY. Sealed with ``app.core.crypto.encrypt`` --
+    a random data key under the environment's KEK, so a database dump alone is
+    useless -- and never returned by any endpoint or shown by any page. The
+    client number and username are stored in the clear because the page has
+    to show them back for the owner to see what is set; neither is a secret
+    on its own, and both are useless without the password.
+
+    ``login_url`` is the page the owner would open by hand. What to do once it
+    is open belongs to whichever adapter drives that application, not here.
+    """
+
+    __tablename__ = "rate_applications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    login_url: Mapped[str] = mapped_column(Text, nullable=False)
+    client_number: Mapped[str] = mapped_column(String(120), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # The last time the login was tried from the dashboard, and how it went.
+    # Kept on the row so the page can show it without a second table: there
+    # is one application per owner and only the latest attempt matters. The
+    # message is the probe's own sentence of evidence; the screenshot is of
+    # the page it landed on, taken after the submit, so it never shows the
+    # password.
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean)
+    last_test_message: Mapped[str | None] = mapped_column(Text)
+    last_test_screenshot: Mapped[str | None] = mapped_column(Text)
+
+    # The browser's cookies and local storage after a login that ticked
+    # "trust this device", sealed like the password. Applications that ask
+    # for a one-time code remember the device that answered it in a cookie;
+    # without this the next login is a fresh device and asks again. Cleared
+    # whenever the login details change, because a trust earned by one
+    # username is not a trust for another.
+    encrypted_session_state: Mapped[str | None] = mapped_column(Text)
+    session_state_saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:
+        # Never the password, not even that there is one.
+        return f"<RateApplication owner={self.owner_user_id} url={self.login_url!r}>"

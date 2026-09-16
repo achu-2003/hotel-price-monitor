@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Rate application · Hotel Price Monitor{% endblock %}
+
+{#
+  WHERE YOUR OWN RATE IS SET
+  ==========================
+  Everything else on this dashboard reads prices off other people's sites.
+  This page points the other way: the channel manager or extranet the owner
+  logs into by hand to change a rate, and the login that opens it -- so that
+  a comparison can eventually end in a new rate rather than a phone call.
+
+  One form, four boxes, and the password is never shown back. A saved
+  password is described ("set on ...") rather than displayed, and leaving the
+  box empty on a later save keeps it: the API treats a missing password as
+  "unchanged", which is the only way a form that cannot show the old value
+  can change the username without demanding the password again.
+#}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Rate application</h1>
+    <p class="muted">
+      The application your own rates are changed in, and the login that opens
+      it. Nothing here changes what is monitored — that lives on each hotel's
+      page.
+    </p>
+  </div>
+</div>
+
+<section class="setup-pair">
+  <div class="setup-col">
+    <h2>{{ 'Login details' if app else 'Connect the application' }}</h2>
+    <p class="muted">
+      {% if app %}
+        Saved {{ app.updated_at.strftime('%d %b %Y, %H:%M') }}. Change any box
+        and save; leave the password empty to keep the one already stored.
+      {% else %}
+        Enter the details you use to log in yourself. They are stored
+        encrypted, and the password is never shown again once saved.
+      {% endif %}
+    </p>
+
+    <form class="panel stack api-form" id="rate-application"
+          data-endpoint="/api/v1/rate-application"
+          data-method="PUT">
+      <label for="login_url">
+        Login page link
+        {# type="text", not "url": the browser's own url check refuses a paste
+           without a scheme, and the server adds https:// to exactly that. #}
+        <input id="login_url" name="login_url" type="text" inputmode="url" required
+               autocomplete="off" spellcheck="false" data-text
+               placeholder="https://…  the page where you sign in"
+               value="{{ app.login_url if app else '' }}">
+      </label>
+
+      <label for="client_number">
+        Client number
+        {# data-text: the form handler turns digits into a number, and a
+           number has no leading zeros. Kept as typed. #}
+        <input id="client_number" name="client_number" type="text" required
+               autocomplete="off" spellcheck="false" data-text
+               value="{{ app.client_number if app else '' }}">
+      </label>
+
+      <label for="username">
+        Username
+        <input id="username" name="username" type="text" required
+               autocomplete="off" spellcheck="false" data-text
+               value="{{ app.username if app else '' }}">
+      </label>
+
+      <label for="password">
+        Password
+        <input id="password" name="password" type="password" data-text
+               autocomplete="new-password"
+               {% if not app %}required{% endif %}
+               placeholder="{{ '•••••••• (saved — leave empty to keep it)' if app and app.has_password else '' }}">
+      </label>
+
+      <div class="actions">
+        <button type="submit">{{ 'Save changes' if app else 'Save' }}</button>
+        <span class="form-status" role="status"></span>
+      </div>
+    </form>
+
+    {% if app %}
+    {# Its own form, not a button on the one above: a Forget beside a Save is
+       one mis-click from wiping a login the owner just corrected. #}
+    <form class="stack api-form" id="rate-application-forget"
+          data-endpoint="/api/v1/rate-application"
+          data-method="DELETE"
+          data-confirm="Forget the saved login for {{ app.login_url }}? You will need to enter it again to reconnect.">
+      <div class="actions">
+        <button type="submit" class="danger">Forget this login</button>
+        <span class="form-status" role="status"></span>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="setup-col">
+    <h2>Test the login</h2>
+    {% if app %}
+    <p class="muted">
+      Opens the login page in a browser here, signs in with the saved details,
+      and reports what happened. It changes nothing in the application and
+      does not stay signed in.
+    </p>
+
+    <form class="panel stack test-login-form" id="test-login"
+          data-endpoint="/api/v1/rate-application/test-login">
+      <div class="actions">
+        <button type="submit">Test login</button>
+        <span class="muted">Takes about half a minute.</span>
+      </div>
+      {#
+        THE CODE BOX. Hidden until the application asks. RMS emails a
+        one-time passcode on logins it does not recognise; the browser on
+        the worker waits with that screen open while the owner types it
+        here. The box is part of the same form so the reader's eye does not
+        have to go anywhere: the question appears where the button was.
+      #}
+      <div class="code-ask" id="code-ask" hidden>
+        <p class="code-prompt"></p>
+        <label for="login_code">
+          One-time code from the email
+          <input id="login_code" name="code" type="text" inputmode="numeric"
+                 autocomplete="one-time-code" data-text maxlength="32" spellcheck="false">
+        </label>
+        <div class="actions">
+          <button type="button" class="send-code">Enter code</button>
+          <span class="muted">Use the code from the <strong>newest</strong> email — each test sends a new one and older codes are refused. It will also tick <em>Trust this device</em>, so next time should not ask.</span>
+        </div>
+      </div>
+      {#
+        THE LAST VERDICT, RENDERED ON LOAD AND REPLACED ON TEST. The same
+        block serves both, so an owner who tested yesterday sees the answer
+        without running a browser again, and the block the test fills in is
+        the one they were already reading.
+      #}
+      <div class="test-result {{ 'ok' if app.last_test_ok else ('error' if app.last_test_ok is not none else '') }}"
+           id="test-result" {% if app.last_test_at is none %}hidden{% endif %}>
+        <strong class="test-verdict">
+          {%- if app.last_test_ok %}Logged in
+          {%- elif app.last_test_ok is not none %}Not logged in
+          {%- endif -%}
+        </strong>
+        <span class="test-when muted">
+          {%- if app.last_test_at %} · tested {{ app.last_test_at.strftime('%d %b %Y, %H:%M') }}{% endif -%}
+        </span>
+        <p class="test-message">{{ app.last_test_message or '' }}</p>
+        <a class="test-shot" href="/api/v1/rate-application/screenshot" target="_blank" rel="noopener"
+           {% if not app.has_screenshot %}hidden{% endif %}>See the page it landed on</a>
+      </div>
+      <p class="form-status" role="status" hidden></p>
+    </form>
+    {% if app.session_state_saved_at %}
+    <p class="muted">
+      This device is trusted by the application since
+      {{ app.session_state_saved_at.strftime('%d %b %Y, %H:%M') }}, so a login
+      should not ask for a code. If it starts asking again, the trust has
+      expired on their side; the test will simply ask you for the code once more.
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="muted">Save the details first; the test button appears here once they are stored.</p>
+    {% endif %}
+
+    <h2>What this is for</h2>
+    <p class="muted">
+      Today the comparison page tells you where your rate sits against the
+      market, and changing it means opening the application by hand. With the
+      login saved here, the next step is a control on that page that sets the
+      new rate for you.
+    </p>
+    <p class="muted">
+      <strong>The password is stored encrypted</strong> under the same key as
+      the booking-site logins, and no page or API ever returns it. The link,
+      client number and username are shown back so you can see what is set.
+    </p>
+    <p class="muted">
+      <strong>One login per account.</strong> If the application holds more
+      than one of your properties, they are all reached through this one
+      login.
+    </p>
+  </div>
+</section>
+{% endblock %}

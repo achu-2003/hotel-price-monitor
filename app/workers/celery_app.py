@@ -70,6 +70,9 @@ celery_app.conf.update(
         # Same reasoning, other caller: attaching a hotel on an unrecognised
         # engine inspects the page in a browser, and the API image has none.
         "discover.inspect_url": {"queue": "browser"},
+        # Signs in to the owner's rate application in a browser, on request
+        # from the Rate app page.
+        "rate_app.test_login": {"queue": "browser"},
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},

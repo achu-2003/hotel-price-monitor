@@ -1526,3 +1526,26 @@ form.target-sensitivity { max-width: none; }
 @media (max-width: 640px) {
   .field-row { flex-direction: column; align-items: stretch; }
 }
+
+/* The verdict of a rate-application login test. A word and a colour, and the
+   probe's own sentence under it: the sentence is the part that says why, and
+   the part an owner reads twice. */
+.test-result {
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--line-soft); font-size: 14px;
+}
+.test-result.ok { border-color: #bfe4d3; background: var(--down-bg); }
+.test-result.ok .test-verdict { color: var(--down); }
+.test-result.error { border-color: #f3c9c9; background: var(--up-bg); }
+.test-result.error .test-verdict { color: var(--up); }
+.test-result .test-message { margin: 6px 0 0; color: var(--ink-2); line-height: 1.45; }
+.test-result .test-shot { display: inline-block; margin-top: 6px; font-size: 13px; }
+/* The one-time-code question, shown only while the worker's browser is
+   waiting on it. Framed like the verdict so it reads as the same
+   conversation: the application asked, and this is where you answer. */
+.code-ask {
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid #e7d9a8; background: #fdf8e7; font-size: 14px;
+}
+.code-ask .code-prompt { margin: 0 0 8px; color: var(--ink-2); }
+.code-ask input[name=code] { width: 10em; letter-spacing: .12em; font-variant-numeric: tabular-nums; }

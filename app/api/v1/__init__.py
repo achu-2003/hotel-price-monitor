@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, hotels, notifications, ops, prices, sources, targets
+from app.api.v1 import (
+    auth, hotels, notifications, ops, prices, rate_application, sources, targets,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -19,5 +21,6 @@ api_router.include_router(targets.router)
 api_router.include_router(prices.router)
 api_router.include_router(notifications.router)
 api_router.include_router(ops.router)
+api_router.include_router(rate_application.router)
 
 __all__ = ["api_router"]

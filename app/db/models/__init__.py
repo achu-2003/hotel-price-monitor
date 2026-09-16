@@ -34,7 +34,7 @@ from app.db.models.price import (
     PriceSeries,
     UnmatchedOffer,
 )
-from app.db.models.user import AuditLog, SourceCredential, User
+from app.db.models.user import AuditLog, RateApplication, SourceCredential, User
 
 __all__ = [
     "AlertDefaults",
@@ -58,6 +58,7 @@ __all__ = [
     "PriceChange",
     "PriceObservation",
     "PriceSeries",
+    "RateApplication",
     "Recipient",
     "RoomType",
     "RoomTypeAlias",
