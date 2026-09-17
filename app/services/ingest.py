@@ -834,7 +834,7 @@ def _apply_comparison(
         # use. That comparison is the whole point of the monitor and lives
         # nowhere else -- without it a lead_time_days=0 target can never
         # produce a single alert, because every day is a first sighting.
-        _carry_over_change(
+        moved = _carry_over_change(
             session,
             offer_key=offer_key,
             room_type_id=room_type_id,
@@ -845,6 +845,17 @@ def _apply_comparison(
             ctx=ctx,
             summary=summary,
         )
+        if moved:
+            # A NIGHT-TO-NIGHT MOVE IS A MOVE. ``last_changed_at`` was stamped
+            # only by the intraday path below, so under a rolling target --
+            # where every night is a new series that lives one day -- a hotel
+            # that reprices by day of the week and never within a day kept a
+            # timestamp from the last time it changed its mind mid-day. The
+            # health check read that as "no price has moved in 12 days" about
+            # MGM Whispering Meadows while the Changes page listed ten of its
+            # weekend moves in the same fortnight, and the overview's "moved
+            # recently" marker missed them for the same reason.
+            series.last_changed_at = ctx.checked_at
 
     if decision.should_record_change:
         series.last_changed_at = ctx.checked_at
@@ -963,18 +974,21 @@ def _carry_over_change(
     currency: str,
     ctx: IngestContext,
     summary: IngestSummary,
-) -> None:
+) -> bool:
     """Compare a brand-new series against the last stay date we priced.
 
     Called ONLY on first sighting, which is what makes it safe to run without
     a debounce: a given stay date is first seen exactly once, so this can emit
     at most one row per series no matter how often the target is checked.
+
+    Returns whether a change was recorded, so the caller can stamp the series
+    as having moved -- see the note at the call site.
     """
     previous = _previous_stay_series(
         session, room_type_id=room_type_id, offer=offer, ctx=ctx
     )
     if previous is None:
-        return
+        return False
 
     # The main path rebases a series when the configured basis changes, but
     # this one reads a DIFFERENT series -- an earlier stay date, which may hold
@@ -990,7 +1004,7 @@ def _carry_over_change(
             previous_basis=previous.last_price_basis.value,
             basis=ctx.price_basis.value,
         )
-        return
+        return False
 
     previous_components = _baseline_components(previous)
 
@@ -1013,7 +1027,7 @@ def _carry_over_change(
         this_lead_days=_lead_days(ctx.stay.check_in, ctx.checked_at),
     )
     if change is None:
-        return
+        return False
 
     # First sighting happens once per series, so this should already be
     # unique -- unless the series row was deleted and rebuilt, which recreates
@@ -1034,7 +1048,7 @@ def _carry_over_change(
             offer_key=offer_key[:12],
             previous_offer_key=change.previous_offer_key[:12],
         )
-        return
+        return False
 
     row = PriceChange(
         offer_key=offer_key,
@@ -1077,6 +1091,7 @@ def _carry_over_change(
         new_price=str(change.new_price),
         delta_pct=str(change.delta_pct),
     )
+    return True
 
 
 # -- disappearance ---------------------------------------------------

@@ -735,6 +735,66 @@ class TestBasisChange:
         assert session.execute(select(func.count(PriceChange.id))).scalar_one() == 0
 
 
+class TestANightToNightMoveIsAMove:
+    """``last_changed_at`` must move when the carry-over comparison reports.
+
+    Under a rolling target every night is a new series that lives one day,
+    so a hotel that reprices by day of the week and never within a day only
+    ever changes price ACROSS series. That path wrote the PriceChange and
+    left the series timestamp alone, so the health check read MGM Whispering
+    Meadows as "no price has moved in 12 days" while the Changes page listed
+    ten of its weekend moves in the same fortnight.
+    """
+
+    # Tonight and last night, each checked on its own day -- lead distance
+    # zero, like the rolling targets this deployment runs. The comparison is
+    # like-for-like on lead distance, so both nights must be watched the same
+    # way or it (rightly) stays silent. Anchored to the real today rather than
+    # STAY because observations are partitioned by month and the test
+    # database only carries last month, this one and next.
+    TONIGHT_AT = datetime.now(UTC).replace(hour=6, minute=0, second=0, microsecond=0)
+    TONIGHT = StayWindow(TONIGHT_AT.date(), TONIGHT_AT.date() + timedelta(days=1))
+    LAST_NIGHT_AT = TONIGHT_AT - timedelta(days=1)
+    LAST_NIGHT = StayWindow(LAST_NIGHT_AT.date(), TONIGHT.check_in)
+
+    def test_a_carry_over_change_stamps_the_new_series(self, session, hotel_fixture):
+        ingest_fetch_result(
+            session, _result(_offer(price="3000")),
+            replace(_context(hotel_fixture, checked_at=self.LAST_NIGHT_AT), stay=self.LAST_NIGHT),
+        )
+        session.flush()
+
+        summary = ingest_fetch_result(
+            session, _result(_offer(price="3520")),
+            replace(_context(hotel_fixture, checked_at=self.TONIGHT_AT), stay=self.TONIGHT),
+        )
+        session.flush()
+
+        assert len(summary.change_ids) == 1, "the weekend rate is a move"
+        tonight = session.scalars(
+            select(PriceSeries).where(PriceSeries.check_in == self.TONIGHT.check_in)
+        ).one()
+        assert tonight.last_changed_at == self.TONIGHT_AT
+
+    def test_a_silent_first_sighting_leaves_it_unset(self, session, hotel_fixture):
+        """Same price as last night is not a move, and must not look like one."""
+        ingest_fetch_result(
+            session, _result(_offer(price="3000")),
+            replace(_context(hotel_fixture, checked_at=self.LAST_NIGHT_AT), stay=self.LAST_NIGHT),
+        )
+        session.flush()
+        ingest_fetch_result(
+            session, _result(_offer(price="3000")),
+            replace(_context(hotel_fixture, checked_at=self.TONIGHT_AT), stay=self.TONIGHT),
+        )
+        session.flush()
+
+        tonight = session.scalars(
+            select(PriceSeries).where(PriceSeries.check_in == self.TONIGHT.check_in)
+        ).one()
+        assert tonight.last_changed_at is None
+
+
 class TestWhenThePriceActuallyChanged:
     """`changed_at` is when the debounce finished, which is a different fact.
 
