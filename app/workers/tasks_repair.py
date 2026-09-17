@@ -700,6 +700,7 @@ def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
     from app.db.models import RateApplication
     from app.services import rate_app_test_state as state
     from app.services.rate_app_login import attempt_login
+    from app.services.rate_app_rms import bump_rate
 
     with sync_session() as session:
         row = session.scalar(
@@ -749,6 +750,9 @@ def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
         storage_state=storage_state,
         on_code_needed=on_code_needed,
         wait_for_code=wait_for_code,
+        # Once in, walk to one Booking.com price, put it up a rupee, and
+        # photograph the grid instead of the landing page: see ``rate_app_rms``.
+        after_login=lambda page, probe: bump_rate(page, probe, owner_user_id=owner_user_id),
     )
     del password
 

@@ -3,11 +3,13 @@
 This is a PROBE, not a session. It opens the login page in a fresh browser
 context, fills in what it was given, presses the one button that submits the
 form, looks at where that landed, takes a picture, and closes the browser.
-It does not save cookies, it does not click anything after the login, and it
-does not read anything off the page beyond what it needs to say "logged in"
-or "refused, and here is why". Changing a rate is a different job, for a
-driver written against the specific application once we know which one it
-is; this is how we find out whether that driver could get in at all.
+It does not save cookies, and it does not read anything off the page beyond
+what it needs to say "logged in" or "refused, and here is why". Changing a
+rate is a different job, for a driver written against the specific
+application once we know which one it is; this is how we find out whether
+that driver could get in at all. The one thing it will do after a good login
+is hand the open page to ``after_login`` -- the RMS driver in
+``rate_app_rms`` walks from there to a channel's page and photographs it.
 
 WHY THE JUDGEMENT IS HEURISTIC
 ==============================
@@ -32,7 +34,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import structlog
@@ -363,6 +365,18 @@ def _verdict(page, owner_user_id: int, *, filled: dict, pressed: str, unasked: s
     )
 
 
+def _then(after_login, page, probe: LoginProbe) -> LoginProbe:
+    """Run the after-login step on a good login; report its failure as its own."""
+    if not probe.ok or after_login is None:
+        return probe
+    try:
+        return after_login(page, probe)
+    except Exception as exc:  # noqa: BLE001 - the login stood; the step after it did not
+        reason = str(exc).splitlines()[0].strip() or type(exc).__name__
+        log.warning("rate_app_after_login_failed", error=reason)
+        return replace(probe, message=f"{probe.message} The step after the login failed: {reason}")
+
+
 def _code_screen(page):
     """The one-time-code box and the panel it sits in, or ``(None, None)``.
 
@@ -466,8 +480,16 @@ def attempt_login(
     storage_state: dict | None = None,
     on_code_needed: Callable[[str], None] | None = None,
     wait_for_code: Callable[[], str | None] | None = None,
+    after_login: Callable[[object, LoginProbe], LoginProbe] | None = None,
 ) -> LoginProbe:
     """Open the page, sign in, report. Never raises for anything the page did.
+
+    ``after_login`` runs with the browser still open once the login is judged
+    good, and hands back the probe to report -- the way a step that goes
+    somewhere in the application (see ``rate_app_rms``) replaces the
+    landing-page screenshot with one of where it got to. It is not called on
+    a refused login, and anything it raises is reported as that step
+    failing, not as the login failing.
 
     ``storage_state`` is the browser's memory of an earlier visit -- the
     cookie that says this device answered the one-time code before -- and is
@@ -512,11 +534,11 @@ def attempt_login(
                 if storage_state and not _visible(page.locator(_TEXT_INPUTS)):
                     # No form at all, and we arrived with cookies: the site
                     # let the remembered session straight in.
-                    return _verdict(
+                    return _then(after_login, page, _verdict(
                         page, owner_user_id, filled={}, pressed="opened the link",
                         unasked=" The saved session was still valid, so no login was needed.",
                         used_code=False, keep_state=True,
-                    )
+                    ))
                 return LoginProbe(
                     ok=False,
                     message=(
@@ -565,10 +587,10 @@ def attempt_login(
 
             code_box, code_scope = _code_screen(page)
             if code_box is None:
-                return _verdict(
+                return _then(after_login, page, _verdict(
                     page, owner_user_id, filled=filled, pressed=pressed, unasked=unasked,
                     used_code=False, keep_state=True,
-                )
+                ))
 
             # The application wants the one-time code it just sent.
             prompt = " ".join((page.inner_text("body", timeout=2_000) or "").split())[:200]
@@ -623,10 +645,10 @@ def attempt_login(
                     screenshot_path=_screenshot(page, owner_user_id), filled=filled,
                     used_code=True,
                 )
-            return _verdict(
+            return _then(after_login, page, _verdict(
                 page, owner_user_id, filled=filled, pressed=pressed, unasked=unasked,
                 used_code=True, keep_state=trusted,
-            )
+            ))
     except FetchError as exc:
         # Already a sentence for an operator: which bot wall, how long it waited.
         return LoginProbe(ok=False, message=f"Could not open the login page. {exc}")

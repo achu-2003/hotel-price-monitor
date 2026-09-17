@@ -104,15 +104,18 @@
     {% if app %}
     <p class="muted">
       Opens the login page in a browser here, signs in with the saved details,
-      and reports what happened. It changes nothing in the application and
-      does not stay signed in.
+      then walks to Room Rate Manager → Channel → Booking.com → the first room
+      type → its first rate type, and <strong>puts today's price up by one
+      rupee</strong> (8,000 becomes 8,001) through Override Base Room Rate,
+      saving it. It reports what happened with a picture of the grid afterwards,
+      and does not stay signed in. Each test adds another rupee.
     </p>
 
     <form class="panel stack test-login-form" id="test-login"
           data-endpoint="/api/v1/rate-application/test-login">
       <div class="actions">
         <button type="submit">Test login</button>
-        <span class="muted">Takes about half a minute.</span>
+        <span class="muted">Takes about a minute.</span>
       </div>
       {#
         THE CODE BOX. Hidden until the application asks. RMS emails a
@@ -151,7 +154,7 @@
         </span>
         <p class="test-message">{{ app.last_test_message or '' }}</p>
         <a class="test-shot" href="/api/v1/rate-application/screenshot" target="_blank" rel="noopener"
-           {% if not app.has_screenshot %}hidden{% endif %}>See the page it landed on</a>
+           {% if not app.has_screenshot %}hidden{% endif %}>See the grid afterwards</a>
       </div>
       <p class="form-status" role="status" hidden></p>
     </form>
