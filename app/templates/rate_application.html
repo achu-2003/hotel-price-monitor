@@ -104,18 +104,18 @@
     {% if app %}
     <p class="muted">
       Opens the login page in a browser here, signs in with the saved details,
-      then walks to Room Rate Manager → Channel → Booking.com → the first room
-      type → its first rate type, and <strong>puts today's price up by one
-      rupee</strong> (8,000 becomes 8,001) through Override Base Room Rate,
-      saving it. It reports what happened with a picture of the grid afterwards,
-      and does not stay signed in. Each test adds another rupee.
+      then walks to Room Rate Manager → Channel → Booking.com and
+      <strong>reads today's rate for every room mapped on the
+      <a href="/repricing">Repricing</a> page</strong>, without changing anything.
+      It reports what it read with a picture of the grid, and does not stay
+      signed in.
     </p>
 
     <form class="panel stack test-login-form" id="test-login"
           data-endpoint="/api/v1/rate-application/test-login">
       <div class="actions">
         <button type="submit">Test login</button>
-        <span class="muted">Takes about a minute.</span>
+        <span class="muted">Takes about a minute. Changes nothing.</span>
       </div>
       {#
         THE CODE BOX. Hidden until the application asks. RMS emails a
@@ -172,10 +172,10 @@
 
     <h2>What this is for</h2>
     <p class="muted">
-      Today the comparison page tells you where your rate sits against the
-      market, and changing it means opening the application by hand. With the
-      login saved here, the next step is a control on that page that sets the
-      new rate for you.
+      The comparison page tells you where your rate sits against the market;
+      the <a href="/repricing">Repricing</a> page turns that into a proposed
+      rate per room and, when you press Apply (or switch it to automatic),
+      signs in here and sets it.
     </p>
     <p class="muted">
       <strong>The password is stored encrypted</strong> under the same key as

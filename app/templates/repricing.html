@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Repricing · Hotel Price Monitor{% endblock %}
+
+{#
+  FROM "WHERE DO WE SIT" TO "WHAT SHOULD IT BE"
+  =============================================
+  The comparison page says where the owner's rate sits against everyone
+  else's. This page takes the next step: for every room of the owner's
+  property it shows the market figure the rule computed, the price the rule
+  wants, and why it will or will not be written -- and the two buttons that
+  write it, one that only looks and one that does.
+
+  Nothing on this page moves a rate by itself unless the automatic switch
+  in the rule section is on. It ships off.
+#}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Repricing</h1>
+    <p class="muted">
+      Tonight ({{ check_in.strftime('%a %d %b %Y') }}): every room of yours against the
+      market, and the rate the rule proposes. <strong>Nothing is written unless you
+      press Apply or switch the automatic mode on.</strong>
+    </p>
+  </div>
+</div>
+
+{% if not own %}
+<p class="panel">No hotel is marked as your own property yet. Mark one on its hotel page and come back.</p>
+{% else %}
+
+<section class="repricing-section">
+  <h2>Tonight's proposals — {{ own.name }}</h2>
+  {% if not proposals %}
+    <p class="muted">No prices for tonight yet, or no rooms are mapped below.</p>
+  {% else %}
+  <div class="grid-wrap">
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>Room</th>
+        <th>Tier</th>
+        <th class="num">Our price</th>
+        <th class="num">Market (median)</th>
+        <th>Competitors</th>
+        <th class="num">Proposed price</th>
+        <th class="num">In RMS</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in proposals %}
+      {% set m = mappings.get(p.room_type_id) %}
+      <tr class="{{ 'held' if p.held else ('ok' if p.target is not none else '') }}">
+        <td class="room">
+          <strong>{{ p.room_name }}</strong>
+          {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
+        </td>
+        <td>{{ p.tier_label }}</td>
+        <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">{% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}</td>
+        <td class="competitors">
+          {% if p.competitors %}
+            <details>
+              <summary>{{ p.competitors|length }} hotel{{ 's' if p.competitors|length != 1 }}</summary>
+              <ul class="plain">
+              {% for c in p.competitors %}
+                <li><span class="num">{{ money(c.price) }}</span> <span class="who">{{ c.hotel }}<small class="muted">{{ c.room }}</small></span></li>
+              {% endfor %}
+              </ul>
+            </details>
+          {% else %}<span class="muted">none in this tier</span>{% endif %}
+        </td>
+        <td class="num">
+          {% if p.target is not none %}
+            <strong>{{ money(p.target) }}</strong>
+            {% if p.change_pct is not none %}<br><span class="muted">{{ '%+.1f'|format(p.change_pct) }}%</span>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        {% set ns = namespace(rms_new=none, outside=none) %}
+        {% if m and m.anchor_plan and (m.rms_room, m.rate_type_for(m.anchor_plan)) in latest_rms and p.target is not none and p.our_price %}
+          {% set cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_plan))] %}
+          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, cur, round_to=settings.round_to) %}
+          {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
+        {% endif %}
+        <td class="num">
+          {% if ns.rms_new is not none %}
+            {{ money(cur) }} → <strong>{{ money(ns.rms_new) }}</strong>
+            <br><span class="muted">{{ m.anchor_plan }}; the other plans keep their supplement</span>
+          {% elif m %}
+            <span class="muted">read the grid first (Preview)</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
+          {% elif ns.outside %}<span class="tag held">held</span> <span class="muted">{{ ns.outside }}</span>
+          {% elif p.target is not none %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {#
+    TWO BUTTONS, ONE JOB. Preview logs in, reads every mapped row on the
+    grid and records what it WOULD set, writing nothing; Apply does the
+    same and writes. Both poll the same status, and both are refused while
+    one is running.
+  #}
+  <form class="panel repricing-run-form" id="repricing-run" data-endpoint="/api/v1/repricing/run">
+    <div class="actions">
+      <button type="button" class="run" data-mode="dry_run" {% if not has_rate_app %}disabled{% endif %}>Preview in RMS (changes nothing)</button>
+      <button type="button" class="run danger" data-mode="manual" {% if not has_rate_app %}disabled{% endif %}
+              data-confirm="Set tonight's proposed rates in RMS now? Every room marked 'will apply' is written.">Apply to RMS now</button>
+    </div>
+    <p class="muted run-note">Preview signs in and reads every mapped row without changing anything. Apply does the same and writes the rates marked <em>will apply</em>. Each opens the rate application in a browser here and takes about a minute.</p>
+    {% if not has_rate_app %}
+    <p class="muted">Save the login on the <a href="/rate-application">Rate app</a> page first.</p>
+    {% endif %}
+    <p class="form-status" role="status" hidden></p>
+  </form>
+</section>
+
+<section class="repricing-section">
+  <h2>The rule</h2>
+  <p class="muted">
+    The market figure is the <strong>median</strong> of every competitor's entry price
+    in the same tier. The proposal is that figure moved by the position, then capped
+    by the step, then held if outside the floor or ceiling. Percentages are of our
+    current price for the room.
+  </p>
+  <form class="panel api-form rule-form" id="repricing-settings"
+        data-endpoint="/api/v1/repricing/settings" data-method="PUT">
+    <label class="checkbox rule-auto">
+      <input type="checkbox" name="auto_enabled" value="true" {% if settings.auto_enabled %}checked{% endif %}>
+      <span><strong>Automatic</strong> — apply the proposals every 30 minutes without asking</span>
+    </label>
+    <div class="rule-fields">
+      <label>Position against market
+        <span class="with-unit"><input type="number" name="position_pct" step="0.5" min="-50" max="50" value="{{ settings.position_pct }}"><span class="unit">%</span></span>
+        <small class="muted">0 matches it; −5 sits under it</small>
+      </label>
+      <label>Largest move per step
+        <span class="with-unit"><input type="number" name="max_step_pct" step="0.5" min="0" max="100" value="{{ settings.max_step_pct }}"><span class="unit">%</span></span>
+      </label>
+      <label>Floor below today's price
+        <span class="with-unit"><input type="number" name="floor_pct" step="1" min="0" max="90" value="{{ settings.floor_pct }}"><span class="unit">%</span></span>
+      </label>
+      <label>Ceiling above today's price
+        <span class="with-unit"><input type="number" name="ceiling_pct" step="1" min="0" max="500" value="{{ settings.ceiling_pct }}"><span class="unit">%</span></span>
+      </label>
+      <label>Fewest competitors
+        <input type="number" name="min_competitors" step="1" min="1" max="50" value="{{ settings.min_competitors }}">
+      </label>
+      <label>Round to nearest
+        <span class="with-unit"><span class="unit">₹</span><input type="number" name="round_to" step="1" min="1" max="1000" value="{{ settings.round_to }}"></span>
+      </label>
+      <label>Channel row in RMS
+        <input type="text" name="channel" data-text value="{{ settings.channel }}">
+      </label>
+    </div>
+    <div class="actions">
+      <button type="submit">Save rule</button>
+      <span class="form-status" role="status"></span>
+    </div>
+  </form>
+</section>
+
+<section class="repricing-section">
+  <h2>Room mapping</h2>
+  <p class="muted">
+    Which row of RMS each of your rooms is. The booking site and RMS name rooms
+    differently (Booking.com's "Deluxe Double Room" is RMS's CLASSIC), so a repricer
+    that guessed would write the right number on the wrong room. Leave a rate row
+    blank if that plan is not sold on the channel; floor and ceiling are RMS rates.
+  </p>
+  {#
+    ONE GRID, ONE FORM PER ROW. A <form> cannot wrap a table row, so this is
+    a CSS grid and each form is ``display: contents`` -- its cells sit in
+    the grid while the form stays the element the api-form handler reads.
+  #}
+  <div class="panel mapping-grid">
+    <div class="mapping-head">Your room</div>
+    <div class="mapping-head">RMS room type</div>
+    <div class="mapping-head">EP row</div>
+    <div class="mapping-head">CP row</div>
+    <div class="mapping-head">MAP row</div>
+    <div class="mapping-head">Floor ₹</div>
+    <div class="mapping-head">Ceiling ₹</div>
+    <div class="mapping-head mapping-on">On</div>
+    <div class="mapping-head"></div>
+    {% for room in rooms %}
+      {% set m = mappings.get(room.id) %}
+      <form class="api-form mapping-row" data-endpoint="/api/v1/repricing/mappings/{{ room.id }}" data-method="PUT">
+        <div class="mapping-name"><strong>{{ room.name }}</strong></div>
+        <div><input type="text" name="rms_room" data-text required placeholder="CLASSIC" value="{{ m.rms_room if m else '' }}"></div>
+        <div><input type="text" name="rate_type_ep" data-text placeholder="—" value="{{ m.rate_type_ep or '' if m else '' }}"></div>
+        <div><input type="text" name="rate_type_cp" data-text placeholder="—" value="{{ m.rate_type_cp or '' if m else '' }}"></div>
+        <div><input type="text" name="rate_type_map" data-text placeholder="—" value="{{ m.rate_type_map or '' if m else '' }}"></div>
+        <div><input type="number" name="floor_amount" min="0" step="1" placeholder="none" value="{{ m.floor_amount|int if m and m.floor_amount is not none else '' }}"></div>
+        <div><input type="number" name="ceiling_amount" min="0" step="1" placeholder="none" value="{{ m.ceiling_amount|int if m and m.ceiling_amount is not none else '' }}"></div>
+        <div class="mapping-on"><input type="checkbox" name="is_enabled" value="true" title="Reprice this room" {% if not m or m.is_enabled %}checked{% endif %}></div>
+        <div class="mapping-save">
+          <button type="submit" class="small">{{ 'Save' if m else 'Map' }}</button>
+          <span class="form-status" role="status"></span>
+        </div>
+      </form>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="repricing-section">
+  <h2>What the repricer did</h2>
+  <p class="muted">Every decision, including the ones that changed nothing. Newest first.</p>
+  {% if not actions %}
+    <p class="muted">Nothing yet.</p>
+  {% else %}
+  <div class="grid-wrap">
+  <table class="grid">
+    <thead>
+      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num">Market</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+    {% for a in actions %}
+      <tr class="{{ a.status }}">
+        <td>{{ a.created_at | localtime }}</td>
+        <td>{{ a.mode }}</td>
+        <td>{{ a.room_name or '—' }}{% if a.rms_room %} <span class="muted">/ {{ a.rms_room }}</span>{% endif %}</td>
+        <td>{{ a.plan or '—' }}</td>
+        <td class="num">{{ money(a.market_price) if a.market_price is not none else '—' }}</td>
+        <td class="num">{{ money(a.target_price) if a.target_price is not none else '—' }}</td>
+        <td class="num">{{ money(a.current_rms) if a.current_rms is not none else '—' }}</td>
+        <td class="num">{{ money(a.applied_rms) if a.applied_rms is not none else (money(a.proposed_rms) ~ ' (proposed)' if a.proposed_rms is not none else '—') }}</td>
+        <td>
+          <span class="tag {{ a.status }}">{{ a.status }}</span>
+          {% if a.reason %}<span class="muted">{{ a.reason }}</span>{% endif %}
+          {% if a.screenshot_path %} <a href="/api/v1/repricing/actions/{{ a.id }}/screenshot" target="_blank" rel="noopener">grid</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

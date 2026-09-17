@@ -59,6 +59,7 @@
     <a href="/hotels"        class="{{ 'active' if path.startswith('/hotels') }}">Hotels</a>
     <a href="/notifications" class="{{ 'active' if path.startswith('/notifications') }}">Alerts</a>
     <a href="/rate-application" class="{{ 'active' if path.startswith('/rate-application') }}">Rate app</a>
+    <a href="/repricing" class="{{ 'active' if path.startswith('/repricing') }}">Repricing</a>
     <a href="/settings"      class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
     {% if attention and attention.total %}
     <a href="/attention" class="nav-alert {{ 'active' if path.startswith('/attention') }}">

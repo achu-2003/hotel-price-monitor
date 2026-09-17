@@ -274,6 +274,66 @@
     });
   });
 
+  // -- repricing: preview or apply tonight's proposals in RMS ---------
+  //
+  // Two buttons on one form, differing only in the mode they send. Like
+  // the login test, the job runs on the worker with a browser open and the
+  // page polls; unlike it, there is no code box -- a one-time code is
+  // answered on the Rate app page, and a run that meets one says so.
+  document.querySelectorAll("form.repricing-run-form").forEach(function (form) {
+    const buttons = Array.from(form.querySelectorAll("button.run"));
+    const status = form.querySelector(".form-status");
+    const endpoint = form.dataset.endpoint;
+    let polling = null;
+
+    function note(text, cls) {
+      status.hidden = !text;
+      status.className = "form-status " + (cls || "");
+      status.textContent = text || "";
+    }
+    function busy(on) {
+      buttons.forEach(function (b) { b.disabled = on; });
+    }
+    function finish(state) {
+      if (polling) { clearInterval(polling); polling = null; }
+      busy(false);
+      if (state && state.status === "done") {
+        note(state.message || "Done.", state.ok ? "ok" : "error");
+        // The log below the fold has new rows; show them.
+        setTimeout(function () { window.location.reload(); }, 2500);
+      }
+    }
+    function apply(state) {
+      if (!state) { finish(null); return; }
+      if (state.status === "running") { note(state.message || "Working…"); return; }
+      finish(state);
+    }
+    async function poll() {
+      const result = await api(endpoint + "/status", "GET");
+      if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
+      apply(result.body);
+    }
+    buttons.forEach(function (button) {
+      button.addEventListener("click", async function () {
+        if (button.dataset.confirm && !window.confirm(button.dataset.confirm)) return;
+        busy(true);
+        note("Signing in to the rate application…");
+        const result = await api(endpoint, "POST", { mode: button.dataset.mode });
+        if (!result.ok) { note(problemText(result), "error"); busy(false); return; }
+        apply(result.body);
+        if (!polling) polling = setInterval(poll, 2000);
+      });
+    });
+    // A run left going when the page was refreshed is still going.
+    api(endpoint + "/status", "GET").then(function (result) {
+      if (result.ok && result.body && result.body.status === "running") {
+        busy(true);
+        apply(result.body);
+        polling = setInterval(poll, 2000);
+      }
+    });
+  });
+
   // -- manual run, with polling --------------------------------------
   document.querySelectorAll("button.run-now").forEach(function (button) {
     button.addEventListener("click", async function () {

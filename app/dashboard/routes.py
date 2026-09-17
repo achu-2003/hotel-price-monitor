@@ -58,6 +58,9 @@ from app.db.models import (
     PriceSeries,
     RateApplication,
     Recipient,
+    RepricingAction,
+    RepricingSettings,
+    RmsRoomMapping,
     RoomType,
     Source,
     UnmatchedOffer,
@@ -70,6 +73,7 @@ from app.notifications.render import money
 from app.services import comparison_links
 from app.services import monitoring as monitoring_service
 from app.services import rate_gap
+from app.services import repricing as repricing_rule
 from app.services import retention
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
@@ -1902,6 +1906,82 @@ async def rate_application_page(request: Request, user: DashUser, session: DbSes
         else None
     )
     return await _render(request, user, session, "rate_application.html", app=app)
+
+
+@router.get("/repricing", response_class=HTMLResponse)
+async def repricing_page(request: Request, user: DashUser, session: DbSession):
+    """Tonight's proposals, the rule that made them, the room mapping, and the log.
+
+    The proposals are computed here from the same rows the comparison page
+    reads, for tonight in the hotel's timezone -- the night the RMS grid's
+    first column is. What the page shows as "proposed" is exactly what
+    Apply would set, less the RMS conversion that needs the grid read.
+    """
+    if user is None:
+        return _redirect_to_login(request)
+
+    settings = await session.scalar(
+        select(RepricingSettings).where(RepricingSettings.owner_user_id == user.id)
+    )
+    if settings is None:
+        settings = RepricingSettings(owner_user_id=user.id)
+        session.add(settings)
+        await session.commit()
+        await session.refresh(settings)
+
+    own = (
+        await session.scalars(
+            select(Hotel).where(
+                Hotel.owner_user_id == user.id, Hotel.is_own_property.is_(True), Hotel.is_active.is_(True)
+            ).order_by(Hotel.name)
+        )
+    ).first()
+    rooms = (
+        await session.scalars(
+            select(RoomType).where(RoomType.hotel_id == own.id, RoomType.is_active.is_(True))
+            .order_by(RoomType.sort_order, RoomType.name)
+        )
+    ).all() if own else []
+    mappings = {
+        m.room_type_id: m
+        for m in (await session.scalars(
+            select(RmsRoomMapping).where(RmsRoomMapping.owner_user_id == user.id)
+        )).all()
+    }
+
+    check_in = local_today(get_settings().timezone)
+    check_out = check_in + timedelta(days=1)
+    proposals = []
+    if own:
+        rows = await _priced_rows(session, user, check_in, check_out, 2)
+        enabled = {rt for rt, m in mappings.items() if m.is_enabled}
+        proposals = repricing_rule.propose(
+            rows, own_hotel_id=own.id, rule=repricing_rule.Rule.from_row(settings),
+            room_type_ids=enabled or None,
+        )
+
+    # The last RMS reading per rate row, so the page can show the RMS
+    # number a proposal would become without opening a browser.
+    latest_rms: dict[tuple[str, str], object] = {}
+    actions = (
+        await session.scalars(
+            select(RepricingAction).where(RepricingAction.owner_user_id == user.id)
+            .order_by(RepricingAction.created_at.desc()).limit(60)
+        )
+    ).all()
+    for a in reversed(actions):
+        if a.rms_room and a.rms_rate_type and (a.applied_rms or a.current_rms) is not None:
+            latest_rms[(a.rms_room, a.rms_rate_type)] = a.applied_rms or a.current_rms
+
+    app_row = await session.scalar(
+        select(RateApplication).where(RateApplication.owner_user_id == user.id)
+    )
+    return await _render(
+        request, user, session, "repricing.html",
+        settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
+        check_in=check_in, actions=actions, latest_rms=latest_rms,
+        has_rate_app=app_row is not None, rule=repricing_rule,
+    )
 
 
 @router.get("/settings", response_class=HTMLResponse)

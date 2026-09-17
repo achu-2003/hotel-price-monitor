@@ -1549,3 +1549,75 @@ form.target-sensitivity { max-width: none; }
 }
 .code-ask .code-prompt { margin: 0 0 8px; color: var(--ink-2); }
 .code-ask input[name=code] { width: 10em; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+
+/* -- repricing --------------------------------------------------------- */
+/* The proposals and the log are full-width sections: a table of eight
+   columns has no business inside the 460px .stack meant for a form. */
+.repricing-section { margin-bottom: var(--s5, 2rem); }
+.repricing-section > .panel { max-width: none; }
+.grid-wrap { overflow-x: auto; }
+.repricing-section .grid { width: 100%; }
+.repricing-section .grid td { vertical-align: top; }
+.repricing-section .grid details summary { cursor: pointer; white-space: nowrap; }
+.run-note { margin: var(--s2) 0 0; }
+.repricing-run-form .actions { flex-wrap: wrap; }
+/* The tag says in one word what the sentence beside it explains. */
+.tag {
+  display: inline-block; padding: 0 .5em; border-radius: 999px; font-size: .8em;
+  font-weight: 600; line-height: 1.6; vertical-align: middle; margin-right: .3em;
+  background: #eeeae0; color: #4a544f;
+}
+.tag.ok, .tag.applied { background: #d1fae5; color: #065f46; }
+.tag.held, .tag.proposed, .tag.read, .tag.unchanged { background: #fef3c7; color: #92400e; }
+.tag.failed { background: #ffe4e6; color: #9f1239; }
+tr.held td { color: var(--muted); }
+ul.plain { list-style: none; padding: 0; margin: .3em 0 0; }
+ul.plain li { padding: .1em 0; }
+/* The competitor list opens INSIDE its column: capped in width so the
+   names wrap instead of pushing the table out of its box, with the price
+   as a fixed-width lead so the hotels line up under one another. */
+.repricing-section .grid td.competitors { max-width: 24em; min-width: 16em; }
+.repricing-section .grid td.competitors li { display: flex; gap: .6em; align-items: baseline; line-height: 1.3; padding: .2em 0; }
+.repricing-section .grid td.competitors li .num { flex: 0 0 5.5em; text-align: right; }
+.repricing-section .grid td.competitors li .who { flex: 1 1 auto; min-width: 0; }
+.repricing-section .grid td.competitors li small { display: block; font-size: 12px; line-height: 1.25; }
+.repricing-section .grid td.room { min-width: 11em; }
+/* The rule: its numbers in columns, the automatic switch on its own line
+   above them where it cannot be mistaken for one more number. */
+.rule-form { max-width: none; }
+.rule-auto { margin-bottom: var(--s3); }
+.rule-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--s3) var(--s4); margin-bottom: var(--s3);
+}
+.rule-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.rule-fields input { width: 100%; box-sizing: border-box; }
+.rule-fields small { font-size: 12px; }
+.with-unit { display: flex; align-items: center; gap: 6px; }
+.with-unit input { flex: 1 1 auto; min-width: 0; }
+.with-unit .unit { color: var(--muted); font-size: 13px; }
+
+/* Room mapping: one grid, one form per row (display: contents keeps each
+   form's cells in the grid and the form itself the thing that submits). */
+.mapping-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(120px, 1fr) repeat(3, minmax(120px, 1fr)) 6em 6em 2.2em auto;
+  gap: 8px 10px; align-items: center; max-width: none; overflow-x: auto;
+}
+.mapping-grid > form { display: contents; }
+.mapping-head {
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); padding-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.mapping-grid input[type="text"], .mapping-grid input[type="number"] { width: 100%; box-sizing: border-box; padding: 5px 8px; font-size: 13px; }
+.mapping-grid input[type="checkbox"] { margin: 0; }
+.mapping-on { text-align: center; }
+.mapping-name { font-size: 14px; line-height: 1.25; }
+.mapping-save { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.mapping-save .form-status:empty { display: none; }
+button.small { padding: 5px 12px; font-size: 13px; }
+@media (max-width: 900px) {
+  .mapping-grid { grid-template-columns: 1fr 1fr; }
+  .mapping-head { display: none; }
+  .mapping-name, .mapping-save { grid-column: 1 / -1; }
+}
