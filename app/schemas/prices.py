@@ -65,11 +65,21 @@ class CurrentPriceOut(ORMModel):
 
 
 class HistoryPoint(ORMModel):
-    """One point on a price chart."""
+    """One point on a price chart.
+
+    ``price_inclusive`` carries the all-in figure the dashboard would show for
+    this point: the published one where the site quoted it, otherwise the
+    pre-tax rate plus the published tax. Six of the ten sources quote those
+    two components separately and store no all-in number, so returning the
+    column verbatim handed API clients a null for the majority of hotels while
+    the matrix beside it showed the total. ``taxes_fees`` is carried too, so a
+    client that wants the components rather than the total still has both.
+    """
 
     checked_at: datetime
     price_inclusive: Decimal | None
     price_exclusive: Decimal | None
+    taxes_fees: Decimal | None = None
     is_available: bool
     rooms_left: int | None = None
 

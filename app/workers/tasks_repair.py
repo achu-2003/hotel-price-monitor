@@ -700,7 +700,8 @@ def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
     from app.db.models import RateApplication
     from app.services import rate_app_test_state as state
     from app.services.rate_app_login import attempt_login
-    from app.services.rate_app_rms import bump_rate
+    from app.services.rate_app_rms import survey
+    from app.workers.tasks_repricing import mappings_for, settings_for
 
     with sync_session() as session:
         row = session.scalar(
@@ -725,6 +726,16 @@ def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001
                 # A stale or unreadable memory is the same as none: log in fresh.
                 log.warning("rate_app_session_state_unreadable", owner_user_id=owner_user_id, error=str(exc))
+        # What the read-only visit after the login looks at: every mapped
+        # room's rate rows. Nothing is written by a login test.
+        channel = settings_for(session, owner_user_id).channel
+        cells = [
+            (m.rms_room, rate_type)
+            for m in mappings_for(session, owner_user_id)
+            for rate_type in (m.rate_type_ep, m.rate_type_cp, m.rate_type_map)
+            if rate_type
+        ]
+        session.commit()
 
     state.write(owner_user_id, "running", message="Opening the login page and signing in…")
 
@@ -750,9 +761,12 @@ def test_rate_app_login(owner_user_id: int) -> dict[str, Any]:
         storage_state=storage_state,
         on_code_needed=on_code_needed,
         wait_for_code=wait_for_code,
-        # Once in, walk to one Booking.com price, put it up a rupee, and
-        # photograph the grid instead of the landing page: see ``rate_app_rms``.
-        after_login=lambda page, probe: bump_rate(page, probe, owner_user_id=owner_user_id),
+        # Once in, walk to the channel's grid, read every mapped rate row
+        # and photograph the grid instead of the landing page. Read only:
+        # see ``rate_app_rms.survey``.
+        after_login=lambda page, probe: survey(
+            page, probe, owner_user_id=owner_user_id, channel=channel, cells=cells,
+        ),
     )
     del password
 

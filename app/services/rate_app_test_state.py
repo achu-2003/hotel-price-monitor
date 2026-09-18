@@ -28,16 +28,16 @@ CODE_WAIT_SECONDS = 180
 _STALE_SECONDS = 420
 
 
-def _key(owner_user_id: int) -> str:
-    return f"rate_app:test:{owner_user_id}"
+def _key(owner_user_id: int, kind: str = "test") -> str:
+    return f"rate_app:{kind}:{owner_user_id}"
 
 
 def _code_key(owner_user_id: int) -> str:
     return f"rate_app:test:{owner_user_id}:code"
 
 
-def read(owner_user_id: int) -> dict[str, Any] | None:
-    raw = get_redis().get(_key(owner_user_id))
+def read(owner_user_id: int, kind: str = "test") -> dict[str, Any] | None:
+    raw = get_redis().get(_key(owner_user_id, kind))
     if not raw:
         return None
     state = json.loads(raw)
@@ -47,9 +47,11 @@ def read(owner_user_id: int) -> dict[str, Any] | None:
     return state
 
 
-def write(owner_user_id: int, status: str, **fields: Any) -> dict[str, Any]:
+def write(owner_user_id: int, status: str, kind: str = "test", **fields: Any) -> dict[str, Any]:
+    """``kind`` separates the login test's state from a repricing run's: the
+    two are different jobs with different pages watching them."""
     state = {"status": status, "updated_at": datetime.now(UTC).isoformat(), **fields}
-    get_redis().set(_key(owner_user_id), json.dumps(state), ex=_STALE_SECONDS + 60)
+    get_redis().set(_key(owner_user_id, kind), json.dumps(state, default=str), ex=_STALE_SECONDS + 60)
     return state
 
 

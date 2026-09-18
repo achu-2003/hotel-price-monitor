@@ -89,6 +89,31 @@ class Shown:
         return self.note is not None
 
 
+def all_in_price(
+    inclusive: Decimal | None,
+    exclusive: Decimal | None,
+    taxes: Decimal | None,
+) -> Decimal | None:
+    """The all-in figure these three components support, or None.
+
+    The published all-in number where the site printed one; else the pre-tax
+    rate PLUS the published tax, which is two figures the site printed added
+    together. Never a grossed-up guess -- see the module note on why a tax
+    RATE is never inferred.
+
+    Split out because two screens need the same answer from different shapes:
+    the matrix reads a ``price_series`` row, the history API reads a
+    ``price_observation``. They disagreed -- the dashboard added the two
+    components and the API returned a bare ``null`` -- and the same offer
+    charted flat while the table beside it showed the guest price.
+    """
+    if inclusive is not None:
+        return inclusive
+    if exclusive is not None and taxes is not None:
+        return exclusive + taxes
+    return None
+
+
 def displayed_price(series: _HasPriceComponents, show_with_tax: bool) -> Shown:
     """The price to show for one series row.
 
@@ -114,10 +139,9 @@ def displayed_price(series: _HasPriceComponents, show_with_tax: bool) -> Shown:
     taxes = series.last_taxes_fees
 
     if show_with_tax:
-        if inclusive is not None:
-            return Shown(inclusive)
-        if exclusive is not None and taxes is not None:
-            return Shown(exclusive + taxes)
+        total = all_in_price(inclusive, exclusive, taxes)
+        if total is not None:
+            return Shown(total)
         if exclusive is not None:
             # Sterling's case: a pre-tax rate and no tax published anywhere on
             # the page. Marked rather than grossed up -- see the module note.

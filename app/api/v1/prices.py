@@ -19,6 +19,7 @@ from app.api.deps import (
     AdminUser, CurrentUser, DbSession, get_object_or_404, owned_hotel_or_404, record_audit,
 )
 from app.services.ownership import owns, scope_hotels
+from app.services.price_display import all_in_price
 from app.db.models import (
     ChangeDirection,
     Hotel,
@@ -142,6 +143,7 @@ async def price_history(
                     PriceObservation.checked_at,
                     PriceObservation.price_inclusive,
                     PriceObservation.price_exclusive,
+                    PriceObservation.taxes_fees,
                     PriceObservation.is_available,
                     PriceObservation.rooms_left,
                 )
@@ -157,12 +159,17 @@ async def price_history(
         points = [
             HistoryPoint(
                 checked_at=checked_at,
-                price_inclusive=inclusive,
+                # The same rule the matrix uses, from the same function --
+                # see services/price_display.py. Not the bare column: a site
+                # that quotes "room + tax" stores no all-in figure, and the
+                # chart used to flatline at null for six of the ten sources.
+                price_inclusive=all_in_price(inclusive, exclusive, taxes),
                 price_exclusive=exclusive,
+                taxes_fees=taxes,
                 is_available=available,
                 rooms_left=rooms_left,
             )
-            for checked_at, inclusive, exclusive, available, rooms_left in rows
+            for checked_at, inclusive, exclusive, taxes, available, rooms_left in rows
         ]
     else:
         truncation = "hour" if bucket == "hourly" else "day"
@@ -176,6 +183,7 @@ async def price_history(
                     # hiding it behind whichever observation happened to be last.
                     func.avg(PriceObservation.price_inclusive),
                     func.avg(PriceObservation.price_exclusive),
+                    func.avg(PriceObservation.taxes_fees),
                     func.bool_or(PriceObservation.is_available),
                 )
                 .where(
@@ -191,11 +199,15 @@ async def price_history(
         points = [
             HistoryPoint(
                 checked_at=bucket_at,
-                price_inclusive=inclusive,
+                # Averaging the components and adding them is the same number
+                # as averaging the totals, so the bucketed chart and the raw
+                # one agree rather than diverging by a rounding step.
+                price_inclusive=all_in_price(inclusive, exclusive, taxes),
                 price_exclusive=exclusive,
+                taxes_fees=taxes,
                 is_available=bool(available),
             )
-            for bucket_at, inclusive, exclusive, available in rows
+            for bucket_at, inclusive, exclusive, taxes, available in rows
         ]
 
     room = await session.get(RoomType, series.room_type_id)

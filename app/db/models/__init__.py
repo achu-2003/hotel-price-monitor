@@ -34,6 +34,13 @@ from app.db.models.price import (
     PriceSeries,
     UnmatchedOffer,
 )
+from app.db.models.repricing import (
+    PLANS,
+    RepricingAction,
+    RepricingAdvice,
+    RepricingSettings,
+    RmsRoomMapping,
+)
 from app.db.models.user import AuditLog, RateApplication, SourceCredential, User
 
 __all__ = [
@@ -58,6 +65,11 @@ __all__ = [
     "PriceChange",
     "PriceObservation",
     "PriceSeries",
+    "PLANS",
+    "RepricingAction",
+    "RepricingAdvice",
+    "RepricingSettings",
+    "RmsRoomMapping",
     "RateApplication",
     "Recipient",
     "RoomType",

@@ -73,6 +73,9 @@ celery_app.conf.update(
         # Signs in to the owner's rate application in a browser, on request
         # from the Rate app page.
         "rate_app.test_login": {"queue": "browser"},
+        # Sets the owner's rates in that same application: one login, every
+        # mapped room. See tasks_repricing.
+        "repricing.run": {"queue": "browser"},
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},
@@ -146,6 +149,15 @@ celery_app.conf.update(
             "schedule": 3_600.0,
             "options": {"expires": 3_500},
         },
+        # The automatic repricer. Every half hour, a beat behind the price
+        # fetches it decides on, and only for owners whose switch is on --
+        # the tick itself reads the switch, so turning it off on the page
+        # is enough; nothing here needs a restart.
+        "repricing-auto-tick": {
+            "task": "repricing.auto_tick",
+            "schedule": 1_800.0,
+            "options": {"expires": 1_700},
+        },
     },
 )
 
@@ -164,6 +176,7 @@ celery_app.autodiscover_tasks(
         "app.workers.tasks_notify",
         "app.workers.tasks_maintenance",
         "app.workers.tasks_repair",
+        "app.workers.tasks_repricing",
     ],
     force=True,
 )
