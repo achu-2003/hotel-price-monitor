@@ -28,7 +28,9 @@ On the browser queue, like the login test, because it opens a browser.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from celery import shared_task
@@ -38,12 +40,15 @@ from app.config import get_settings
 from app.core.crypto import decrypt, encrypt
 from app.core.logging import get_logger
 from app.db.models import (
-    PLANS, Hotel, PriceSeries, RateApplication, RepricingAction, RepricingSettings,
-    RmsRoomMapping, RoomType,
+    PLANS, Hotel, PriceSeries, RateApplication, RepricingAction, RepricingAdvice,
+    RepricingSettings, RmsRoomMapping, RoomType,
 )
 from app.db.session import sync_session
 from app.services import rate_app_test_state as state
 from app.services import repricing as rule
+from app.services import repricing_data as data
+from app.services import repricing_advisor as advisor
+from app.services.repricing_advisor_openai import completer_from_settings
 from app.services.dates import local_today
 from app.services.rate_app_login import _screenshot, attempt_login
 from app.services.rate_app_rms import GridError, day_heading, open_grid, read_rate, write_rate
@@ -114,9 +119,14 @@ def compute(session, owner_user_id: int, check_in, check_out) -> tuple[list[rule
     if own is None:
         return [], settings, mappings
     rows = priced_rows(session, owner_user_id, check_in, check_out)
+    own_rule = rule.Rule.from_row(settings)
+    history = data.one_night(session.execute(data.history_stmt(owner_user_id, check_in)).all())
     proposals = rule.propose(
-        rows, own_hotel_id=own, rule=rule.Rule.from_row(settings),
+        rows, own_hotel_id=own, rule=own_rule,
         room_type_ids=set(mappings) or None,
+        usual=rule.usual_gaps(history, own_hotel_id=own, min_competitors=own_rule.min_competitors),
+        night=check_in,
+        moved_today=set(session.scalars(data.moved_stmt(owner_user_id, check_in))),
     )
     return proposals, settings, mappings
 
@@ -138,14 +148,136 @@ def _record(session, owner_user_id: int, proposal: rule.Proposal, mapping: RmsRo
     return row
 
 
+def _recent_prices(session, room_type_id: int, limit: int = 8) -> tuple:
+    """Our own price for this room over the last few nights, oldest first.
+
+    Context the median cannot supply: a room the owner has already cut twice
+    this week is a different decision from one that has not moved. Cheap --
+    one indexed read per room, and an empty result is fine.
+    """
+    rows = session.execute(
+        select(PriceSeries.check_in, PriceSeries.current_price)
+        .where(
+            PriceSeries.room_type_id == room_type_id,
+            PriceSeries.current_price.isnot(None),
+        )
+        .order_by(PriceSeries.check_in.desc())
+        .limit(limit)
+    ).all()
+    return tuple(price for _, price in reversed(rows))
+
+
+def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in, mode: str) -> int:
+    """Record what a model would have proposed, beside what the rule did.
+
+    SHADOW ONLY. This reads ``proposals`` and writes ``repricing_advice``
+    rows; it returns nothing to the caller and mutates nothing it was given,
+    so no rate can move because of anything here. That is enforced by the
+    signature as much as by the body -- there is no value to misuse.
+
+    Every failure is swallowed. The advisor is an experiment running beside
+    a system that sets real rates, and an experiment must not be able to stop
+    a rate run. A night with no advice is a blank in the comparison, which is
+    the correct record of what happened.
+    """
+    app_settings = get_settings()
+    if not app_settings.advisor_enabled:
+        return 0
+    complete = completer_from_settings(app_settings)
+    if complete is None:
+        log.info("advisor_skipped_no_key", owner_user_id=owner_user_id)
+        return 0
+
+    own_rule = rule.Rule.from_row(settings)
+    hotel_name = session.scalar(
+        select(Hotel.name).join(RoomType, RoomType.hotel_id == Hotel.id)
+        .where(RoomType.id == proposals[0].room_type_id)
+    ) if proposals else None
+
+    written = 0
+    for p in proposals:
+        # Only rooms the rule itself could price. A room it held on (no tier,
+        # no price of ours, too few competitors) has nothing for a model to
+        # improve on either, and asking anyway would spend a call to learn
+        # what the rule already said.
+        if p.our_price is None or p.market is None or not p.competitors:
+            continue
+
+        ask = advisor.Ask(
+            hotel=hotel_name or "the owner's hotel",
+            room_name=p.room_name,
+            tier_label=p.tier_label,
+            check_in=check_in,
+            our_price=p.our_price,
+            competitors=tuple((c.hotel, c.room, c.price) for c in p.competitors),
+            rule_position_pct=own_rule.position_pct,
+            usual_gap=p.usual_gap,
+            our_recent=_recent_prices(session, p.room_type_id),
+            notes=tuple(
+                f"{c.hotel}'s price is approximate ({c.note})"
+                for c in p.competitors if c.note
+            ) + ((f"Sold out tonight in this tier: {', '.join(p.sold_out)}",) if p.sold_out else ()),
+        )
+        try:
+            advice = advisor.advise(
+                ask,
+                complete=complete,
+                model=app_settings.openai_model,
+                max_position_pct=app_settings.advisor_max_position_pct,
+            )
+        except Exception as exc:  # noqa: BLE001 -- never fatal, see docstring
+            log.warning("advisor_unexpected", room=p.room_name, error=str(exc)[:200])
+            advice = advisor.Advice(error=f"unexpected: {type(exc).__name__}")
+
+        # The advisor's position through the SAME arithmetic the rule's went
+        # through -- aim, then every limit. This is the number the comparison
+        # rests on, and computing it any other way would compare a bounded
+        # proposal against an unbounded one.
+        advisor_target = None
+        if advice.usable:
+            shadow_rule = replace(own_rule, position_pct=advice.position_pct)
+            wanted = rule.aim(p.market, shadow_rule, gap=p.usual_gap or Decimal("1"),
+                              demand_pct=p.demand_pct)
+            advisor_target, _held, _capped = rule.guard(p.our_price, wanted, shadow_rule)
+
+        session.add(RepricingAdvice(
+            owner_user_id=owner_user_id,
+            room_type_id=p.room_type_id,
+            room_name=p.room_name,
+            check_in=check_in,
+            mode=mode,
+            our_price=p.our_price,
+            market_price=p.market,
+            competitors=[c.as_json() for c in p.competitors],
+            rule_position_pct=own_rule.position_pct,
+            rule_target=p.target,
+            advisor_position_pct=advice.position_pct,
+            advisor_target=advisor_target,
+            advisor_confidence=advice.confidence,
+            rationale=advice.rationale,
+            key_factors=list(advice.key_factors),
+            clamped=advice.clamped,
+            error=advice.error,
+            model=advice.model,
+            latency_ms=advice.latency_ms,
+        ))
+        written += 1
+
+    log.info("advisor_shadow_recorded", owner_user_id=owner_user_id, rows=written)
+    return written
+
+
 @shared_task(name="repricing.run", soft_time_limit=600, time_limit=660)
-def run_repricing(owner_user_id: int, mode: str = "manual") -> dict[str, Any]:
+def run_repricing(owner_user_id: int, mode: str = "manual",
+                  overrides: dict[str, str] | None = None) -> dict[str, Any]:
     """Compute tonight's proposals and, unless ``mode`` is ``dry_run``, set them in RMS.
 
     ``mode``: ``manual`` (Apply pressed), ``auto`` (scheduler), ``dry_run``
     (everything but the write: the grid is read and the proposed RMS rates
-    are recorded as ``proposed``).
+    are recorded as ``proposed``). ``overrides`` are guest prices the owner
+    typed on the page, by room type id; the scheduler never sends any.
     """
+    typed = {int(k): Decimal(v) for k, v in (overrides or {}).items()} if mode != "auto" else {}
     dry = mode == "dry_run"
     tz = get_settings().timezone
     check_in = local_today(tz)
@@ -169,6 +301,23 @@ def run_repricing(owner_user_id: int, mode: str = "manual") -> dict[str, Any]:
 
     with sync_session() as session:
         proposals, settings, mappings = compute(session, owner_user_id, check_in, check_out)
+
+        # Shadow only, and deliberately before the login: it must not be able
+        # to delay or fail a run that is about to touch real rates, and a
+        # failure here has to show up before the browser costs four minutes.
+        try:
+            shadow_advice(session, owner_user_id, proposals, settings,
+                          check_in=check_in, mode=mode)
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 -- the experiment never stops the rate run
+            session.rollback()
+            log.warning("advisor_shadow_failed", owner_user_id=owner_user_id, error=str(exc)[:200])
+
+        # The owner's typed prices replace the rule's AFTER the shadow advice,
+        # which compares a model with the rule and not with the owner.
+        proposals = [rule.override(p, typed[p.room_type_id]) if p.room_type_id in typed else p
+                     for p in proposals]
+
         channel = settings.channel
         round_to = settings.round_to
         app = session.scalar(select(RateApplication).where(RateApplication.owner_user_id == owner_user_id))

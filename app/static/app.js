@@ -284,7 +284,80 @@
     const buttons = Array.from(form.querySelectorAll("button.run"));
     const status = form.querySelector(".form-status");
     const endpoint = form.dataset.endpoint;
+    const roundTo = Number(form.dataset.roundTo) || 1;
     let polling = null;
+
+    // -- the proposed price is editable ---------------------------------
+    //
+    // The box holds a guest price, as the rule's did. As it changes, the
+    // row shows the RMS rate it becomes -- the same ratio the worker uses,
+    // RMS-now over site-now -- and whether the room's RMS floor or ceiling
+    // would hold it. Only boxes that differ from the rule are sent.
+    const inr = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+    const rupees = function (n) { return "₹" + inr.format(n); };
+    const pctText = function (price, our) {
+      const pct = (price - our) / our * 100;
+      return (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
+    };
+    const priceBoxes = Array.from(document.querySelectorAll("input.proposed-price"));
+
+    function edited(box) {
+      const typed = box.value.trim();
+      return typed !== "" && Number(typed) > 0 && Number(typed) !== Number(box.dataset.rule || NaN);
+    }
+    function refresh(box) {
+      const row = box.closest("tr");
+      const statusCell = row.querySelector("td.status");
+      if (statusCell.dataset.original === undefined) statusCell.dataset.original = statusCell.innerHTML;
+      const price = Number(box.value);
+      const our = Number(box.dataset.our);
+      const valid = box.value.trim() !== "" && price > 0;
+
+      row.querySelector(".change").textContent = valid && our ? pctText(price, our) : "";
+      row.querySelector(".by-hand").hidden = !edited(box);
+
+      let outside = null;
+      const rmsNew = row.querySelector(".rms-new");
+      if (rmsNew && box.dataset.cur && valid && our) {
+        const amount = Math.round(price * Number(box.dataset.cur) / our / roundTo) * roundTo;
+        rmsNew.textContent = rupees(amount);
+        if (box.dataset.floor && amount < Number(box.dataset.floor)) {
+          outside = "below this room's RMS floor of " + inr.format(Number(box.dataset.floor));
+        } else if (box.dataset.ceiling && amount > Number(box.dataset.ceiling)) {
+          outside = "above this room's RMS ceiling of " + inr.format(Number(box.dataset.ceiling));
+        }
+      } else if (rmsNew) {
+        rmsNew.textContent = "—";
+      }
+
+      row.classList.toggle("edited", edited(box));
+      if (!edited(box)) {
+        statusCell.innerHTML = statusCell.dataset.original;
+        return;
+      }
+      statusCell.innerHTML = outside
+        ? '<span class="tag held">held</span> <span class="muted"></span>'
+        : '<span class="tag ok">will apply</span> <span class="muted">your price</span>';
+      if (outside) statusCell.querySelector(".muted").textContent = outside;
+    }
+    priceBoxes.forEach(function (box) {
+      box.addEventListener("input", function () { refresh(box); });
+    });
+
+    function overrides() {
+      const out = {};
+      priceBoxes.filter(edited).forEach(function (box) {
+        out[box.dataset.roomTypeId] = Math.round(Number(box.value));
+      });
+      return out;
+    }
+    function describe() {
+      return priceBoxes.filter(edited).map(function (box) {
+        const our = Number(box.dataset.our);
+        const price = Number(box.value);
+        return "  " + box.dataset.room + ": " + rupees(price) + (our ? " (" + pctText(price, our) + " on today)" : "");
+      }).join("\n");
+    }
 
     function note(text, cls) {
       status.hidden = !text;
@@ -315,10 +388,17 @@
     }
     buttons.forEach(function (button) {
       button.addEventListener("click", async function () {
-        if (button.dataset.confirm && !window.confirm(button.dataset.confirm)) return;
+        const changes = overrides();
+        // A typed price skips the rule's percentage limits, so a slip of
+        // one digit would be written. The confirm names every such price.
+        let ask = button.dataset.confirm || "";
+        if (Object.keys(changes).length && button.dataset.mode !== "dry_run") {
+          ask = (ask ? ask + "\n\n" : "") + "Prices you typed (guest price on the site):\n" + describe();
+        }
+        if (ask && !window.confirm(ask)) return;
         busy(true);
         note("Signing in to the rate application…");
-        const result = await api(endpoint, "POST", { mode: button.dataset.mode });
+        const result = await api(endpoint, "POST", { mode: button.dataset.mode, overrides: changes });
         if (!result.ok) { note(problemText(result), "error"); busy(false); return; }
         apply(result.body);
         if (!polling) polling = setInterval(poll, 2000);

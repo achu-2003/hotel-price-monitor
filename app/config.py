@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from datetime import time
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -239,6 +240,26 @@ class Settings(BaseSettings):
     recipient_max_msgs_per_hour: int = 10
     quiet_hours_start: time = time(22, 0)
     quiet_hours_end: time = time(7, 0)
+
+    # ── repricing advisor (shadow) ───────────────────────────────────
+    # A language model's second opinion on where a rate should sit. It is
+    # SHADOW ONLY: the advisor's position is recorded beside the rule's and
+    # never reaches RMS. See services/repricing_advisor.py.
+    #
+    # OFF BY DEFAULT, and off again if the key is missing -- a deployment
+    # that has not been given a key runs exactly as it did before.
+    advisor_enabled: bool = False
+    openai_api_key: SecretStr | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    #: Whatever model the account actually has. Set it in .env rather than
+    #: trusting this default -- provider model names change faster than this
+    #: file does, and a wrong one fails every call with a 404.
+    openai_model: str = "gpt-4o"
+    #: How far a single night's judgement may reach, either side of the
+    #: market median. A hard clamp applied before the number reaches the
+    #: repricer, deliberately far tighter than the rule's floor and ceiling.
+    advisor_max_position_pct: Decimal = Decimal("8")
+    advisor_timeout_seconds: float = 30.0
 
     # ── observability ────────────────────────────────────────────────
     sentry_dsn: str = ""

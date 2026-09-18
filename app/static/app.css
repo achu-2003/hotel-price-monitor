@@ -1621,3 +1621,15 @@ button.small { padding: 5px 12px; font-size: 13px; }
   .mapping-head { display: none; }
   .mapping-name, .mapping-save { grid-column: 1 / -1; }
 }
+
+/* The proposed price is a box the owner may type over; a row they changed
+   is marked so it cannot be mistaken for the rule's proposal. */
+.repricing-section .grid td.proposed input.proposed-price {
+  width: 7.5em; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.repricing-section .grid tr.edited td.proposed input.proposed-price { border-color: #b45309; background: #fffbeb; }
+.repricing-section .grid tr.held td.proposed input.proposed-price { color: var(--ink, inherit); }
+/* The model's opinion: read beside the proposal, never applied. */
+.repricing-section .grid td.ai { min-width: 11em; max-width: 18em; }
+.repricing-section .grid td.ai > .muted { display: block; font-size: 12px; }
+.repricing-section .grid td.ai .ai-why { margin: .3em 0; font-size: 13px; line-height: 1.35; }

@@ -48,7 +48,8 @@ def _settings_out(row: RepricingSettings) -> RepricingSettingsOut:
     return RepricingSettingsOut(
         auto_enabled=row.auto_enabled, position_pct=row.position_pct, max_step_pct=row.max_step_pct,
         floor_pct=row.floor_pct, ceiling_pct=row.ceiling_pct, min_competitors=row.min_competitors,
-        round_to=row.round_to, channel=row.channel, updated_at=row.updated_at,
+        round_to=row.round_to, channel=row.channel, weekend_pct=row.weekend_pct,
+        sold_out_pct=row.sold_out_pct, updated_at=row.updated_at,
     )
 
 
@@ -153,11 +154,14 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
 
     await record_audit(
         session, user=user, action="run", entity="repricing", entity_id=user.id,
-        after={"mode": payload.mode}, request=request,
+        after={"mode": payload.mode, "overrides": {str(k): str(v) for k, v in payload.overrides.items()}},
+        request=request,
     )
     await session.commit()
     started = state.write(user.id, "running", KIND, message="Queued…", mode=payload.mode)
-    run_repricing.apply_async(args=[user.id, payload.mode], queue="browser")
+    # Celery's JSON turns int keys into strings anyway; send them that way.
+    overrides = {str(k): str(v) for k, v in payload.overrides.items()}
+    run_repricing.apply_async(args=[user.id, payload.mode, overrides], queue="browser")
     return _run_out(started)
 
 

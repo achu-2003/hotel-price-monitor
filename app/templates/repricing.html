@@ -45,6 +45,7 @@
         <th class="num">Market (median)</th>
         <th>Competitors</th>
         <th class="num">Proposed price</th>
+        <th class="ai">AI suggests <small class="muted">(not applied)</small></th>
         <th class="num">In RMS</th>
         <th>Status</th>
       </tr>
@@ -59,40 +60,106 @@
         </td>
         <td>{{ p.tier_label }}</td>
         <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
-        <td class="num">{% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}</td>
+        <td class="num market">
+          {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
+          {% if p.usual_gap is not none %}
+            <br><span class="muted">we usually sit {{ '%+.0f'|format((p.usual_gap - 1) * 100) }}%</span>
+            <br><span class="muted">→ {{ money((p.market * p.usual_gap)|round|int) }} keeps it</span>
+          {% endif %}
+          {% if p.demand_note %}<br><span class="muted demand">{{ p.demand_note }}</span>{% endif %}
+        </td>
         <td class="competitors">
           {% if p.competitors %}
             <details>
               <summary>{{ p.competitors|length }} hotel{{ 's' if p.competitors|length != 1 }}</summary>
               <ul class="plain">
               {% for c in p.competitors %}
-                <li><span class="num">{{ money(c.price) }}</span> <span class="who">{{ c.hotel }}<small class="muted">{{ c.room }}</small></span></li>
+                <li><span class="num">{{ money(c.price) }}</span> <span class="who">{{ c.hotel }}{% if c.sold_out %} <em class="muted">sold out</em>{% endif %}<small class="muted">{{ c.room }}</small></span></li>
               {% endfor %}
               </ul>
             </details>
           {% else %}<span class="muted">none in this tier</span>{% endif %}
         </td>
-        <td class="num">
-          {% if p.target is not none %}
+        {#
+          THE PROPOSED PRICE IS THE OWNER'S TO CHANGE. It is a guest price,
+          like every other price on this row; Apply converts it to the RMS
+          rate by the channel's ratio, the same as it does the rule's. A
+          room that is not mapped, or has no price of ours to take the
+          ratio from, cannot be applied, so it gets no box.
+        #}
+        {% set ns = namespace(cur=none, rms_new=none, outside=none) %}
+        {% if m and m.anchor_plan and (m.rms_room, m.rate_type_for(m.anchor_plan)) in latest_rms %}
+          {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_plan))] %}
+        {% endif %}
+        {% if ns.cur is not none and p.target is not none and p.our_price %}
+          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.cur, round_to=settings.round_to) %}
+          {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
+        {% endif %}
+        <td class="num proposed">
+          {% if m and m.is_enabled and p.our_price %}
+            <input type="number" class="proposed-price" min="1" step="1"
+                   data-room-type-id="{{ p.room_type_id }}"
+                   data-room="{{ p.room_name }}"
+                   data-rule="{{ p.target|int if p.target is not none else '' }}"
+                   data-our="{{ p.our_price }}"
+                   data-cur="{{ ns.cur if ns.cur is not none else '' }}"
+                   data-plan="{{ m.anchor_plan or '' }}"
+                   data-floor="{{ m.floor_amount if m.floor_amount is not none else '' }}"
+                   data-ceiling="{{ m.ceiling_amount if m.ceiling_amount is not none else '' }}"
+                   value="{{ p.target|int if p.target is not none else '' }}"
+                   placeholder="type a price" aria-label="Proposed price for {{ p.room_name }}">
+            <br><span class="muted change">{% if p.change_pct is not none %}{{ '%+.1f'|format(p.change_pct) }}%{% endif %}</span>
+            {% if p.wanted is not none and p.target is not none and p.wanted != p.target %}
+              <br><span class="muted rule-wanted">rule's own target {{ money(p.wanted) }}, limited by the {{ settings.max_step_pct|float|round|int }}% step</span>
+            {% endif %}
+            <span class="muted by-hand" hidden><br>your price{% if p.target is not none %} (rule: {{ money(p.target) }}){% endif %}</span>
+          {% elif p.target is not none %}
             <strong>{{ money(p.target) }}</strong>
             {% if p.change_pct is not none %}<br><span class="muted">{{ '%+.1f'|format(p.change_pct) }}%</span>{% endif %}
           {% else %}—{% endif %}
         </td>
-        {% set ns = namespace(rms_new=none, outside=none) %}
-        {% if m and m.anchor_plan and (m.rms_room, m.rate_type_for(m.anchor_plan)) in latest_rms and p.target is not none and p.our_price %}
-          {% set cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_plan))] %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, cur, round_to=settings.round_to) %}
-          {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
-        {% endif %}
-        <td class="num">
-          {% if ns.rms_new is not none %}
-            {{ money(cur) }} → <strong>{{ money(ns.rms_new) }}</strong>
+        {#
+          THE MODEL'S OPINION, FOR READING. It is recorded on each Preview or
+          Apply run and shown here beside the rule's; nothing reads it back,
+          so it cannot reach RMS. A price the owner likes, they type.
+        #}
+        {# Templates reload from disk and the routes do not, so a page served
+           by a process started before ``advice`` existed must still render. #}
+        {% set ai = advice.get(p.room_type_id) if advice is defined else none %}
+        <td class="ai">
+          {#- The model's position on TONIGHT'S market as the page shows it: its own
+              target, and that target after the step cap. -#}
+          {% set pair = ai_wanted.get(p.room_type_id) if ai_wanted is defined else none %}
+          {% if ai and ai.advisor_target is not none %}
+            {% if pair and pair[0] != pair[1] %}
+              <strong>{{ money(pair[0]) }}</strong>
+              <span class="muted">after the {{ settings.max_step_pct|float|round|int }}% step limit: {{ money(pair[1]) }}</span>
+            {% else %}
+              <strong>{{ money(pair[1] if pair else ai.advisor_target) }}</strong>
+            {% endif %}
+            <span class="muted">{{ '%+.1f'|format(ai.advisor_position_pct) }}% vs your usual{% if ai.advisor_confidence is not none %} · {{ (ai.advisor_confidence * 100)|round|int }}% sure{% endif %}</span>
+            {% if ai.rationale %}
+              <details><summary>why</summary>
+                <p class="ai-why">{{ ai.rationale }}</p>
+                {% if ai.key_factors %}<ul class="plain">{% for f in ai.key_factors %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+                <small class="muted">{{ ai.model }}, {{ ai.created_at | localtime }}</small>
+              </details>
+            {% endif %}
+          {% elif ai and ai.error %}
+            <span class="muted">no answer ({{ ai.error }})</span>
+          {% else %}
+            <span class="muted">press Preview to ask</span>
+          {% endif %}
+        </td>
+        <td class="num rms">
+          {% if ns.cur is not none %}
+            {{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>
             <br><span class="muted">{{ m.anchor_plan }}; the other plans keep their supplement</span>
           {% elif m %}
             <span class="muted">read the grid first (Preview)</span>
           {% else %}—{% endif %}
         </td>
-        <td>
+        <td class="status">
           {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
           {% elif ns.outside %}<span class="tag held">held</span> <span class="muted">{{ ns.outside }}</span>
           {% elif p.target is not none %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}
@@ -111,13 +178,13 @@
     same and writes. Both poll the same status, and both are refused while
     one is running.
   #}
-  <form class="panel repricing-run-form" id="repricing-run" data-endpoint="/api/v1/repricing/run">
+  <form class="panel repricing-run-form" id="repricing-run" data-endpoint="/api/v1/repricing/run" data-round-to="{{ settings.round_to }}">
     <div class="actions">
       <button type="button" class="run" data-mode="dry_run" {% if not has_rate_app %}disabled{% endif %}>Preview in RMS (changes nothing)</button>
       <button type="button" class="run danger" data-mode="manual" {% if not has_rate_app %}disabled{% endif %}
               data-confirm="Set tonight's proposed rates in RMS now? Every room marked 'will apply' is written.">Apply to RMS now</button>
     </div>
-    <p class="muted run-note">Preview signs in and reads every mapped row without changing anything. Apply does the same and writes the rates marked <em>will apply</em>. Each opens the rate application in a browser here and takes about a minute.</p>
+    <p class="muted run-note">Preview signs in and reads every mapped row without changing anything. Apply does the same and writes the rates marked <em>will apply</em>. Change a <em>Proposed price</em> to set your own: it is the price guests should see on the site, and Apply turns it into the RMS rate shown beside it. A price you type skips the rule's step and percentage limits, not the room's RMS floor and ceiling. Each opens the rate application in a browser here and takes about a minute.</p>
     {% if not has_rate_app %}
     <p class="muted">Save the login on the <a href="/rate-application">Rate app</a> page first.</p>
     {% endif %}
@@ -129,9 +196,13 @@
   <h2>The rule</h2>
   <p class="muted">
     The market figure is the <strong>median</strong> of every competitor's entry price
-    in the same tier. The proposal is that figure moved by the position, then capped
-    by the step, then held if outside the floor or ceiling. Percentages are of our
-    current price for the room.
+    in the same tier. Your room is not expected to match it: over the last
+    {{ rule.HISTORY_NIGHTS }} nights the rule measures where your price
+    <strong>usually sits</strong> against that median (say 30% above), and keeps you there —
+    the market moves down, you move down by the same share; it moves up, you move up.
+    Sold-out competitors (and, if you set it, a weekend) lift the price. Then the move is
+    capped by the step, held outside the floor or ceiling, and <strong>made at most once
+    per room per night</strong>. Percentages are of our current price for the room.
   </p>
   <form class="panel api-form rule-form" id="repricing-settings"
         data-endpoint="/api/v1/repricing/settings" data-method="PUT">
@@ -140,9 +211,17 @@
       <span><strong>Automatic</strong> — apply the proposals every 30 minutes without asking</span>
     </label>
     <div class="rule-fields">
-      <label>Position against market
+      <label>Position against your usual
         <span class="with-unit"><input type="number" name="position_pct" step="0.5" min="-50" max="50" value="{{ settings.position_pct }}"><span class="unit">%</span></span>
-        <small class="muted">0 matches it; −5 sits under it</small>
+        <small class="muted">0 keeps your usual gap; −5 sits 5% cheaper than usual</small>
+      </label>
+      <label>Sold-out lift
+        <span class="with-unit"><input type="number" name="sold_out_pct" step="0.5" min="0" max="50" value="{{ settings.sold_out_pct }}"><span class="unit">%</span></span>
+        <small class="muted">when every competitor is sold out; half sold out, half this</small>
+      </label>
+      <label>Weekend lift
+        <span class="with-unit"><input type="number" name="weekend_pct" step="0.5" min="0" max="50" value="{{ settings.weekend_pct }}"><span class="unit">%</span></span>
+        <small class="muted">Friday and Saturday nights; 0 if competitors already raise</small>
       </label>
       <label>Largest move per step
         <span class="with-unit"><input type="number" name="max_step_pct" step="0.5" min="0" max="100" value="{{ settings.max_step_pct }}"><span class="unit">%</span></span>

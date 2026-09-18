@@ -18,6 +18,8 @@ class RepricingSettingsIn(ORMModel):
     min_competitors: int = Field(default=2, ge=1, le=50)
     round_to: int = Field(default=10, ge=1, le=1000)
     channel: str = Field(default="Booking.com", min_length=1, max_length=120)
+    weekend_pct: Decimal = Field(default=Decimal("0"), ge=0, le=50)
+    sold_out_pct: Decimal = Field(default=Decimal("10"), ge=0, le=50)
 
     @field_validator("channel")
     @classmethod
@@ -56,6 +58,17 @@ class MappingOut(MappingIn):
 
 class RunIn(ORMModel):
     mode: str = Field(default="manual", pattern="^(manual|dry_run)$")
+    #: Guest prices the owner typed over the rule's, by room type id. Rooms
+    #: left out keep the rule's proposal.
+    overrides: dict[int, Decimal] = Field(default_factory=dict, max_length=100)
+
+    @field_validator("overrides")
+    @classmethod
+    def _positive(cls, value: dict[int, Decimal]) -> dict[int, Decimal]:
+        for room_type_id, price in value.items():
+            if not (0 < price < 10_000_000):
+                raise ValueError(f"the price for room {room_type_id} must be a positive amount")
+        return value
 
 
 class RunStatus(ORMModel):

@@ -37,6 +37,7 @@ from app.db.models.price import (
 from app.db.models.repricing import (
     PLANS,
     RepricingAction,
+    RepricingAdvice,
     RepricingSettings,
     RmsRoomMapping,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "PriceSeries",
     "PLANS",
     "RepricingAction",
+    "RepricingAdvice",
     "RepricingSettings",
     "RmsRoomMapping",
     "RateApplication",

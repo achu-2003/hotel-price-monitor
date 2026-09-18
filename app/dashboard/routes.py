@@ -20,7 +20,9 @@ the two entry points.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -59,6 +61,7 @@ from app.db.models import (
     RateApplication,
     Recipient,
     RepricingAction,
+    RepricingAdvice,
     RepricingSettings,
     RmsRoomMapping,
     RoomType,
@@ -74,6 +77,7 @@ from app.services import comparison_links
 from app.services import monitoring as monitoring_service
 from app.services import rate_gap
 from app.services import repricing as repricing_rule
+from app.services import repricing_data
 from app.services import retention
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
@@ -1955,9 +1959,17 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     if own:
         rows = await _priced_rows(session, user, check_in, check_out, 2)
         enabled = {rt for rt, m in mappings.items() if m.is_enabled}
+        own_rule = repricing_rule.Rule.from_row(settings)
+        history = repricing_data.one_night((await session.execute(
+            repricing_data.history_stmt(user.id, check_in)
+        )).all())
         proposals = repricing_rule.propose(
-            rows, own_hotel_id=own.id, rule=repricing_rule.Rule.from_row(settings),
+            rows, own_hotel_id=own.id, rule=own_rule,
             room_type_ids=enabled or None,
+            usual=repricing_rule.usual_gaps(history, own_hotel_id=own.id,
+                                            min_competitors=own_rule.min_competitors),
+            night=check_in,
+            moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in))),
         )
 
     # The last RMS reading per rate row, so the page can show the RMS
@@ -1973,13 +1985,38 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         if a.rms_room and a.rms_rate_type and (a.applied_rms or a.current_rms) is not None:
             latest_rms[(a.rms_room, a.rms_rate_type)] = a.applied_rms or a.current_rms
 
+    # The model's latest opinion per room for tonight. SHOWN, NEVER USED:
+    # nothing on this page or in the run reads it back into a proposal.
+    advice: dict[int, RepricingAdvice] = {}
+    for a in (await session.scalars(
+        select(RepricingAdvice).where(
+            RepricingAdvice.owner_user_id == user.id, RepricingAdvice.check_in == check_in,
+        ).order_by(RepricingAdvice.created_at)
+    )).all():
+        if a.room_type_id is not None:
+            advice[a.room_type_id] = a
+
+    # What the model's position asks for BEFORE the step cap, on tonight's
+    # market. After the cap the two columns often agree to the rupee -- a
+    # market far from our price pulls both to the same one-step move -- and
+    # the disagreement the column exists to show would be invisible.
+    ai_wanted: dict[int, object] = {}
+    for p in proposals:
+        a = advice.get(p.room_type_id)
+        if a is not None and a.advisor_position_pct is not None and p.market is not None:
+            shadow = replace(own_rule, position_pct=a.advisor_position_pct)
+            wanted = repricing_rule.aim(p.market, shadow, gap=p.usual_gap or Decimal("1"),
+                                        demand_pct=p.demand_pct)
+            capped = repricing_rule.guard(p.our_price, wanted, shadow)[0] if p.our_price else wanted
+            ai_wanted[p.room_type_id] = (wanted, capped)
+
     app_row = await session.scalar(
         select(RateApplication).where(RateApplication.owner_user_id == user.id)
     )
     return await _render(
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
-        check_in=check_in, actions=actions, latest_rms=latest_rms,
+        check_in=check_in, actions=actions, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         has_rate_app=app_row is not None, rule=repricing_rule,
     )
 
