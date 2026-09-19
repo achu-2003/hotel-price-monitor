@@ -38,6 +38,12 @@ def get_provider(channel: str) -> NotificationProvider:
         return SmtpEmailProvider()
 
     if channel == "whatsapp":
+        if settings.whatsapp_provider == "salesdaddy":
+            from app.notifications.providers.whatsapp_salesdaddy import (
+                SalesDaddyWhatsAppProvider,
+            )
+
+            return SalesDaddyWhatsAppProvider()
         if settings.whatsapp_provider == "mydreams":
             from app.notifications.providers.whatsapp_mydreams import (
                 MyDreamsWhatsAppProvider,

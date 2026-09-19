@@ -607,6 +607,98 @@ async def whatsapp_status_webhook(request: Request, session: DbSession):
     return {"status": "ok", "updated": updated}
 
 
+@router.post("/webhooks/salesdaddy", status_code=status.HTTP_200_OK)
+async def salesdaddy_status_webhook(request: Request, session: DbSession):
+    """Record delivery, read receipts and failures reported by Sales Daddy.
+
+    Same guarantees as the Meta webhook above: signed or refused, 404 on any
+    other provider, and 200 for anything we cannot parse so a bug on our side
+    is a log line rather than a retry storm.
+
+    Sales Daddy signs with ``X-Signature-256``, an HMAC-SHA256 of the raw body
+    with the webhook secret. Their guide does not say whether the hex carries
+    Meta's ``sha256=`` prefix, so both spellings are accepted.
+    """
+    raw = await request.body()
+
+    settings = get_settings()
+    if settings.whatsapp_provider != "salesdaddy":
+        log.warning(
+            "salesdaddy_webhook_wrong_provider", provider=settings.whatsapp_provider
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+    secret = (
+        settings.salesdaddy_webhook_secret.get_secret_value()
+        if settings.salesdaddy_webhook_secret
+        else ""
+    )
+    if secret:
+        digest = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        given = request.headers.get("X-Signature-256", "").strip()
+        given = given.removeprefix("sha256=").lower()
+        if not hmac.compare_digest(given, digest):
+            log.warning("salesdaddy_webhook_signature_rejected")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Bad signature."
+            )
+    elif settings.whatsapp_webhook_allow_unsigned:
+        log.warning("salesdaddy_webhook_unverified", reason="allow_unsigned is on")
+    else:
+        log.warning("salesdaddy_webhook_unsigned_rejected")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This webhook is not accepting unsigned callbacks. Set "
+                   "SALESDADDY_WEBHOOK_SECRET, or WHATSAPP_WEBHOOK_ALLOW_UNSIGNED=true "
+                   "while you finish wiring it up.",
+        )
+
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return {"status": "ignored"}
+    # One event per call in their guide; a list is tolerated in case they batch.
+    events = body if isinstance(body, list) else [body]
+
+    updated = 0
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") != "message.status":
+            # message.received (a customer's reply) has no notification row.
+            continue
+        message_id = event.get("messageId")
+        state = str(event.get("status") or "").lower()
+        if not message_id:
+            continue
+
+        notification = await session.scalar(
+            select(Notification).where(Notification.provider_message_id == str(message_id))
+        )
+        if notification is None:
+            continue
+
+        if state == "delivered":
+            if _advances(notification.status, NotificationStatus.DELIVERED):
+                notification.status = NotificationStatus.DELIVERED
+                notification.delivered_at = datetime.now(UTC)
+                updated += 1
+        elif state == "read":
+            if _advances(notification.status, NotificationStatus.READ):
+                notification.status = NotificationStatus.READ
+                updated += 1
+        elif state == "failed":
+            notification.status = NotificationStatus.FAILED
+            notification.error_code = str(event.get("error") or "failed")[:60]
+            notification.error_detail = str(
+                event.get("reason") or event.get("message") or event.get("error") or ""
+            )[:2000]
+            updated += 1
+
+    if updated:
+        await session.commit()
+        log.info("salesdaddy_statuses_recorded", count=updated)
+    return {"status": "ok", "updated": updated}
+
+
 # -- WhatsApp alert numbers ------------------------------------------
 #: The marker for a number added on the Settings page.
 #:

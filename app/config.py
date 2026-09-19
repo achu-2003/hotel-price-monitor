@@ -174,10 +174,11 @@ class Settings(BaseSettings):
     whatsapp_enabled: bool = False
     # Which side of the WhatsApp API we talk to. "meta_cloud" is Meta's own
     # Graph endpoint; "mydreams" is the My Dreams Technology reseller the
-    # client's number is licensed through. They share the template name and
-    # nothing else -- different transport, different auth, different errors,
-    # and only meta_cloud reports delivery.
-    whatsapp_provider: Literal["meta_cloud", "mydreams"] = "meta_cloud"
+    # client's number was licensed through until it was disabled in Sep 2026;
+    # "salesdaddy" is Sales Daddy, which replaced it. They share the template
+    # name and nothing else -- different transport, different auth, different
+    # errors -- and mydreams is the one that reports no delivery.
+    whatsapp_provider: Literal["meta_cloud", "mydreams", "salesdaddy"] = "meta_cloud"
     whatsapp_graph_version: str = "v21.0"
     whatsapp_phone_number_id: str = ""
     whatsapp_access_token: SecretStr | None = None
@@ -234,6 +235,15 @@ class Settings(BaseSettings):
     mydreams_base_url: str = "https://wa.mydreamstechnology.in/api"
     mydreams_license_number: str = ""
     mydreams_api_key: SecretStr | None = None
+
+    # ── whatsapp via sales daddy ─────────────────────────────────────
+    # The key is tied to one company and one WhatsApp number; it goes in the
+    # X-Api-Key header. The webhook secret signs Sales Daddy's status
+    # callbacks (X-Signature-256); without it the callback is refused unless
+    # whatsapp_webhook_allow_unsigned is on.
+    salesdaddy_base_url: str = "https://api.salesdaddy.in"
+    salesdaddy_api_key: SecretStr | None = None
+    salesdaddy_webhook_secret: SecretStr | None = None
 
     # ── notification throttling ──────────────────────────────────────
     digest_window_seconds: int = 60

@@ -285,18 +285,37 @@ a real relay.
 
 ### WhatsApp
 
-Two providers, chosen with `WHATSAPP_PROVIDER`:
+Three providers, chosen with `WHATSAPP_PROVIDER`:
 
-| | `meta_cloud` | `mydreams` |
-|---|---|---|
-| Who | Meta's Graph API directly | My Dreams Technology, a reseller |
-| Needs | a Meta app + system-user token | a licence number + API key |
-| Delivery receipts | yes — delivered/read | **no** — stops at `sent` |
-| Template approval | required | required (via the reseller's panel) |
+| | `salesdaddy` | `meta_cloud` | `mydreams` |
+|---|---|---|---|
+| Who | Sales Daddy (`api.salesdaddy.in`) | Meta's Graph API directly | My Dreams Technology, a reseller |
+| Needs | one `sd_live_…` API key | a Meta app + system-user token | a licence number + API key |
+| Delivery receipts | yes — signed webhook | yes — delivered/read | **no** — stops at `sent` |
+| Template approval | required (Sales Daddy → Inbox → Templates) | required | required (via the reseller's panel) |
 
-**The client's number is licensed through My Dreams**, so `mydreams` is the
-live path; `meta_cloud` is kept for a later move to a direct Meta account.
-Both send the same approved template, so section 1 below applies either way.
+**Since Sep 2026 the client's number sits on Sales Daddy.** My Dreams was
+disconnected and the same number reconnected there, so sends through the old
+licence were answered "Success" and never delivered. `salesdaddy` is the live
+path:
+
+```
+WHATSAPP_ENABLED=true
+WHATSAPP_PROVIDER=salesdaddy
+SALESDADDY_API_KEY=sd_live_…
+SALESDADDY_WEBHOOK_SECRET=<from Sales Daddy, for the status webhook>
+```
+
+Check the key before anything else — it names the number it sends from:
+
+```
+curl https://api.salesdaddy.in/v1/wa/account -H "X-Api-Key: sd_live_…"
+```
+
+For delivery receipts, give Sales Daddy `<PUBLIC_BASE_URL>/api/v1/webhooks/salesdaddy`.
+Template names are the same `WHATSAPP_TEMPLATE_NAME` /
+`WHATSAPP_COMPARISON_TEMPLATE_NAME`; they must be approved in Sales Daddy
+under exactly those names. The sections on `mydreams` below are history.
 
 Set up whichever one you are using — the template first, because
 **approval takes hours to days, so submit on day one.** Email needs no
