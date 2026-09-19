@@ -59,6 +59,10 @@ class RepricingSettings(Base, TimestampMixin):
     #: the share that is).
     weekend_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"), nullable=False)
     sold_out_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("10"), nullable=False)
+    #: Every channel the RMS grid listed on the last visit, ``channel`` among
+    #: them. The others are only ever written when the owner ticks them for a
+    #: room on the Repricing page -- never by the automatic run.
+    known_channels: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
 
 class RmsRoomMapping(Base, TimestampMixin):
@@ -132,6 +136,10 @@ class RepricingAction(Base):
     )
     room_type_id: Mapped[int | None] = mapped_column(ForeignKey("room_types.id", ondelete="SET NULL"))
     room_name: Mapped[str | None] = mapped_column(String(200))
+    #: The RMS channel row this was read from or written to. NULL on rows
+    #: from before other channels were handled; those are all the settings'
+    #: channel (Booking.com).
+    channel: Mapped[str | None] = mapped_column(String(120))
     rms_room: Mapped[str | None] = mapped_column(String(200))
     rms_rate_type: Mapped[str | None] = mapped_column(String(200))
     plan: Mapped[str | None] = mapped_column(String(8))

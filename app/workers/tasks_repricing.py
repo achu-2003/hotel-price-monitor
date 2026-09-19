@@ -34,7 +34,7 @@ from decimal import Decimal
 from typing import Any
 
 from celery import shared_task
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import get_settings
 from app.core.crypto import decrypt, encrypt
@@ -51,7 +51,9 @@ from app.services import repricing_advisor as advisor
 from app.services.repricing_advisor_openai import completer_from_settings
 from app.services.dates import local_today
 from app.services.rate_app_login import _screenshot, attempt_login
-from app.services.rate_app_rms import GridError, day_heading, open_grid, read_rate, write_rate
+from app.services.rate_app_rms import (
+    GridError, channel_names, day_heading, expand_channel, open_grid, read_rate, write_rate,
+)
 
 log = get_logger("tasks.repricing")
 
@@ -126,18 +128,19 @@ def compute(session, owner_user_id: int, check_in, check_out) -> tuple[list[rule
         room_type_ids=set(mappings) or None,
         usual=rule.usual_gaps(history, own_hotel_id=own, min_competitors=own_rule.min_competitors),
         night=check_in,
-        moved_today=set(session.scalars(data.moved_stmt(owner_user_id, check_in))),
+        moved_today=set(session.scalars(data.moved_stmt(owner_user_id, check_in, settings.channel))),
     )
     return proposals, settings, mappings
 
 
 def _record(session, owner_user_id: int, proposal: rule.Proposal, mapping: RmsRoomMapping | None,
-            *, check_in, mode: str, status: str, plan: str | None = None, rate_type: str | None = None,
+            *, check_in, mode: str, status: str, channel: str | None = None,
+            plan: str | None = None, rate_type: str | None = None,
             current_rms=None, proposed_rms=None, applied_rms=None, reason: str | None = None,
             screenshot: str | None = None) -> RepricingAction:
     row = RepricingAction(
         owner_user_id=owner_user_id, room_type_id=proposal.room_type_id, room_name=proposal.room_name,
-        rms_room=mapping.rms_room if mapping else None, rms_rate_type=rate_type, plan=plan,
+        channel=channel, rms_room=mapping.rms_room if mapping else None, rms_rate_type=rate_type, plan=plan,
         check_in=check_in, mode=mode, status=status,
         our_price=proposal.our_price, market_price=proposal.market, target_price=proposal.target,
         competitors=[c.as_json() for c in proposal.competitors],
@@ -269,15 +272,39 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
 
 @shared_task(name="repricing.run", soft_time_limit=600, time_limit=660)
 def run_repricing(owner_user_id: int, mode: str = "manual",
-                  overrides: dict[str, str] | None = None) -> dict[str, Any]:
+                  overrides: dict[str, str] | None = None,
+                  only_room_type_id: int | None = None,
+                  channels: dict[str, dict[str, str]] | None = None,
+                  skip_primary: list[int] | None = None) -> dict[str, Any]:
     """Compute tonight's proposals and, unless ``mode`` is ``dry_run``, set them in RMS.
 
     ``mode``: ``manual`` (Apply pressed), ``auto`` (scheduler), ``dry_run``
     (everything but the write: the grid is read and the proposed RMS rates
     are recorded as ``proposed``). ``overrides`` are guest prices the owner
     typed on the page, by room type id; the scheduler never sends any.
+
+    ``only_room_type_id`` narrows the run to ONE of the owner's rooms and
+    leaves every other rate exactly as it is. The scheduler never sends it --
+    automatic mode is the whole property or nothing -- and the caller has
+    already checked the room is the owner's and is mapped.
+
+    OTHER CHANNELS ARE THE OWNER'S CALL. ``channels`` is ``{room_type_id:
+    {channel: rms_rate}}`` -- the other RMS channels (Goibibo, Expedia, the
+    Book Now button...) the owner ticked for a room, each with the RMS rate
+    for the room's anchor plan that the page showed and they accepted. Only
+    those are written, with exactly that number; the channel's other plans
+    keep their supplement over it; the room's RMS floor and ceiling still
+    hold. ``skip_primary`` lists rooms whose main channel was unticked. The
+    scheduler sends neither: automatic mode never touches another channel.
+    A Preview reads every channel the grid lists, writing nothing, so the
+    page can show what each holds today.
     """
     typed = {int(k): Decimal(v) for k, v in (overrides or {}).items()} if mode != "auto" else {}
+    picks = ({int(k): {ch: Decimal(v) for ch, v in chans.items()} for k, chans in (channels or {}).items()}
+             if mode == "manual" else {})
+    skip = {int(k) for k in (skip_primary or [])} if mode == "manual" else set()
+    if mode == "auto":
+        only_room_type_id = None
     dry = mode == "dry_run"
     tz = get_settings().timezone
     check_in = local_today(tz)
@@ -289,8 +316,19 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
     # again -- and in a writing mode, move rates that were just moved. A
     # run for this owner that finished within the last few minutes is the
     # run this message was for; say so and stop.
+    # ``scope`` is part of what makes a message a REPEAT. Without it, an
+    # owner applying the Deluxe and then the Suite a minute later had the
+    # second click silently swallowed as a redelivery of the first -- the
+    # page said "done", and the Suite's rate had never been touched. A run
+    # for a different room is a different run.
+    scope = f"room:{only_room_type_id}" if only_room_type_id else "all"
+    if picks or skip:
+        chosen = sorted(f"{rid}:{ch}" for rid, chans in picks.items() for ch in chans)
+        scope += "|" + ",".join(chosen) + "|skip:" + ",".join(map(str, sorted(skip)))
     last = state.read(owner_user_id, KIND)
-    if last and last.get("status") == "done" and last.get("check_in") == check_in.isoformat():
+    if (last and last.get("status") == "done"
+            and last.get("check_in") == check_in.isoformat()
+            and last.get("scope", "all") == scope):
         try:
             finished = datetime.fromisoformat(last["updated_at"])
         except (KeyError, ValueError):
@@ -301,6 +339,19 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
 
     with sync_session() as session:
         proposals, settings, mappings = compute(session, owner_user_id, check_in, check_out)
+
+        # ONE ROOM, and narrowed BEFORE the advisor below, so applying a
+        # single room costs a single call rather than one per room of a
+        # property whose other rates this run will not touch. The shadow log
+        # therefore records the rooms a run considered, not every room that
+        # had a market that night -- the nightly automatic run is what fills
+        # it in full.
+        if only_room_type_id is not None:
+            proposals = [p for p in proposals if p.room_type_id == only_room_type_id]
+            mappings = {k: v for k, v in mappings.items() if k == only_room_type_id}
+            typed = {k: v for k, v in typed.items() if k == only_room_type_id}
+            picks = {k: v for k, v in picks.items() if k == only_room_type_id}
+            skip = {k for k in skip if k == only_room_type_id}
 
         # Shadow only, and deliberately before the login: it must not be able
         # to delay or fail a run that is about to touch real rates, and a
@@ -322,13 +373,13 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
         round_to = settings.round_to
         app = session.scalar(select(RateApplication).where(RateApplication.owner_user_id == owner_user_id))
         if app is None:
-            return state.write(owner_user_id, "done", KIND, ok=False,
+            return state.write(owner_user_id, "done", KIND, scope=scope, ok=False,
                                message="No rate application is saved for this account.")
         login_url, client_number, username = app.login_url, app.client_number, app.username
         try:
             password = decrypt(app.encrypted_password)
         except Exception:  # noqa: BLE001
-            return state.write(owner_user_id, "done", KIND, ok=False,
+            return state.write(owner_user_id, "done", KIND, scope=scope, ok=False,
                                message="The saved password could not be read. Save it again on the Rate app page.")
         storage_state = None
         if app.encrypted_session_state:
@@ -340,14 +391,16 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
         # Nothing to write: say so without opening a browser, but leave the
         # held rows so the page can show why.
         actionable = [p for p in proposals if p.actionable and p.room_type_id in mappings]
+        by_room = {p.room_type_id: p for p in proposals}
+        picks = {rid: chans for rid, chans in picks.items() if rid in mappings and rid in by_room}
         for p in proposals:
             if not p.actionable:
-                _record(session, owner_user_id, p, mappings.get(p.room_type_id),
+                _record(session, owner_user_id, p, mappings.get(p.room_type_id), channel=channel,
                         check_in=check_in, mode=mode, status="held", reason=p.held)
         session.commit()
-        if not actionable:
+        if not actionable and not picks and not dry:
             why = "no room has a proposal that clears the limits" if proposals else "no rooms are mapped, or no prices for tonight"
-            return state.write(owner_user_id, "done", KIND, ok=True, applied=0,
+            return state.write(owner_user_id, "done", KIND, scope=scope, ok=True, applied=0,
                                message=f"Nothing to set: {why}.", check_in=check_in.isoformat())
 
     state.write(owner_user_id, "running", KIND, message="Signing in to the rate application…")
@@ -361,12 +414,18 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
             outcome["error"] = f"could not open the {channel} rates: {exc}"
             return probe
         day = day_heading(page, 0)
+        listed = channel_names(page)
+        with sync_session() as session:
+            row = settings_for(session, owner_user_id)
+            if listed and row.known_channels != listed:
+                row.known_channels = listed
+            session.commit()
         with sync_session() as session:
             for p in actionable:
                 m = mappings[p.room_type_id]
                 anchor = m.anchor_plan
                 if anchor is None:
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="held",
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             reason="no rate row is mapped for this room")
                     continue
                 anchor_row = m.rate_type_for(anchor)
@@ -375,12 +434,12 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                     current = {plan: read_rate(page, channel=channel, room=m.rms_room, rate_type=m.rate_type_for(plan), day_index=0)
                                for plan in PLANS if m.rate_type_for(plan)}
                 except GridError as exc:
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="failed",
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="failed",
                             reason=f"could not read the grid: {exc}")
                     outcome["failed"] += 1
                     continue
                 if current.get(anchor) is None:
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="held",
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             plan=anchor, rate_type=anchor_row,
                             reason=f"the {anchor} cell shows N/A, so there is no rate to scale from")
                     continue
@@ -399,6 +458,7 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                         RepricingAction.rms_room == m.rms_room,
                         RepricingAction.plan == anchor,
                         RepricingAction.status == "applied",
+                        or_(RepricingAction.channel == channel, RepricingAction.channel.is_(None)),
                     ).order_by(RepricingAction.created_at.desc())
                 )
                 if prior is not None and prior.our_price == p.our_price and prior.current_rms:
@@ -406,14 +466,14 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                 try:
                     new_anchor = rule.to_rms(p.target, p.our_price, rms_for_ratio, round_to=round_to)
                 except ValueError as exc:
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="held",
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             plan=anchor, rate_type=anchor_row, current_rms=current[anchor], reason=str(exc))
                     continue
                 # The owner's rupee floor and ceiling are RMS numbers: checked
                 # here, on the RMS number, and a breach holds the whole room.
                 outside = rule.rms_bounds(new_anchor, floor=m.floor_amount, ceiling=m.ceiling_amount)
                 if outside:
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="held",
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             plan=anchor, rate_type=anchor_row, current_rms=current[anchor],
                             proposed_rms=new_anchor, reason=outside)
                     outcome["lines"].append(f"{m.rms_room} {anchor}: held, {outside}")
@@ -425,16 +485,21 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                     if plan != anchor and current.get(plan) is not None:
                         wanted[plan] = rule.follow(new_anchor, current[anchor], current[plan], round_to=round_to)
 
+                if p.room_type_id in skip:
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode,
+                            status="held", plan=anchor, rate_type=anchor_row, current_rms=current[anchor],
+                            proposed_rms=new_anchor, reason=f"{channel} was left unticked")
+                    continue
                 for plan, amount in wanted.items():
                     rate_type = m.rate_type_for(plan)
                     note = p.capped
                     if dry:
-                        _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="proposed",
+                        _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="proposed",
                                 plan=plan, rate_type=rate_type, current_rms=current[plan], proposed_rms=amount, reason=note)
                         outcome["lines"].append(f"{m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f} (not written)")
                         continue
                     if int(current[plan]) == int(amount):
-                        _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="unchanged",
+                        _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="unchanged",
                                 plan=plan, rate_type=rate_type, current_rms=current[plan], proposed_rms=amount, reason=note)
                         outcome["unchanged"] += 1
                         continue
@@ -443,19 +508,110 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                         now = write_rate(page, channel=channel, room=m.rms_room, rate_type=rate_type,
                                          day_index=0, amount=amount)
                     except GridError as exc:
-                        _record(session, owner_user_id, p, m, check_in=check_in, mode=mode, status="failed",
+                        _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="failed",
                                 plan=plan, rate_type=rate_type, current_rms=current[plan], proposed_rms=amount,
                                 reason=str(exc))
                         outcome["failed"] += 1
                         outcome["lines"].append(f"{m.rms_room} {plan}: {exc}")
                         continue
                     ok = now is not None and int(now) == int(amount)
-                    _record(session, owner_user_id, p, m, check_in=check_in, mode=mode,
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode,
                             status="applied" if ok else "failed", plan=plan, rate_type=rate_type,
                             current_rms=current[plan], proposed_rms=amount, applied_rms=now,
                             reason=note if ok else f"saved {amount:,.0f} but the grid shows {now}")
                     outcome["applied" if ok else "failed"] += 1
                     outcome["lines"].append(f"{m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f}" + ("" if ok else " (not confirmed)"))
+            session.commit()
+
+        # ── the other channels ──
+        # A Preview reads every one the grid lists, for every mapped room, so
+        # the page can show what each holds today. A manual run writes only
+        # what the owner ticked, with the number they accepted.
+        others = [c for c in listed if c != channel]
+        if dry:
+            work = {ch: list(mappings) for ch in others}
+        else:
+            work = {}
+            for rid, chans in picks.items():
+                for ch in chans:
+                    if ch != channel:  # the main channel is the loop above, never twice
+                        work.setdefault(ch, []).append(rid)
+        with sync_session() as session:
+            for ch, rooms in work.items():
+                try:
+                    expand_channel(page, channel=ch)
+                except GridError as exc:
+                    for rid in rooms:
+                        _record(session, owner_user_id, by_room[rid], mappings[rid], channel=ch, check_in=check_in,
+                                mode=mode, status="failed", reason=f"could not open {ch}: {exc}")
+                    outcome["failed"] += 0 if dry else len(rooms)
+                    continue
+                for rid in rooms:
+                    p, m = by_room.get(rid), mappings[rid]
+                    if p is None or m.anchor_plan is None:
+                        continue
+                    anchor = m.anchor_plan
+                    state.write(owner_user_id, "running", KIND, message=f"Reading {ch} / {m.rms_room}…")
+                    try:
+                        current = {plan: read_rate(page, channel=ch, room=m.rms_room, rate_type=m.rate_type_for(plan), day_index=0)
+                                   for plan in PLANS if m.rate_type_for(plan)}
+                    except GridError as exc:
+                        _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
+                                status="failed", reason=f"could not read {ch}: {exc}")
+                        if not dry:
+                            outcome["failed"] += 1
+                            outcome["lines"].append(f"{ch} {m.rms_room}: {exc}")
+                        continue
+                    if dry:
+                        for plan, value in current.items():
+                            _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
+                                    status="read", plan=plan, rate_type=m.rate_type_for(plan), current_rms=value)
+                        continue
+                    new_anchor = picks[rid][ch]
+                    if current.get(anchor) is None:
+                        _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode, status="held",
+                                plan=anchor, rate_type=m.rate_type_for(anchor), proposed_rms=new_anchor,
+                                reason=f"the {ch} {anchor} cell shows N/A")
+                        outcome["lines"].append(f"{ch} {m.rms_room}: held, the cell shows N/A")
+                        continue
+                    outside = rule.rms_bounds(new_anchor, floor=m.floor_amount, ceiling=m.ceiling_amount)
+                    if outside:
+                        _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode, status="held",
+                                plan=anchor, rate_type=m.rate_type_for(anchor), current_rms=current[anchor],
+                                proposed_rms=new_anchor, reason=outside)
+                        outcome["lines"].append(f"{ch} {m.rms_room}: held, {outside}")
+                        continue
+                    wanted = {anchor: new_anchor}
+                    for plan in PLANS:
+                        if plan != anchor and current.get(plan) is not None:
+                            wanted[plan] = rule.follow(new_anchor, current[anchor], current[plan], round_to=round_to)
+                    for plan, amount in wanted.items():
+                        rate_type = m.rate_type_for(plan)
+                        if int(current[plan]) == int(amount):
+                            _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
+                                    status="unchanged", plan=plan, rate_type=rate_type,
+                                    current_rms=current[plan], proposed_rms=amount, reason="ticked by you")
+                            outcome["unchanged"] += 1
+                            continue
+                        state.write(owner_user_id, "running", KIND, message=f"Setting {ch} {m.rms_room} {plan} to {amount:,.0f}…")
+                        try:
+                            now = write_rate(page, channel=ch, room=m.rms_room, rate_type=rate_type,
+                                             day_index=0, amount=amount)
+                        except GridError as exc:
+                            _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
+                                    status="failed", plan=plan, rate_type=rate_type, current_rms=current[plan],
+                                    proposed_rms=amount, reason=str(exc))
+                            outcome["failed"] += 1
+                            outcome["lines"].append(f"{ch} {m.rms_room} {plan}: {exc}")
+                            continue
+                        ok = now is not None and int(now) == int(amount)
+                        _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
+                                status="applied" if ok else "failed", plan=plan, rate_type=rate_type,
+                                current_rms=current[plan], proposed_rms=amount, applied_rms=now,
+                                reason="ticked by you" if ok else f"saved {amount:,.0f} but the grid shows {now}")
+                        outcome["applied" if ok else "failed"] += 1
+                        outcome["lines"].append(f"{ch} {m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f}"
+                                                + ("" if ok else " (not confirmed)"))
             session.commit()
         outcome["shot"] = _screenshot(page, owner_user_id)
         outcome["day"] = day
@@ -487,9 +643,9 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
         session.commit()
 
     if not probe.ok:
-        return state.write(owner_user_id, "done", KIND, ok=False, message=f"Could not sign in: {probe.message}")
+        return state.write(owner_user_id, "done", KIND, scope=scope, ok=False, message=f"Could not sign in: {probe.message}")
     if outcome.get("error"):
-        return state.write(owner_user_id, "done", KIND, ok=False, message=outcome["error"])
+        return state.write(owner_user_id, "done", KIND, scope=scope, ok=False, message=outcome["error"])
     verb = "Would set" if dry else "Set"
     summary = (
         f"{verb} {len(outcome['lines'])} rate(s) for {outcome.get('day', 'today')}"
@@ -498,7 +654,7 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
         + ". " + "; ".join(outcome["lines"])
     )
     log.info("repricing_run_done", owner_user_id=owner_user_id, mode=mode, **{k: v for k, v in outcome.items() if k != "lines"})
-    return state.write(owner_user_id, "done", KIND, ok=outcome["failed"] == 0, message=summary,
+    return state.write(owner_user_id, "done", KIND, scope=scope, ok=outcome["failed"] == 0, message=summary,
                        applied=outcome["applied"], failed=outcome["failed"], check_in=check_in.isoformat(),
                        has_screenshot=bool(outcome.get("shot")))
 

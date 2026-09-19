@@ -148,20 +148,57 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
     if mapped is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Map at least one room to its RMS row first.")
 
+    # ONE ROOM: checked here, not in the worker. The worker would simply
+    # find nothing to do and report "nothing to set", which reads like the
+    # rule held the rate rather than like a room that is not the caller's or
+    # is not mapped. Ownership is re-checked even though the id came from a
+    # page we rendered, because the id arrives in a request body.
+    if payload.only_room_type_id is not None:
+        await _own_room(session, user, payload.only_room_type_id)
+        one = await session.scalar(
+            select(RmsRoomMapping.id).where(
+                RmsRoomMapping.room_type_id == payload.only_room_type_id,
+                RmsRoomMapping.owner_user_id == user.id,
+                RmsRoomMapping.is_enabled.is_(True),
+            )
+        )
+        if one is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "That room is not mapped to an RMS row, so there is nothing to write for it.",
+            )
+
     current = state.read(user.id, KIND)
     if current and current.get("status") == "running":
         return _run_out(current)
 
     await record_audit(
         session, user=user, action="run", entity="repricing", entity_id=user.id,
-        after={"mode": payload.mode, "overrides": {str(k): str(v) for k, v in payload.overrides.items()}},
+        after={
+            "mode": payload.mode,
+            "overrides": {str(k): str(v) for k, v in payload.overrides.items()},
+            "only_room_type_id": payload.only_room_type_id,
+            "channels": {str(k): {c: str(r) for c, r in v.items()} for k, v in payload.channels.items()},
+            "skip_primary": payload.skip_primary,
+        },
         request=request,
     )
     await session.commit()
-    started = state.write(user.id, "running", KIND, message="Queued…", mode=payload.mode)
+    # ``scope`` is what stops the worker's redelivery guard from mistaking
+    # "now do the next room" for a repeat of the room just done. See
+    # tasks_repricing.run_repricing.
+    scope = f"room:{payload.only_room_type_id}" if payload.only_room_type_id else "all"
+    started = state.write(user.id, "running", KIND, message="Queued…", mode=payload.mode, scope=scope)
     # Celery's JSON turns int keys into strings anyway; send them that way.
     overrides = {str(k): str(v) for k, v in payload.overrides.items()}
-    run_repricing.apply_async(args=[user.id, payload.mode, overrides], queue="browser")
+    # Other channels only on a manual run: a Preview reads them all anyway,
+    # and writes none.
+    channels = ({str(k): {c: str(r) for c, r in v.items()} for k, v in payload.channels.items()}
+                if payload.mode == "manual" else {})
+    skip = payload.skip_primary if payload.mode == "manual" else []
+    run_repricing.apply_async(
+        args=[user.id, payload.mode, overrides, payload.only_room_type_id, channels, skip], queue="browser"
+    )
     return _run_out(started)
 
 

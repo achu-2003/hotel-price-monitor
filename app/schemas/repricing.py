@@ -61,6 +61,23 @@ class RunIn(ORMModel):
     #: Guest prices the owner typed over the rule's, by room type id. Rooms
     #: left out keep the rule's proposal.
     overrides: dict[int, Decimal] = Field(default_factory=dict, max_length=100)
+    #: Do this ONE room and leave every other rate untouched. ``None`` is the
+    #: whole property, which is what the two buttons under the table send.
+    #:
+    #: One login either way -- the browser cost is the same -- so this is not
+    #: an optimisation. It is for the night when one room's proposal is right
+    #: and the rest are not, which used to mean clearing three boxes back to
+    #: the rule's number and hoping none were missed.
+    only_room_type_id: int | None = Field(default=None, gt=0)
+
+    #: Other RMS channels the owner ticked, per room: ``{room_type_id:
+    #: {channel: rms_rate}}``. The rate is the RMS figure for the room's
+    #: anchor plan on that channel, as the page showed it; the channel's
+    #: other plans keep their supplement over it. Nothing here means only the
+    #: main channel is written.
+    channels: dict[int, dict[str, Decimal]] = Field(default_factory=dict, max_length=100)
+    #: Rooms whose MAIN channel (Booking.com) the owner unticked: read, not written.
+    skip_primary: list[int] = Field(default_factory=list, max_length=100)
 
     @field_validator("overrides")
     @classmethod
@@ -68,6 +85,19 @@ class RunIn(ORMModel):
         for room_type_id, price in value.items():
             if not (0 < price < 10_000_000):
                 raise ValueError(f"the price for room {room_type_id} must be a positive amount")
+        return value
+
+    @field_validator("channels")
+    @classmethod
+    def _channel_rates(cls, value: dict[int, dict[str, Decimal]]) -> dict[int, dict[str, Decimal]]:
+        for room_type_id, picks in value.items():
+            if len(picks) > 20:
+                raise ValueError(f"too many channels for room {room_type_id}")
+            for channel, rate in picks.items():
+                if not channel.strip() or len(channel) > 120:
+                    raise ValueError(f"room {room_type_id}: a channel name is missing or too long")
+                if not (0 < rate < 10_000_000):
+                    raise ValueError(f"room {room_type_id}: the {channel} rate must be a positive amount")
         return value
 
 

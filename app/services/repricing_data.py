@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, or_, select
 
 from app.db.models import Hotel, PriceSeries, RepricingAction, RoomType
 from app.services.repricing import HISTORY_NIGHTS
@@ -41,11 +41,17 @@ def one_night(rows) -> list:
     return [r for r in rows if r[0].check_out == r[0].check_in + timedelta(days=1)]
 
 
-def moved_stmt(owner_user_id: int, night: date) -> Select:
-    """Rooms whose rate was written for ``night`` already -- by the rule or by hand."""
+def moved_stmt(owner_user_id: int, night: date, channel: str) -> Select:
+    """Rooms whose MAIN-channel rate was written for ``night`` already -- by the rule or by hand.
+
+    Only ``channel`` counts (and rows from before channels were recorded,
+    which were all it): a Goibibo rate the owner ticked is not the rule's
+    one move of the night, and must not hold the main channel's.
+    """
     return select(RepricingAction.room_type_id).where(
         RepricingAction.owner_user_id == owner_user_id,
         RepricingAction.check_in == night,
         RepricingAction.status == "applied",
         RepricingAction.room_type_id.isnot(None),
+        or_(RepricingAction.channel == channel, RepricingAction.channel.is_(None)),
     ).distinct()

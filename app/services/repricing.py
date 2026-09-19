@@ -471,6 +471,20 @@ def to_rms(target_guest: Decimal, our_guest: Decimal, current_rms: Decimal, *, r
     return _round_to(target_guest * current_rms / our_guest, round_to)
 
 
+def same_share(current: Decimal, before: Decimal, after: Decimal, *, round_to: int) -> Decimal:
+    """Another channel's rate moved by the share the main channel's moved.
+
+    Booking.com 8,500 -> 7,650 is -10%; a Goibibo 9,000 becomes 8,100. Each
+    channel keeps the difference the owner set between them, in proportion.
+    This is only the SUGGESTION the page fills in -- another channel is
+    written only when the owner ticks it, and then with the number the box
+    shows.
+    """
+    if not before:
+        raise ValueError("the main channel's rate is zero; no share to move by")
+    return _round_to(current * after / before, round_to)
+
+
 def follow(proposed_ep: Decimal, current_ep: Decimal, current_plan: Decimal, *, round_to: int) -> Decimal:
     """A CP or MAP rate after the EP moved: the same supplement over the new EP."""
     return _round_to(proposed_ep + (current_plan - current_ep), round_to)

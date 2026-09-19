@@ -113,6 +113,18 @@
               <br><span class="muted rule-wanted">rule's own target {{ money(p.wanted) }}, limited by the {{ settings.max_step_pct|float|round|int }}% step</span>
             {% endif %}
             <span class="muted by-hand" hidden><br>your price{% if p.target is not none %} (rule: {{ money(p.target) }}){% endif %}</span>
+            {#
+              THIS ROOM ALONE. The two buttons under the table write every
+              room marked "will apply"; this writes one and leaves the rest
+              of tonight's rates untouched. It sits under the price it
+              applies rather than in its own column: the table already
+              scrolls sideways, and a button at the far right of a scrolled
+              row is a button aimed at whichever room the eye has lost.
+            #}
+            <br><button type="button" class="apply-room"
+                    data-room-type-id="{{ p.room_type_id }}"
+                    data-room="{{ p.room_name }}"
+                    {% if not has_rate_app or p.our_price is none %}disabled{% endif %}>Apply this room</button>
           {% elif p.target is not none %}
             <strong>{{ money(p.target) }}</strong>
             {% if p.change_pct is not none %}<br><span class="muted">{{ '%+.1f'|format(p.change_pct) }}%</span>{% endif %}
@@ -166,6 +178,48 @@
           {% else %}—{% endif %}
         </td>
       </tr>
+      {#
+        WHICH WEBSITES CHANGE. The main channel is ticked, as it always was;
+        every other channel RMS lists is unticked and is written ONLY if the
+        owner ticks it here. Its box holds the RMS rate to write -- filled in
+        with the same share the main channel moves by, and theirs to change.
+        A channel with no reading yet cannot be ticked: Preview reads them.
+      #}
+      {% if m and m.is_enabled and p.our_price and m.anchor_plan %}
+      {% set anchor_row = m.rate_type_for(m.anchor_plan) %}
+      <tr class="channels-row" data-room-type-id="{{ p.room_type_id }}">
+        <td colspan="9">
+          <div class="channel-picks">
+            <span class="channel-picks-label">Change in RMS:</span>
+            <label class="channel-pick main">
+              <input type="checkbox" class="pick-main" checked data-room-type-id="{{ p.room_type_id }}">
+              <strong>{{ settings.channel }}</strong>
+              <span class="muted">{{ m.rms_room }} › {{ anchor_row }}</span>
+            </label>
+            {% for ch in other_channels %}
+              {% set cur = channel_rms.get((ch, m.rms_room, anchor_row)) if channel_rms is defined else none %}
+              <label class="channel-pick{% if cur is none %} unread{% endif %}">
+                <input type="checkbox" class="pick-channel" data-channel="{{ ch }}"
+                       data-room-type-id="{{ p.room_type_id }}" {% if cur is none %}disabled{% endif %}>
+                <strong>{{ ch }}</strong>
+                {% if cur is not none %}
+                  <span class="muted">{{ money(cur) }} →</span>
+                  <input type="number" class="channel-rate" min="1" step="1" data-cur="{{ cur }}"
+                         data-channel="{{ ch }}" aria-label="New {{ ch }} rate for {{ p.room_name }}"
+                         value="{{ cur|int }}">
+                  <span class="muted channel-note"></span>
+                {% else %}
+                  <span class="muted">press Preview to read it</span>
+                {% endif %}
+              </label>
+            {% endfor %}
+            {% if not other_channels %}
+              <span class="muted">Other websites in RMS appear here after the first Preview.</span>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
     {% endfor %}
     </tbody>
   </table>

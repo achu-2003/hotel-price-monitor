@@ -282,6 +282,10 @@
   // answered on the Rate app page, and a run that meets one says so.
   document.querySelectorAll("form.repricing-run-form").forEach(function (form) {
     const buttons = Array.from(form.querySelectorAll("button.run"));
+    // The per-room buttons live in the table, outside this form, but they
+    // start the same job and must be disabled by the same busy() -- two
+    // runs at once is one browser fighting itself over the same grid.
+    const roomButtons = Array.from(document.querySelectorAll("button.apply-room"));
     const status = form.querySelector(".form-status");
     const endpoint = form.dataset.endpoint;
     const roundTo = Number(form.dataset.roundTo) || 1;
@@ -340,8 +344,87 @@
         : '<span class="tag ok">will apply</span> <span class="muted">your price</span>';
       if (outside) statusCell.querySelector(".muted").textContent = outside;
     }
+    // -- other websites in RMS ----------------------------------------
+    //
+    // Each room's second row lists every channel RMS has. The main one is
+    // ticked; the others are written only when ticked. A channel's box
+    // holds the RMS rate to write: filled in with the share the guest
+    // price moves by (Goibibo 9,000 and the price -10% makes 8,100) until
+    // the owner types in it, after which it is theirs and stays put.
+    function channelRow(id) {
+      return document.querySelector('tr.channels-row[data-room-type-id="' + id + '"]');
+    }
+    function boxFor(id) {
+      return priceBoxes.find(function (b) { return b.dataset.roomTypeId === String(id); });
+    }
+    function noteChannel(rate, box) {
+      const cur = Number(rate.dataset.cur);
+      const v = Number(rate.value);
+      const note = rate.parentElement.querySelector(".channel-note");
+      if (!note) return;
+      let text = v > 0 && cur ? (v === cur ? "no change" : pctText(v, cur)) : "type a rate";
+      if (v > 0 && box && box.dataset.floor && v < Number(box.dataset.floor)) {
+        text += " · below the floor of " + inr.format(Number(box.dataset.floor)) + ", won't be sent";
+      } else if (v > 0 && box && box.dataset.ceiling && v > Number(box.dataset.ceiling)) {
+        text += " · above the ceiling of " + inr.format(Number(box.dataset.ceiling)) + ", won't be sent";
+      }
+      note.textContent = text;
+    }
+    function suggestChannels(box) {
+      const row = channelRow(box.dataset.roomTypeId);
+      if (!row) return;
+      const our = Number(box.dataset.our);
+      const typed = Number(box.value);
+      const share = our && typed > 0 ? typed / our : 1;
+      row.querySelectorAll("input.channel-rate").forEach(function (rate) {
+        const cur = Number(rate.dataset.cur);
+        if (!rate.dataset.touched) rate.value = Math.round((cur * share) / roundTo) * roundTo;
+        noteChannel(rate, box);
+      });
+    }
+    document.querySelectorAll("input.channel-rate").forEach(function (rate) {
+      rate.addEventListener("input", function () {
+        rate.dataset.touched = "1";
+        const pick = rate.parentElement.querySelector("input.pick-channel");
+        if (pick && !pick.checked) pick.checked = true;
+        noteChannel(rate, boxFor(rate.closest("tr").dataset.roomTypeId));
+      });
+    });
+    // What the ticks say, for one room or all: the other channels to write
+    // with their rates, the rooms whose main channel was unticked, and a
+    // line per choice for the confirm dialog.
+    function channelChoices(onlyId) {
+      const channels = {};
+      const skip = [];
+      const lines = [];
+      document.querySelectorAll("tr.channels-row").forEach(function (row) {
+        const id = row.dataset.roomTypeId;
+        if (onlyId && id !== String(onlyId)) return;
+        const box = boxFor(id);
+        const name = box ? box.dataset.room : id;
+        const main = row.querySelector("input.pick-main");
+        if (main && !main.checked) {
+          skip.push(Number(id));
+          lines.push("  " + name + ": " + main.parentElement.querySelector("strong").textContent + " left as it is");
+        }
+        row.querySelectorAll("input.pick-channel:checked").forEach(function (pick) {
+          const rate = pick.parentElement.querySelector("input.channel-rate");
+          const v = rate ? Math.round(Number(rate.value)) : 0;
+          if (!(v > 0)) return;
+          (channels[id] = channels[id] || {})[pick.dataset.channel] = v;
+          lines.push("  " + name + " on " + pick.dataset.channel + ": " + inr.format(Number(rate.dataset.cur))
+            + " to " + inr.format(v) + " in RMS");
+        });
+      });
+      return { channels: channels, skip: skip, lines: lines };
+    }
+
     priceBoxes.forEach(function (box) {
-      box.addEventListener("input", function () { refresh(box); });
+      box.addEventListener("input", function () { refresh(box); suggestChannels(box); });
+      suggestChannels(box);
+    });
+    roomButtons.forEach(function (b) {
+      if (b.disabled) b.dataset.lockedOff = "1";
     });
 
     function overrides() {
@@ -366,6 +449,11 @@
     }
     function busy(on) {
       buttons.forEach(function (b) { b.disabled = on; });
+      roomButtons.forEach(function (b) {
+        // Never re-enable a button the template disabled for its own reason
+        // (no login saved, no price of ours tonight).
+        if (on) { b.disabled = true; } else if (b.dataset.lockedOff !== "1") { b.disabled = false; }
+      });
     }
     function finish(state) {
       if (polling) { clearInterval(polling); polling = null; }
@@ -386,6 +474,42 @@
       if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
       apply(result.body);
     }
+    async function start(body, ask) {
+      if (ask && !window.confirm(ask)) return;
+      busy(true);
+      note("Signing in to the rate application…");
+      const result = await api(endpoint, "POST", body);
+      if (!result.ok) { note(problemText(result), "error"); busy(false); return; }
+      apply(result.body);
+      if (!polling) polling = setInterval(poll, 2000);
+    }
+
+    // -- one room, on its own row ---------------------------------------
+    //
+    // Sends ONLY that room's typed price, so a half-finished edit three rows
+    // down cannot ride along on a click meant for this one. Always `manual`:
+    // a per-room Preview would be a login and a minute to read one cell the
+    // table above already shows.
+    roomButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        const id = button.dataset.roomTypeId;
+        const box = priceBoxes.find(function (b) { return b.dataset.roomTypeId === id; });
+        const changes = {};
+        if (box && edited(box)) changes[id] = Math.round(Number(box.value));
+        const price = box ? Number(box.value) : null;
+        const our = box ? Number(box.dataset.our) : null;
+        const shown = price ? rupees(price) + (our ? " (" + pctText(price, our) + " on today)" : "") : "the rule's price";
+        const picked = channelChoices(id);
+        start(
+          { mode: "manual", overrides: changes, only_room_type_id: Number(id),
+            channels: picked.channels, skip_primary: picked.skip },
+          "Set " + button.dataset.room + " to " + shown + " in RMS now?" + "\n\n"
+            + (picked.lines.length ? "Websites:\n" + picked.lines.join("\n") + "\n\n" : "")
+            + "No other room's rate is touched."
+        );
+      });
+    });
+
     buttons.forEach(function (button) {
       button.addEventListener("click", async function () {
         const changes = overrides();
@@ -395,13 +519,16 @@
         if (Object.keys(changes).length && button.dataset.mode !== "dry_run") {
           ask = (ask ? ask + "\n\n" : "") + "Prices you typed (guest price on the site):\n" + describe();
         }
-        if (ask && !window.confirm(ask)) return;
-        busy(true);
-        note("Signing in to the rate application…");
-        const result = await api(endpoint, "POST", { mode: button.dataset.mode, overrides: changes });
-        if (!result.ok) { note(problemText(result), "error"); busy(false); return; }
-        apply(result.body);
-        if (!polling) polling = setInterval(poll, 2000);
+        const body = { mode: button.dataset.mode, overrides: changes };
+        if (button.dataset.mode === "manual") {
+          const picked = channelChoices(null);
+          body.channels = picked.channels;
+          body.skip_primary = picked.skip;
+          if (picked.lines.length) {
+            ask = (ask ? ask + "\n\n" : "") + "Websites:\n" + picked.lines.join("\n");
+          }
+        }
+        await start(body, ask);
       });
     });
     // A run left going when the page was refreshed is still going.

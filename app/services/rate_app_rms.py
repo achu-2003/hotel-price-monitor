@@ -240,6 +240,20 @@ def open_grid(page, *, channel: str) -> None:
     _expand(page, channel_row)
 
 
+def channel_names(page) -> list[str]:
+    """Every channel the Channel view lists, top to bottom."""
+    return _direct_names(page, 1)
+
+
+def expand_channel(page, *, channel: str) -> None:
+    """Open one more channel's rows on a grid :func:`open_grid` already opened."""
+    channel_row = _row_named(page, 1, channel)
+    if channel_row is None:
+        listed = ", ".join(channel_names(page)) or "nothing"
+        raise GridError(f"the Channel view listed {listed}, not {channel}")
+    _expand(page, channel_row)
+
+
 def _cell(page, *, channel: str, room: str, rate_type: str, day_index: int):
     """Locate one cell, expanding the room's row if it is closed."""
     channel_row = _row_named(page, 1, channel)

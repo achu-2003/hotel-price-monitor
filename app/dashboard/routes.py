@@ -1969,21 +1969,47 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             usual=repricing_rule.usual_gaps(history, own_hotel_id=own.id,
                                             min_competitors=own_rule.min_competitors),
             night=check_in,
-            moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in))),
+            moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in, settings.channel))),
         )
 
     # The last RMS reading per rate row, so the page can show the RMS
     # number a proposal would become without opening a browser.
+    # The last RMS reading per rate row: ``latest_rms`` for the main channel
+    # (the rows the rule writes), ``channel_rms`` for every other channel,
+    # keyed ``(channel, rms_room, rate_type)``. Read from the last week of
+    # rows rather than the log below: one Preview reads every channel and
+    # would push the main channel's figures out of a short log.
     latest_rms: dict[tuple[str, str], object] = {}
+    channel_rms: dict[tuple[str, str, str], object] = {}
+    readings = (
+        await session.scalars(
+            select(RepricingAction).where(
+                RepricingAction.owner_user_id == user.id,
+                RepricingAction.rms_room.isnot(None),
+                RepricingAction.rms_rate_type.isnot(None),
+                RepricingAction.created_at >= datetime.now(UTC) - timedelta(days=7),
+            ).order_by(RepricingAction.created_at.desc()).limit(2000)
+        )
+    ).all()
+    for a in reversed(readings):
+        value = a.applied_rms or a.current_rms
+        if value is None:
+            continue
+        if a.channel in (None, settings.channel):
+            latest_rms[(a.rms_room, a.rms_rate_type)] = value
+        else:
+            channel_rms[(a.channel, a.rms_room, a.rms_rate_type)] = value
+    other_channels = [c for c in (settings.known_channels or []) if c != settings.channel]
+
+    # The log: every decision, but not the plain readings a Preview takes of
+    # every channel -- those are figures, not decisions, and would bury them.
     actions = (
         await session.scalars(
-            select(RepricingAction).where(RepricingAction.owner_user_id == user.id)
+            select(RepricingAction).where(RepricingAction.owner_user_id == user.id,
+                                          RepricingAction.status != "read")
             .order_by(RepricingAction.created_at.desc()).limit(60)
         )
     ).all()
-    for a in reversed(actions):
-        if a.rms_room and a.rms_rate_type and (a.applied_rms or a.current_rms) is not None:
-            latest_rms[(a.rms_room, a.rms_rate_type)] = a.applied_rms or a.current_rms
 
     # The model's latest opinion per room for tonight. SHOWN, NEVER USED:
     # nothing on this page or in the run reads it back into a proposal.
@@ -2017,6 +2043,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
         check_in=check_in, actions=actions, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
+        channel_rms=channel_rms, other_channels=other_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
     )
 
