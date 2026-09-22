@@ -48,10 +48,16 @@ import argparse
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
-from sqlalchemy import text
+# Running `python scripts/attach_source_with_config.py` puts scripts/ on
+# sys.path, not the project root, so `import app` would fail. Same fix as
+# scripts/create_account.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.db.session import sync_session
+from sqlalchemy import text  # noqa: E402
+
+from app.db.session import sync_session  # noqa: E402
 
 
 def main() -> int:
