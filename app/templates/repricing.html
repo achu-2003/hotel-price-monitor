@@ -130,13 +130,33 @@
           room that is not mapped, or has no price of ours to take the
           ratio from, cannot be applied, so it gets no box.
         #}
-        {% set ns = namespace(cur=none, rms_new=none, outside=none) %}
+        {% set ns = namespace(cur=none, base=none, rms_new=none, outside=none, settled=false) %}
         {% if m and m.anchor_for(p.board or settings.benchmark_meal_plan) and (m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))) in latest_rms %}
           {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)))] %}
         {% endif %}
-        {% if ns.cur is not none and p.target is not none and p.our_price %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.cur, round_to=settings.round_to, exact=p.exact) %}
+        {#
+          ``cur`` is what the cell HOLDS and is what the column shows. ``base``
+          is what the ratio is taken against, and for the few minutes after an
+          Apply they differ: the grid has moved and Booking.com has not, so
+          dividing by today's price against today's rate proposes the same cut
+          twice. See ratio_base in the route.
+        #}
+        {% if m and ns.cur is not none %}
+          {% set ns.base = ratio_base.get((m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))), ns.cur) if ratio_base is defined else ns.cur %}
+        {% endif %}
+        {% if ns.base is not none and p.target is not none and p.our_price %}
+          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact) %}
           {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
+          {#
+            NOTHING TO SAY WHEN THE FOLLOW HAS CAUGHT UP. Sitting a hundred
+            under them, the rule recomputes the same rate every half hour and
+            the row offered a "proposed price" identical to today's, at
+            +0.0%, under a green "will apply" -- furniture for a decision
+            nobody has to make, and an invitation to sign into RMS and write
+            the number already there. The proposal comes back the moment
+            THEY move. See rule.settled for why the threshold is round_to.
+          #}
+          {% set ns.settled = rule.settled(ns.cur, ns.rms_new, round_to=settings.round_to) %}
         {% endif %}
         <td class="num proposed">
           {% if m and m.is_enabled and p.our_price %}
@@ -145,7 +165,7 @@
                    data-room="{{ p.room_name }}"
                    data-rule="{{ p.target|int if p.target is not none else '' }}"
                    data-our="{{ p.our_price }}"
-                   data-cur="{{ ns.cur if ns.cur is not none else '' }}"
+                   data-cur="{{ ns.base if ns.base is not none else '' }}"
                    data-plan="{{ m.anchor_for(p.board or settings.benchmark_meal_plan) or '' }}"
                    data-floor="{{ m.floor_amount if m.floor_amount is not none else '' }}"
                    data-ceiling="{{ m.ceiling_amount if m.ceiling_amount is not none else '' }}"
@@ -153,9 +173,9 @@
                        script converts it to RMS the way to_rms() does. A price
                        the owner types is always one, exact row or not. -#}
                    data-exact="{{ '1' if p.exact else '' }}"
-                   value="{{ p.target|int if p.target is not none else '' }}"
+                   value="{{ '' if ns.settled else (p.target|int if p.target is not none else '') }}"
                    placeholder="type a price" aria-label="Proposed price for {{ p.room_name }}">
-            <br><span class="muted change">{% if p.change_pct is not none %}{{ '%+.1f'|format(p.change_pct) }}%{% endif %}</span>
+            <br><span class="muted change">{% if ns.settled %}{% elif p.change_pct is not none %}{{ '%+.1f'|format(p.change_pct) }}%{% endif %}</span>
             {% if p.wanted is not none and p.target is not none and p.wanted != p.target %}
               <br><span class="muted rule-wanted">rule's own target {{ money(p.wanted) }}, limited by the {{ settings.max_step_pct|float|round|int }}% step</span>
             {% endif %}
@@ -216,7 +236,9 @@
           {% if ns.cur is not none %}
             {% set anchor_plan = m.anchor_for(p.board or settings.benchmark_meal_plan) %}
             <span class="rms-plan"><span class="plan">{{ anchor_plan }}</span>
-              {{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong></span>
+              {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
+              <span class="rms-new" hidden>{{ money(ns.rms_new) }}</span>
+              {% else %}{{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}</span>
             {#
               THE OTHER PLANS, WITH THEIR NUMBERS. Apply writes CLASSIC's EP
               and MAP as well as its CP -- it always did -- but the cell said
@@ -235,7 +257,7 @@
                 {% if plan != anchor_plan and row_name and (m.rms_room, row_name) in latest_rms %}
                   {% set plan_cur = latest_rms[(m.rms_room, row_name)] %}
                   <br><span class="rms-plan follows"><span class="plan">{{ plan }}</span>
-                    {{ money(plan_cur) }} → <strong>{{ money(rule.follow(ns.rms_new, ns.cur, plan_cur, round_to=settings.round_to)) }}</strong></span>
+                    {{ money(plan_cur) }} → <strong>{{ money(rule.follow(ns.rms_new, ns.base, ratio_base.get((m.rms_room, row_name), plan_cur) if ratio_base is defined else plan_cur, round_to=settings.round_to)) }}</strong></span>
                 {% endif %}
               {% endfor %}
             {% endif %}
@@ -265,6 +287,9 @@
             cap in grey beside it read as though it did. So the row says
             which it is.
           #}
+          {% elif ns.settled %}<span class="tag settled">no change needed</span>
+            <span class="muted">already {{ money(settings.benchmark_undercut) }} under {{ p.benchmark }};
+            a proposal returns when they move</span>
           {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
             <span class="muted">{{ money(p.short_by) }} short of {{ p.benchmark }} − {{ money(settings.benchmark_undercut) }};
             {{ p.capped }}</span>

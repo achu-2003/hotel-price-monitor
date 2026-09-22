@@ -1649,6 +1649,8 @@ form.target-sensitivity { max-width: none; }
    as a warning rather than a success, because the green one was being read
    as "the rule is satisfied" on a row that sat above the hotel it follows. */
 .tag.short { background: #ffe4e6; color: #9f1239; }
+/* Caught up: quieter than "will apply", because it is not an offer. */
+.tag.settled { background: var(--line-soft); color: var(--ink-2); }
 .tag.failed { background: #ffe4e6; color: #9f1239; }
 tr.held td { color: var(--muted); }
 ul.plain { list-style: none; padding: 0; margin: .3em 0 0; }

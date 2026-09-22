@@ -1002,6 +1002,30 @@ def follow(proposed_ep: Decimal, current_ep: Decimal, current_plan: Decimal, *, 
     return _round_to(proposed_ep + (current_plan - current_ep), round_to)
 
 
+def settled(current_rms: Decimal | None, proposed_rms: Decimal | None, *, round_to: int) -> bool:
+    """True when the proposal would not really move the rate.
+
+    A FOLLOW THAT HAS CAUGHT UP HAS NOTHING TO SAY, and the page should say
+    nothing rather than offer a price. Once we sit a hundred under them, the
+    rule recomputes the same number every half hour: the box kept showing a
+    "proposed price" identical to today's, at +0.0%, with a green "will
+    apply" beside it -- three pieces of furniture for a decision nobody has
+    to make. Worse, it invites the owner to press Apply and sign into RMS to
+    write the number already there.
+
+    THE THRESHOLD IS ``round_to``, not zero, and not a constant picked here.
+    The trip from a guest price to an RMS rate and back rounds twice, so a
+    settled room lands a rupee or two off its own last answer -- 5,844
+    becomes 5,845 -- and an exact test would call that a move and write it.
+    ``round_to`` is the owner's own statement of the smallest step a rate
+    should take; anything under it is arithmetic noise, not a decision. An
+    owner who wants finer control lowers it and gets it.
+    """
+    if current_rms is None or proposed_rms is None:
+        return False
+    return abs(int(current_rms) - int(proposed_rms)) < max(int(round_to), 1)
+
+
 def rms_bounds(amount: Decimal, *, floor: Decimal | None, ceiling: Decimal | None) -> str | None:
     """Why an RMS rate may not be written, or ``None`` when it may.
 

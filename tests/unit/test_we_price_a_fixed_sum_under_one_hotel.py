@@ -804,3 +804,43 @@ class TestTheRateWeWriteKeepsTheWholeGap:
                 if x.room_type_id == OUR_CLASSIC]
         assert p.exact is False
         assert rule.override(p, Decimal("5000")).exact is True
+
+
+class TestAFollowThatHasCaughtUpSaysNothing:
+    """Sitting a hundred under them, the rule recomputes the same rate every
+    half hour. The row offered a "proposed price" identical to today's, at
+    +0.0%, under a green "will apply" -- furniture for a decision nobody has
+    to make, and an invitation to sign into RMS to write the number already
+    there. Tonight it was worse than idle: the trip from a guest price to an
+    RMS rate and back rounds twice, so the settled Deluxe proposed 5,845 over
+    its own 5,844 and would have logged in to move a rate by one rupee.
+
+    The threshold is the owner's ``round_to``, not zero and not a constant
+    invented here: it is their own statement of the smallest step a rate
+    should take.
+    """
+
+    def test_the_same_rate_is_settled(self):
+        assert rule.settled(Decimal("5082"), Decimal("5082"), round_to=10)
+
+    def test_and_so_is_one_a_rupee_off_after_the_round_trip(self):
+        assert rule.settled(Decimal("5844"), Decimal("5845"), round_to=10)
+
+    def test_a_real_move_is_not(self):
+        """Sterling moved; the rule has something to say again."""
+        assert not rule.settled(Decimal("5082"), Decimal("5657"), round_to=10)
+
+    def test_the_owner_sets_how_small_is_too_small(self):
+        """round_to 1 means every rupee counts, and the same pair is a move."""
+        assert not rule.settled(Decimal("5844"), Decimal("5845"), round_to=1)
+
+    def test_a_cell_never_read_is_not_settled(self):
+        """No reading is not "nothing to do" -- it is "we do not know yet"."""
+        assert not rule.settled(None, Decimal("5845"), round_to=10)
+        assert not rule.settled(Decimal("5844"), None, round_to=10)
+
+    def test_a_step_of_zero_cannot_swallow_every_move(self):
+        """round_to 0 would make abs(diff) < 0 impossible -- guarded, so a
+        bad setting cannot silently stop the rule writing anything."""
+        assert not rule.settled(Decimal("5844"), Decimal("5845"), round_to=0)
+        assert rule.settled(Decimal("5844"), Decimal("5844"), round_to=0)

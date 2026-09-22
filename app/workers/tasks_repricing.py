@@ -664,7 +664,11 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                                 plan=plan, rate_type=rate_type, current_rms=current[plan], proposed_rms=amount, reason=note)
                         outcome["lines"].append(f"{m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f} (not written)")
                         continue
-                    if int(current[plan]) == int(amount):
+                    # A rate already where the rule wants it, give or take the
+                    # rounding of the trip there and back. See rule.settled:
+                    # writing 5,845 over 5,844 is a login and a browser to
+                    # move a price by a rupee nobody asked to move.
+                    if rule.settled(current[plan], amount, round_to=round_to):
                         _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="unchanged",
                                 plan=plan, rate_type=rate_type, current_rms=current[plan], proposed_rms=amount, reason=note)
                         outcome["unchanged"] += 1
@@ -767,7 +771,7 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                             wanted[plan] = rule.follow(new_anchor, current[anchor], current[plan], round_to=round_to)
                     for plan, amount in wanted.items():
                         rate_type = m.rate_type_for(plan)
-                        if int(current[plan]) == int(amount):
+                        if rule.settled(current[plan], amount, round_to=round_to):
                             _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode,
                                     status="unchanged", plan=plan, rate_type=rate_type,
                                     current_rms=current[plan], proposed_rms=amount, reason="ticked by you")

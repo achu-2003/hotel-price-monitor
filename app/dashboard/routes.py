@@ -2062,6 +2062,35 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             latest_rms[(a.rms_room, a.rms_rate_type)] = value
         else:
             channel_rms[(a.channel, a.rms_room, a.rms_rate_type)] = value
+    # THE SITE LAGS OUR OWN WRITE, AND THE RATIO MUST NOT BE TAKEN ACROSS IT.
+    #
+    # A target becomes an RMS rate by dividing by our own guest price, and the
+    # two have to be of the same moment. In the minutes after an Apply they
+    # are not: the grid holds the new rate and Booking.com still shows what
+    # the OLD one produced. Pairing them gave the owner this, seconds after a
+    # run that had just landed perfectly:
+    #
+    #     IN RMS  5,082 -> 3,038      held, below this room's RMS floor 4,900
+    #
+    # -- a second cut of the same size, proposed off a price that already
+    # included the first. The worker has refused this since this morning; the
+    # page was still drawing it, so the screen contradicted the run.
+    #
+    # So the ratio is taken against the rate the cell held BEFORE our last
+    # write, for as long as our own price is still the one that write was
+    # computed from. The moment the site catches up, ``our_price`` changes,
+    # this stops matching, and the live reading takes over again.
+    by_room = {p.room_type_id: p for p in proposals}
+    ratio_base: dict[tuple, object] = {}
+    for a in readings:
+        if (a.status != "applied" or a.current_rms is None or a.check_in != check_in
+                or a.channel not in (None, settings.channel)
+                or (a.rms_room, a.rms_rate_type) in ratio_base):
+            continue
+        proposal = by_room.get(a.room_type_id)
+        if proposal is not None and proposal.our_price is not None and a.our_price == proposal.our_price:
+            ratio_base[(a.rms_room, a.rms_rate_type)] = a.current_rms
+
     other_channels = [c for c in (settings.known_channels or []) if c != settings.channel]
 
     # The model's latest opinion per room for tonight. SHOWN, NEVER USED:
@@ -2095,6 +2124,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     return await _render(
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
+        ratio_base=ratio_base,
         competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
         check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms, other_channels=other_channels,
