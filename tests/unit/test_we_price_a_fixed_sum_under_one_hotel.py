@@ -820,27 +820,39 @@ class TestAFollowThatHasCaughtUpSaysNothing:
     should take.
     """
 
-    def test_the_same_rate_is_settled(self):
-        assert rule.settled(Decimal("5082"), Decimal("5082"), round_to=10)
+    def test_a_price_already_at_the_target_is_settled(self):
+        """Ours 4,536 against a target of 4,536: nothing to propose."""
+        assert rule.settled(Decimal("4536"), Decimal("4536"), round_to=10)
 
     def test_and_so_is_one_a_rupee_off_after_the_round_trip(self):
-        assert rule.settled(Decimal("5844"), Decimal("5845"), round_to=10)
+        """The Deluxe lands at 5,215 against a target of 5,216, because the
+        trip to an RMS rate and back rounds twice. A rupee is not a move."""
+        assert rule.settled(Decimal("5215"), Decimal("5216"), round_to=10)
 
     def test_a_real_move_is_not(self):
         """Sterling moved; the rule has something to say again."""
-        assert not rule.settled(Decimal("5082"), Decimal("5657"), round_to=10)
+        assert not rule.settled(Decimal("5048"), Decimal("4536"), round_to=10)
+
+    def test_a_reverted_rate_is_not_settled_either(self):
+        """THE ONE THAT MATTERED. The owner put tonight's rates back by hand,
+        Booking.com returned to 7,586, and the row still said "no change
+        needed, already 100 under Sterling" -- because the test was on a
+        REMEMBERED RMS rate rather than on the price a guest is being
+        charged. 7,586 against a target of 4,536 is a move, and a large one.
+        """
+        assert not rule.settled(Decimal("7586"), Decimal("4536"), round_to=10)
 
     def test_the_owner_sets_how_small_is_too_small(self):
         """round_to 1 means every rupee counts, and the same pair is a move."""
-        assert not rule.settled(Decimal("5844"), Decimal("5845"), round_to=1)
+        assert not rule.settled(Decimal("5215"), Decimal("5216"), round_to=1)
 
     def test_a_cell_never_read_is_not_settled(self):
         """No reading is not "nothing to do" -- it is "we do not know yet"."""
-        assert not rule.settled(None, Decimal("5845"), round_to=10)
-        assert not rule.settled(Decimal("5844"), None, round_to=10)
+        assert not rule.settled(None, Decimal("4536"), round_to=10)
+        assert not rule.settled(Decimal("4536"), None, round_to=10)
 
     def test_a_step_of_zero_cannot_swallow_every_move(self):
         """round_to 0 would make abs(diff) < 0 impossible -- guarded, so a
         bad setting cannot silently stop the rule writing anything."""
-        assert not rule.settled(Decimal("5844"), Decimal("5845"), round_to=0)
-        assert rule.settled(Decimal("5844"), Decimal("5844"), round_to=0)
+        assert not rule.settled(Decimal("5215"), Decimal("5216"), round_to=0)
+        assert rule.settled(Decimal("4536"), Decimal("4536"), round_to=0)

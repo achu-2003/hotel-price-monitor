@@ -156,7 +156,10 @@
             the number already there. The proposal comes back the moment
             THEY move. See rule.settled for why the threshold is round_to.
           #}
-          {% set ns.settled = rule.settled(ns.cur, ns.rms_new, round_to=settings.round_to) %}
+          {#- On the PRICES, both freshly fetched. Asking it of the RMS cell
+              asked it of a memory, and a memory said "no change needed" on a
+              row sitting 2,950 above them. -#}
+          {% set ns.settled = rule.settled(p.our_price, p.target, round_to=settings.round_to) %}
         {% endif %}
         <td class="num proposed">
           {% if m and m.is_enabled and p.our_price %}
@@ -268,7 +271,10 @@
         </td>
         <td class="num site">
           {% if ns.cur and ns.rms_new is not none and p.our_price %}
-            <strong class="site-new">{{ money((ns.rms_new * p.our_price / ns.cur)|round|int) }}</strong>
+            {#- Back through the SAME divisor the rate was computed with. Using
+                the remembered cell here instead put the rule's own target back
+                as "guest will see 7,586" -- the price we are trying to leave. -#}
+            <strong class="site-new">{{ money((ns.rms_new * p.our_price / ns.base)|round|int) }}</strong>
             <br><span class="muted">on Booking.com{% if settings.benchmark_with_tax %}, tax in{% endif %}</span>
             {% if p.benchmark_entry %}
               <br><span class="muted site-gap">vs {{ p.benchmark }} {{ money(p.market) }}</span>

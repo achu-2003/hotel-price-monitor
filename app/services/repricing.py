@@ -1002,8 +1002,24 @@ def follow(proposed_ep: Decimal, current_ep: Decimal, current_plan: Decimal, *, 
     return _round_to(proposed_ep + (current_plan - current_ep), round_to)
 
 
-def settled(current_rms: Decimal | None, proposed_rms: Decimal | None, *, round_to: int) -> bool:
-    """True when the proposal would not really move the rate.
+def settled(current: Decimal | None, proposed: Decimal | None, *, round_to: int) -> bool:
+    """True when the proposal would not really move the price.
+
+    ASK IT OF THE PRICES, NOT OF A REMEMBERED RATE. The page used to test
+    the RMS cell against the proposed rate, and the cell is a MEMORY -- the
+    last number this app wrote or read, not what the grid holds now. When
+    the owner put tonight's rates back by hand, Booking.com returned to the
+    price our last write had replaced, the remembered rate still said 5,082,
+    and the row announced "no change needed, already 100 under Sterling"
+    while sitting 2,950 ABOVE them.
+
+    Our own guest price and theirs are both freshly fetched, and the gap
+    between them is the whole of what the rule is about, so that is the
+    comparison: are we already where the rule wants us? Nothing remembered
+    takes part in it, so nothing stale can make it lie.
+
+    (The RUN still compares the live cell against the rate it is about to
+    write -- that reading is seconds old and is the right question there.)
 
     A FOLLOW THAT HAS CAUGHT UP HAS NOTHING TO SAY, and the page should say
     nothing rather than offer a price. Once we sit a hundred under them, the
@@ -1021,9 +1037,9 @@ def settled(current_rms: Decimal | None, proposed_rms: Decimal | None, *, round_
     should take; anything under it is arithmetic noise, not a decision. An
     owner who wants finer control lowers it and gets it.
     """
-    if current_rms is None or proposed_rms is None:
+    if current is None or proposed is None:
         return False
-    return abs(int(current_rms) - int(proposed_rms)) < max(int(round_to), 1)
+    return abs(int(current) - int(proposed)) < max(int(round_to), 1)
 
 
 def rms_bounds(amount: Decimal, *, floor: Decimal | None, ceiling: Decimal | None) -> str | None:
