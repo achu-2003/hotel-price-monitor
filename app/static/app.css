@@ -1138,12 +1138,10 @@ code {
 #stored-history { max-width: none; }
 #stored-history .grid { margin-bottom: 0; }
 
-/* Same 460px cap, same reason it is wrong here: this panel is four paragraphs
-   of explanation, not a column of inputs, and squeezed into a form's width it
-   ran to fourteen short lines down the left of an otherwise empty section.
-   The prose keeps a reading measure of its own -- full width on a wide screen
-   would be a 180-character line, which is worse than the narrow column. */
-#price-display { max-width: none; }
+/* The prose in the displayed-prices panel keeps a reading measure of its own.
+   The panel is full column width (see .setup-col below); left to run the whole
+   of it on a wide screen these paragraphs would set a 180-character line,
+   which is harder to read than the narrow column they replaced. */
 #price-display > span,
 #price-display > p { max-width: 92ch; }
 
@@ -1229,6 +1227,27 @@ code {
 
 .switch-text { font-size: 14px; }
 
+/* An expanded row is a FORM, not a row of table actions.
+ *
+ * .grid button deliberately mutes every button inside a table -- a gradient on
+ * every line reads as a toolbar. The recipient panel is inside a table too, by
+ * construction: it is a <tr> holding a form. So Save came out the same weight
+ * as Remove, and the panel had no primary at all -- three ghost buttons and a
+ * red one, with nothing saying which finished the job.
+ *
+ * Only what submits. Remove, Test and Deactivate carry no type attribute and
+ * so do not match, which is what keeps the dense row actions quiet. */
+.row-panel form button[type="submit"] {
+  background: linear-gradient(135deg, var(--brand-1), var(--accent-2));
+  color: #fff; border-color: transparent; box-shadow: var(--shadow-brand);
+  padding: 7px 14px; font-size: 14px;
+}
+.row-panel form button[type="submit"]:hover {
+  background: linear-gradient(135deg, var(--brand-1), var(--accent-2));
+  color: #fff; filter: brightness(1.08);
+  box-shadow: 0 3px 10px rgba(11,114,103,.30);
+}
+
 /* A table inside a table needs to read as the smaller thing. */
 .subgrid { font-size: 12px; margin-bottom: 0; }
 .subgrid th { font-size: 10px; }
@@ -1249,7 +1268,12 @@ code {
 .filters label.tight, .stack label.tight {
   flex-direction: row; align-items: center; gap: 6px; white-space: nowrap;
 }
-.filters label.tight input, .stack label.tight input { width: 96px; }
+/* The width is for the CONTROL a tight label is built around -- a number, a
+   time, a short code. A checkbox is not that: given 96px it keeps drawing at
+   13px and pads the other 83, which put the Channels fieldset's boxes three
+   quarters of an inch from the words they tick. The box sizes itself. */
+.filters label.tight input:not([type="checkbox"]):not([type="radio"]),
+.stack label.tight input:not([type="checkbox"]):not([type="radio"]) { width: 96px; }
 
 select[multiple] { padding: 4px; min-height: 120px; }
 
@@ -1422,7 +1446,13 @@ a.hcard:hover {
   gap: .75rem;
   align-items: flex-end;
 }
-.alert-number-row label { flex: 1 1 0; margin: 0; }
+/* "Number 1", not "Number" with a lonely 1 beneath it. .stack label is a flex
+   COLUMN, so the caption's text node and the row's index were two flex items
+   and took a line each -- which read as an empty field labelled with a digit.
+   Block display puts the caption back on one line and the input under it. */
+.alert-number-row label { flex: 1 1 0; margin: 0; display: block; }
+.alert-number-row label > input { display: block; width: 100%; margin-top: 4px; }
+.alert-number-row .row-number { color: var(--muted); }
 .alert-number-row .alert-number-remove {
   flex: 0 0 auto;
   padding: .35rem .6rem;
@@ -1439,6 +1469,17 @@ a.hcard:hover {
   display: flex;
   align-items: center;
   gap: .75rem;
+}
+/* Adding a row commits nothing -- the numbers are saved by the button at the
+   bottom of the panel. Two brand-coloured buttons in one panel put the same
+   weight on both, so the one that only grows the form steps back. */
+.alert-number-add {
+  background: var(--panel); color: var(--ink-2);
+  border-color: #ded9cb; box-shadow: none;
+}
+.alert-number-add:hover {
+  background: var(--accent-bg); border-color: var(--accent); color: var(--accent);
+  filter: none; box-shadow: none;
 }
 .alert-number-add[disabled] { opacity: .5; cursor: not-allowed; }
 
@@ -1471,6 +1512,34 @@ a.hcard:hover {
   .setup-pair { flex-direction: column; gap: 0; }
 }
 
+/* THE COLUMN IS THE MEASURE, so everything in it is one width.
+ *
+ * .stack caps itself at 460px because a stack is normally a column of form
+ * fields loose on a page, and an input wider than that is harder to read.
+ * Inside a setup-pair column that cap is measuring the wrong thing: the
+ * column is already about 600px and already a reading measure, so the cap
+ * left every panel sitting in a column of its own width. Alert sensitivity
+ * filled its column (it had an override of its own), Email stopped 145px
+ * short of the same edge directly below it, and the two Add panels further
+ * down each left a gutter their own summary line crossed -- four panels, four
+ * right edges, in two columns that are exactly equal.
+ *
+ * Written once here rather than as another `#some-id { max-width: none }`
+ * beside the three that were already there: the next panel added to one of
+ * these columns should line up without anybody remembering to say so.
+ */
+.setup-col > .panel,
+.setup-col > .panel > .stack,
+.setup-col > form.panel { max-width: none; }
+
+/* A submit button is a button, not a banner. In a capped stack the two look
+   the same -- 460px is about what a wide button wants anyway -- but these
+   stacks are uncapped, so Save in a recipient's panel drew a 620px bar
+   directly above a Deactivate the size of its own word. Everything that saves
+   on this page is now the size of what it says. */
+.setup-col .stack > button,
+.row-panel .stack > button { align-self: flex-start; }
+
 
 /* -- alert sensitivity ------------------------------------------------
    This panel is a full-width section, not one of the narrow forms .stack is
@@ -1478,7 +1547,6 @@ a.hcard:hover {
    Three inherited rules have to be turned off by name rather than by avoiding
    the classes, because .panel and .stack carry the framing and the spacing
    that make it look like everything else. */
-form.alert-defaults-form,
 form.target-sensitivity { max-width: none; }
 
 /* .stack label stacks its caption above its control, which is right for a
@@ -1569,6 +1637,10 @@ form.target-sensitivity { max-width: none; }
 }
 .tag.ok, .tag.applied { background: #d1fae5; color: #065f46; }
 .tag.held, .tag.proposed, .tag.read, .tag.unchanged { background: #fef3c7; color: #92400e; }
+/* Applies, but does not achieve the gap: not a hold, not a clean move. Read
+   as a warning rather than a success, because the green one was being read
+   as "the rule is satisfied" on a row that sat above the hotel it follows. */
+.tag.short { background: #ffe4e6; color: #9f1239; }
 .tag.failed { background: #ffe4e6; color: #9f1239; }
 tr.held td { color: var(--muted); }
 ul.plain { list-style: none; padding: 0; margin: .3em 0 0; }
@@ -1599,10 +1671,63 @@ ul.plain li { padding: .1em 0; }
 .repricing-section .grid td.rms .muted,
 .repricing-section .grid td.site .muted { display: block; font-size: 12px; line-height: 1.35; }
 .repricing-section .grid td.proposed { min-width: 10em; }
-/* The rule: its numbers in columns, the automatic switch on its own line
-   above them where it cannot be mistaken for one more number. */
+/* The rule: its numbers in columns. The automatic switch is no longer one of
+   them -- it sits beside Apply, where the other two ways of writing a rate
+   are. See .auto-toggle. */
 .rule-form { max-width: none; }
-.rule-auto { margin-bottom: var(--s3); }
+/* THE AUTOMATIC SWITCH, beside Preview and Apply.
+   Built as a <button role="switch"> rather than a checkbox: it is an action
+   with a consequence, not a field waiting for a Save, and it carries the same
+   weight on the row as the two buttons it sits with. Pushed to the far end so
+   it cannot be hit while reaching for Apply. */
+.auto-toggle {
+  display: inline-flex; align-items: center; gap: var(--s2);
+  margin-left: auto; padding: 6px 12px 6px 8px;
+  background: var(--panel); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 999px;
+  font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.auto-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.auto-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.auto-toggle.busy { opacity: .6; cursor: progress; }
+.auto-track {
+  position: relative; flex: none; width: 34px; height: 20px;
+  background: var(--line); border-radius: 999px; transition: background .15s;
+}
+.auto-knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  background: #fff; border-radius: 50%; transition: transform .15s;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .25);
+}
+.auto-label { display: flex; flex-direction: column; line-height: 1.25; font-weight: 600; }
+.auto-label small { font-weight: 400; font-size: 11px; color: var(--ink-2); }
+
+/* ON IS NOT A COLOUR CHANGE ALONE. Rates moving unattended is the page's one
+   irreversible state, so it announces itself: the track fills, the knob
+   travels, and the label says what it will do rather than that it is "on". */
+.auto-toggle.on { border-color: var(--accent); color: var(--ink); background: var(--accent-bg); }
+.auto-toggle.on .auto-track { background: var(--accent); }
+.auto-toggle.on .auto-knob { transform: translateX(14px); }
+.auto-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  /* Its own line: at this width margin-left:auto puts it against Apply. */
+  .auto-toggle { margin-left: 0; width: 100%; }
+}
+
+/* THE RMS CELL LISTS EVERY ROW APPLY WILL WRITE, not just the rule's own.
+   The plan's name leads each line so three numbers in a narrow column read as
+   three rates rather than one sum with workings. The followers are quieter:
+   they are consequences of the first line, not decisions. */
+.rms-plan { display: inline-block; white-space: nowrap; }
+.rms-plan .plan {
+  display: inline-block; min-width: 2.6em; margin-right: 4px;
+  font-size: 11px; font-weight: 600; color: var(--ink-2); text-align: left;
+}
+.rms-plan.follows { color: var(--ink-2); font-size: 12px; }
+.rms-plan.follows strong { font-weight: 600; }
+
 .rule-fields {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: var(--s3) var(--s4); margin-bottom: var(--s3);

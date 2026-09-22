@@ -34,6 +34,7 @@ All of it is configuration on ``hotel_sources.adapter_config``:
 from __future__ import annotations
 
 import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeout
 
@@ -138,7 +139,7 @@ class PlaywrightDirectSiteAdapter:
                 "playwright_direct_site needs a url on the hotel_source row or "
                 "a url_template in adapter_config."
             )
-        return render_template(
+        return _public_rate_url(render_template(
             template,
             check_in=context.check_in,
             check_out=context.check_out,
@@ -148,7 +149,7 @@ class PlaywrightDirectSiteAdapter:
             rooms=context.rooms,
             currency=context.currency,
             external_id=context.external_id or "",
-        )
+        ))
 
     def _wait_for_rooms(self, fetch: BrowserFetch, config: dict) -> None:
         """Wait for whatever this source actually delivers the prices in.
@@ -710,6 +711,58 @@ _IS_STRUCK_JS = """el => {
   return false;
 }"""
 
+
+
+#: Query parameters that tell a booking site WHERE A VISITOR CAME FROM, which
+#: on Booking.com decides WHAT THEY ARE CHARGED. ``aid`` is the partner id and
+#: ``label`` the campaign; a metasearch deep link carries both.
+_AFFILIATE_PARAMS = {"aid", "label"}
+
+
+def _public_rate_url(url: str) -> str:
+    """The same page, asked for as an ordinary visitor rather than as traffic.
+
+    WHY A URL PARAMETER CHANGES THE PRICE
+    =====================================
+    A hotel's link is often captured from wherever it was found, and a link
+    found through Google Hotel Ads carries the metasearch campaign that sent
+    it: ``aid=1288252&label=metagha-link-…``. Booking.com reads those and
+    serves that channel's deal. On 22 Sep 2026 the same room, the same night,
+    the same minute, read two ways:
+
+        as captured   Standard Double  6,358 + 361   "25% off"
+        cleaned       Standard Double  7,225 + 361   "15% off"
+
+    Only the second is the price a guest sees, and only the second is what the
+    owner is compared against -- their competitor's link was captured without
+    a campaign on it, so it was already being read on the public channel. The
+    comparison was therefore between two different rate channels, and the
+    repricing rule inherited the error: it divides the target by our own price
+    to reach an RMS rate, so a price read 12% low writes a rate 12% high, and
+    a rule set to sit a hundred rupees UNDER a competitor put us five hundred
+    OVER them on the live site.
+
+    Stripped here rather than at discovery because this is the one place a
+    stored URL becomes a request: every hotel already saved is fixed without a
+    migration, and no future capture can reintroduce it. The stored row keeps
+    whatever it was found with -- it is a record of where the hotel was found,
+    and it is still the link to open when a human wants to look.
+
+    Everything else is left exactly as it is. The stay, the occupancy, the
+    currency and the room block all live in this query string too, and a
+    general "tidy the URL" would take the page somewhere else entirely.
+    """
+    parts = urlparse(url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    kept = [(k, v) for k, v in pairs if k.lower() not in _AFFILIATE_PARAMS]
+    if len(kept) == len(pairs):
+        return url
+    dropped = sorted({k for k, _ in pairs} - {k for k, _ in kept})
+    log.info("affiliate_params_stripped", dropped=dropped, host=parts.netloc)
+    # ``safe`` keeps a template's own braces readable in logs and artefacts;
+    # by this point they are already filled, so it only matters when one was
+    # left unrendered.
+    return urlunparse(parts._replace(query=urlencode(kept, safe="{}")))
 
 def _price_text_in(element, selector: str | None) -> str | None:
     """The first price under ``selector`` that is NOT crossed out.

@@ -24,7 +24,8 @@ from app.db.models import (
     Hotel, RateApplication, RepricingAction, RepricingSettings, RmsRoomMapping, RoomType,
 )
 from app.schemas.repricing import (
-    MappingIn, MappingOut, RepricingSettingsIn, RepricingSettingsOut, RunIn, RunStatus,
+    AutomaticIn, MappingIn, MappingOut, RepricingSettingsIn, RepricingSettingsOut,
+    RunIn, RunStatus,
 )
 
 router = APIRouter(prefix="/repricing", tags=["repricing"])
@@ -89,8 +90,12 @@ async def read_settings(session: DbSession, user: CurrentUser):
 
 @router.put("/settings", response_model=RepricingSettingsOut)
 async def replace_settings(payload: RepricingSettingsIn, request: Request, session: DbSession, user: CurrentUser):
-    """The rule's numbers and the automatic switch. Audited: a rate that moves
-    by itself has to be traceable to whoever turned the switch on."""
+    """The rule's numbers. The automatic switch has its own route below.
+
+    ``auto_enabled`` is accepted for older callers and ignored when absent:
+    this form no longer carries it, and a missing field must not read as
+    "off" and quietly stop the rates moving.
+    """
     if payload.benchmark_hotel_id is not None:
         await _own_competitor(session, user, payload.benchmark_hotel_id)
     for room_type_id in payload.benchmark_room_pairs:
@@ -100,6 +105,8 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
     row = await _settings(session, user)
     before = _settings_out(row).model_dump(mode="json", exclude={"updated_at"})
     for field, value in payload.model_dump().items():
+        if field == "auto_enabled" and value is None:
+            continue
         # JSONB keys are strings on the way in; the rule coerces on the way out.
         if field == "benchmark_room_pairs":
             value = {str(k): v for k, v in value.items()}
@@ -107,6 +114,31 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
     await record_audit(
         session, user=user, action="update", entity="repricing_settings", entity_id=user.id,
         before=before, after=payload.model_dump(mode="json"), request=request,
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _settings_out(row)
+
+
+@router.put("/automatic", response_model=RepricingSettingsOut)
+async def set_automatic(payload: AutomaticIn, request: Request, session: DbSession, user: CurrentUser):
+    """Turn the rule loose, or take it back.
+
+    A route of its own, and not because one boolean deserves one. Everything
+    else on the page proposes; this is the only control that lets a rate move
+    with nobody watching, so it is sent alone, audited alone, and cannot ride
+    along on a request that was about a percentage.
+
+    Idempotent, and it says what it did rather than what it was asked to do:
+    the toggle renders from the row that comes back, so a switch that failed
+    to move cannot leave the page claiming it did.
+    """
+    row = await _settings(session, user)
+    before = _settings_out(row).model_dump(mode="json", exclude={"updated_at"})
+    row.auto_enabled = payload.enabled
+    await record_audit(
+        session, user=user, action="update", entity="repricing_settings", entity_id=user.id,
+        before=before, after={"auto_enabled": payload.enabled}, request=request,
     )
     await session.commit()
     await session.refresh(row)
@@ -227,13 +259,17 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
     started = state.write(user.id, "running", KIND, message="Queued…", mode=payload.mode, scope=scope)
     # Celery's JSON turns int keys into strings anyway; send them that way.
     overrides = {str(k): str(v) for k, v in payload.overrides.items()}
-    # Other channels only on a manual run: a Preview reads them all anyway,
-    # and writes none.
+    # Other channels only on a manual run: those are rates to WRITE, and a
+    # Preview writes none.
     channels = ({str(k): {c: str(r) for c, r in v.items()} for k, v in payload.channels.items()}
                 if payload.mode == "manual" else {})
     skip = payload.skip_primary if payload.mode == "manual" else []
+    # ...and on a Preview, the channels to READ beyond the rule's own, which
+    # is none unless asked. See RunIn.preview_channels.
+    preview = payload.preview_channels if payload.mode == "dry_run" else []
     run_repricing.apply_async(
-        args=[user.id, payload.mode, overrides, payload.only_room_type_id, channels, skip], queue="browser"
+        args=[user.id, payload.mode, overrides, payload.only_room_type_id, channels, skip, preview],
+        queue="browser",
     )
     return _run_out(started)
 

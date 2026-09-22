@@ -80,7 +80,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.services.price_display import displayed_price
+from app.services.price_display import displayed_price, entry_rows
 from app.services.room_category import CATEGORIES, OTHER, classify
 
 
@@ -289,7 +289,12 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False) -
     hotels: dict[int, object] = {}
     priced: dict[int, dict[str, list[_Priced]]] = {}
 
-    for series, hotel, room_name in rows:
+    # ONE ENTRY PER ROOM. A room sold on three boards, or on two sites, is
+    # three or six rows here and was three or six chips in its cell, each
+    # repeating the room's name at a different price. The grid compares
+    # properties on their entry price, so that is the row each room brings.
+    # See price_display.entry_rows.
+    for series, hotel, room_name in entry_rows(rows, show_with_tax):
         slug = classify(room_name)
         shown = displayed_price(series, show_with_tax)
         hotels.setdefault(hotel.id, hotel)

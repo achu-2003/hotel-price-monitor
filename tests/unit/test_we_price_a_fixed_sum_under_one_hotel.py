@@ -221,11 +221,35 @@ class TestTheLimitsStillApply:
                                           floor_pct=Decimal("30"), round_to=10))
         assert p.held and "below the floor" in p.held
 
-    def test_a_room_already_moved_tonight_is_held_until_tomorrow(self):
+    def test_a_room_already_moved_tonight_follows_them_again(self):
+        """THE ONE LIMIT THAT DOES NOT APPLY HERE, and deliberately.
+
+        Under the median rule a room that moved is held for the night: the
+        target is an aim at a wobbling figure, and a room free to chase it
+        all evening walks on noise. A follow is an instruction about one
+        named hotel. If Sterling move at four o'clock, "tomorrow" is not an
+        answer -- it leaves us hundreds off their price for the rest of the
+        day, which is the opposite of the rule.
+        """
         (p,) = [x for x in rule.propose(_rows(), own_hotel_id=9, rule=OPEN,
                                         benchmark=STERLING_ONLY, moved_today={OUR_CLASSIC})
                 if x.room_type_id == OUR_CLASSIC]
-        assert "already moved once tonight" in p.held
+        assert p.held is None
+        assert p.target == p.wanted == Decimal("2360")
+
+    def test_the_median_rule_is_still_held_for_the_night(self):
+        """The lock is not removed, it is scoped: the rule it was written for
+        still has it."""
+        rows = [
+            (_series(OUR_CLASSIC, "6358", date(2026, 9, 24)), OURS, "Standard Double Room"),
+            (_series(110, "4343", date(2026, 9, 24)), STERLING, "Classic Room"),
+            (_series(111, "4300", date(2026, 9, 24)), MGM, "Classic Room"),
+        ]
+        (p,) = [x for x in rule.propose(rows, own_hotel_id=9, rule=OPEN,
+                                        usual={OUR_CLASSIC: (Decimal("1.45"), 7)},
+                                        moved_today={OUR_CLASSIC})
+                if x.room_type_id == OUR_CLASSIC]
+        assert p.held and "already moved once tonight" in p.held
 
 
 class TestTheDemandLiftsAreOff:
@@ -406,13 +430,22 @@ class TestThePageSaysWhatItIsComparing:
         ctx.update(over)
         return templates.get_template("repricing.html").render(**ctx)
 
-    def test_the_picker_offers_the_owners_competitors_and_marks_the_chosen_one(self):
+    def test_the_rules_settings_are_not_on_this_page(self):
+        """The owner asked for the panel to go: there is one rule, and nine
+        boxes for shaping a rule nobody is running was the page's largest
+        thing and its least used. The settings are unchanged and still served
+        by the API -- only the form is gone."""
         html = self._render()
-        assert '<option value="10" selected>Sterling</option>' in html
-        assert '<option value="4">MGM Winds</option>' in html
+        assert 'id="repricing-settings"' not in html
+        assert "Save rule" not in html
+        assert '<option value="" >every competitor' not in html
 
-    def test_clearing_it_is_an_option_and_not_a_hidden_default(self):
-        assert '<option value="">every competitor' in self._render()
+    def test_the_hotel_being_followed_is_still_named(self):
+        """Removing the picker must not remove the ANSWER to "who are we
+        priced against". A page that quietly compares against somebody it
+        will not name is worse than one with a settings panel."""
+        html = self._render()
+        assert "Sterling" in html
 
     def test_the_market_column_is_headed_with_the_hotel_it_holds(self):
         html = self._render()

@@ -65,10 +65,24 @@ from today's price is capped at that step and written capped, with a note
 saying so: a competitor's bad reading then costs one bounded step, not a
 cliff. Fewer than ``min_competitors`` and there is no proposal at all.
 
-ONE MOVE PER ROOM PER NIGHT. Once a room's rate has been written for a
-night, the rule holds that room until the next night: the step cap then
-bounds a whole day, not one run of the automatic half-hourly schedule. A
-price the owner types is not held by this (:func:`override`).
+ONE MOVE PER ROOM PER NIGHT -- UNDER THE MEDIAN RULE ONLY. Once a room's
+rate has been written for a night the median rule holds that room until the
+next night, so the step cap bounds a whole day rather than one run of the
+half-hourly schedule. That is right for an AIM at a figure that wobbles: a
+room free to chase the median all evening would walk on noise.
+
+A BENCHMARK FOLLOW IS NOT HELD, because it is not an aim. "A hundred under
+Sterling" is an instruction about one named hotel, and if they move at four
+o'clock a rule that answers "tomorrow" is not the rule the owner set -- it
+leaves us hundreds of rupees off their price for the rest of the day. The
+runaway that the lock was imagined to prevent is prevented by the things
+that were always doing it: the step cap bounds any one move, the floor and
+ceiling hold a number outside them, the room's rupee bounds are checked on
+the RMS rate, and a rate equal to the cell's is recorded unchanged rather
+than written -- so a run half an hour later does nothing at all unless
+their price actually moved.
+
+A price the owner types is held by none of it (:func:`override`).
 
 PURE
 ====
@@ -175,6 +189,29 @@ class Proposal:
         if self.target is None or not self.our_price:
             return None
         return float((self.target - self.our_price) / self.our_price * 100)
+
+    @property
+    def short_by(self) -> Decimal | None:
+        """How far a capped proposal falls SHORT of the gap it was set to keep.
+
+        A CAPPED FOLLOW CAN LAND ON THE WRONG SIDE OF THE HOTEL IT FOLLOWS,
+        and when it does the page must not call it well.
+
+        Tonight's Standard Double: ours 9,913, Sterling 4,636, so the rule
+        wants 4,536 and the 50% step allows 4,960. That move is worth making
+        -- it is 5,000 rupees in the right direction -- but 4,960 is 324
+        ABOVE the hotel we exist to sit a hundred below, and the row said
+        "will apply" in green with the cap noted in grey beside it. The one
+        fact the owner needs, that tonight the rule does not achieve its
+        gap, was the one thing not on the row.
+
+        ``None`` when the gap is kept, so the caller can simply test it.
+        Only meaningful for a benchmark follow: the median rule has no fixed
+        gap to fall short of.
+        """
+        if self.benchmark is None or self.target is None or self.wanted is None:
+            return None
+        return self.target - self.wanted if self.target > self.wanted else None
 
     @property
     def actionable(self) -> bool:
@@ -796,8 +833,24 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
 
             wanted = entry.price - benchmark.undercut
             target, held, capped = guard(our_price, wanted, rule)
-            if held is None and room_type_id in moved_today:
-                held = "already moved once tonight; the next move is tomorrow"
+            # NO ONCE-A-NIGHT LOCK ON A FOLLOW, and the difference is not a
+            # relaxation of the same idea.
+            #
+            # Under the median rule the lock earns its place: the target is an
+            # AIM at a figure that wobbles, so a room allowed to chase it all
+            # evening would walk on noise. A benchmark is an INSTRUCTION about
+            # one named hotel -- "a hundred under Sterling" -- and if Sterling
+            # moves at four o'clock, a rule that answers "tomorrow" is simply
+            # not the rule the owner set. Holding here left us sitting five
+            # hundred rupees off their price for the rest of the day.
+            #
+            # What still stops a runaway is everything that was ever really
+            # stopping one: the step cap bounds any single move, the floor and
+            # ceiling hold a number outside them, the room's own RMS floor and
+            # ceiling are checked after the conversion, and a rate that comes
+            # out equal to the cell's is recorded unchanged rather than
+            # written. A second run half an hour later therefore does nothing
+            # at all unless THEIR price actually moved.
             proposals.append(Proposal(**base, market=entry.price, target=target, held=held,
                                       capped=capped, wanted=wanted, benchmark=benchmark.hotel,
                                       benchmark_entry=entry, exact=True))

@@ -83,7 +83,7 @@ from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
 from app.services.price_display import cheapest as cheapest_shown
 from app.services.price_display import (
-    Shown, displayed_price, displayed_price_sql, is_on_asked_basis_sql,
+    Shown, displayed_price, displayed_price_sql, entry_rows, is_on_asked_basis_sql,
 )
 from app.services.room_category import CATEGORIES, classify, is_category, label_for
 
@@ -744,7 +744,12 @@ def _matrix_groups(
     grouped: dict[int, dict] = {}
     counts: dict[str, int] = {}
 
-    for series, hotel, room_name in rows:
+    # ONE CELL PER ROOM, not one per offer. See price_display.entry_rows: a
+    # room sold room-only, with breakfast and with dinner is three rows here
+    # and was three cells, all carrying the same room's name. The counts are
+    # taken from the same list, so a chip says how many ROOMS a category has
+    # rather than how many ways they are sold.
+    for series, hotel, room_name in entry_rows(rows, show_with_tax):
         slug = classify(room_name)
         counts[slug] = counts.get(slug, 0) + 1
         if category is not None and slug != category:
@@ -1819,9 +1824,24 @@ async def notifications_page(
         )
     ).all()
 
+    # The repricer's log, under the delivery history: both answer the same
+    # question -- what went out, and on whose authority -- and the log used to
+    # sit at the bottom of /repricing, under the rule and the mapping forms
+    # somebody reading it is not touching.
+    #
+    # Every decision, but not the plain readings a Preview takes of every
+    # channel: those are figures, not decisions, and would bury them.
+    actions = (
+        await session.scalars(
+            select(RepricingAction).where(RepricingAction.owner_user_id == user.id,
+                                          RepricingAction.status != "read")
+            .order_by(RepricingAction.created_at.desc()).limit(60)
+        )
+    ).all()
+
     return await _render(
         request, user, session, "notifications.html",
-        notifications=rows, hours=hours,
+        notifications=rows, hours=hours, actions=actions,
     )
 
 
@@ -2011,8 +2031,8 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     # The last RMS reading per rate row: ``latest_rms`` for the main channel
     # (the rows the rule writes), ``channel_rms`` for every other channel,
     # keyed ``(channel, rms_room, rate_type)``. Read from the last week of
-    # rows rather than the log below: one Preview reads every channel and
-    # would push the main channel's figures out of a short log.
+    # rows rather than the log on /notifications: one Preview reads every
+    # channel and would push the main channel's figures out of a short log.
     latest_rms: dict[tuple[str, str], object] = {}
     channel_rms: dict[tuple[str, str, str], object] = {}
     readings = (
@@ -2026,7 +2046,16 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         )
     ).all()
     for a in reversed(readings):
-        value = a.applied_rms or a.current_rms
+        # A WRITE THAT WAS PUT BACK LEFT THE CELL AT WHAT IT HELD BEFORE IT.
+        #
+        # ``applied_rms`` is what we typed; on a reverted row it is precisely
+        # the number no longer in the grid, and believing it made the page
+        # compute every proposal from a rate that had been undone. On 22 Sep
+        # that showed as two rooms held "below the RMS floor": the ratio was
+        # taken against 5,738 when the cell was back at 8,500, so the rule
+        # proposed 3,873 where the truth was 5,082 -- a third too low, and
+        # under a floor the real number clears comfortably.
+        value = a.current_rms if a.status == "reverted" else (a.applied_rms or a.current_rms)
         if value is None:
             continue
         if a.channel in (None, settings.channel):
@@ -2034,16 +2063,6 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         else:
             channel_rms[(a.channel, a.rms_room, a.rms_rate_type)] = value
     other_channels = [c for c in (settings.known_channels or []) if c != settings.channel]
-
-    # The log: every decision, but not the plain readings a Preview takes of
-    # every channel -- those are figures, not decisions, and would bury them.
-    actions = (
-        await session.scalars(
-            select(RepricingAction).where(RepricingAction.owner_user_id == user.id,
-                                          RepricingAction.status != "read")
-            .order_by(RepricingAction.created_at.desc()).limit(60)
-        )
-    ).all()
 
     # The model's latest opinion per room for tonight. SHOWN, NEVER USED:
     # nothing on this page or in the run reads it back into a proposal.
@@ -2077,7 +2096,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
         competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
-        check_in=check_in, actions=actions, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
+        check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms, other_channels=other_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
     )
@@ -2185,6 +2204,21 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
     # without them.
     history = await retention.measure(session, settings.history_retention_months)
 
+    # Whether a market summary can reach WhatsApp at all. The page warns that
+    # it cannot, and the flag was never passed -- so an undefined name read as
+    # false and the warning stood on a deployment that had the template
+    # approved and named. A permanent warning is one nobody reads.
+    #
+    # Two conditions, because either one alone is not sending: the channel has
+    # to be configured at all, and the second template has to be named. The
+    # price-change template cannot stand in for it -- base.py refuses the
+    # substitution rather than paying for a message that reads as a real alert
+    # about a room that did not move.
+    comparison_whatsapp_ready = bool(
+        "whatsapp" in registry.available_channels()
+        and settings.whatsapp_comparison_template_name
+    )
+
     return await _render(
         request, user, session, "settings.html",
         alert_defaults=alert_defaults,
@@ -2195,6 +2229,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         default_quiet=(settings.quiet_hours_start, settings.quiet_hours_end),
         alert_numbers=alert_numbers,
         max_alert_numbers=MAX_ALERT_NUMBERS,
+        comparison_whatsapp_ready=comparison_whatsapp_ready,
     )
 
 

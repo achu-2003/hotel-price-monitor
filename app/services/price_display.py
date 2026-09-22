@@ -293,6 +293,61 @@ def _percent(old: Decimal, new: Decimal) -> Decimal:
     return ((new - old) / old * 100).quantize(_PCT, rounding=ROUND_HALF_UP)
 
 
+def entry_rows(rows, show_with_tax: bool) -> list:
+    """One row per ROOM: the cheapest offer that room is on sale at.
+
+    ONE ROOM, ONE CELL. ``price_series`` holds an offer, not a room, and a
+    room is usually several: Booking.com sells the Deluxe Double room-only,
+    with breakfast and with breakfast-and-dinner, and a hotel tracked on its
+    own engine as well as an OTA has each of those twice again. Handed
+    straight to a grid that draws a cell per row, one room became three cells
+    or six, all carrying its name --
+
+        Deluxe Double Room  5,355 | Deluxe Double Room  5,807 | Deluxe Double Room  8,560
+
+    -- which reads as a property with three Deluxe Doubles rather than one
+    sold three ways, and buries the competitor rows underneath it.
+
+    The comparison pages want the ENTRY price, the figure a guest is quoted
+    first, which is the cheapest of a room's offers. That is the same figure
+    the repricing rule prices against, so the pages and the rule cannot come
+    to disagree about what a room costs.
+
+    NOT FOR THE RULE ITSELF, which needs every board: "a hundred under them
+    on breakfast" is answered from the breakfast row, and the entry row is
+    usually room-only. The rule filters the boards itself
+    (``repricing._night``); this is for grids that draw one cell per room.
+
+    A room with nothing on sale keeps its dearest-known offer rather than
+    disappearing: a sold-out room is a fact worth a cell, and dropping it
+    would silently shrink the grid on exactly the nights it matters.
+
+    Order is preserved -- the caller's rows arrive sorted by hotel and the
+    hotel's own room order, and a grid that reshuffled on every fetch would
+    be unreadable.
+    """
+    best: dict[tuple, tuple] = {}
+    first_seen: dict[tuple, int] = {}
+    for position, row in enumerate(rows):
+        series, hotel, room_name = row
+        # BY ROOM, AND BY NAME WHEN THERE IS NO ROOM. The id is the honest
+        # key -- two sites can spell one room differently and it is still one
+        # room -- but the grids draw names, so two cells reading "Deluxe
+        # Double Room" are a repetition to whoever is looking whatever the
+        # ids say. The name is also all a caller assembling rows by hand has.
+        key = (hotel.id, getattr(series, "room_type_id", None)
+               or " ".join(str(room_name or "").split()).casefold())
+        amount = displayed_price(series, show_with_tax).amount
+        # Available beats sold out; then cheapest. A missing price sorts last
+        # so a row that could not be read never wins over one that could.
+        rank = (0 if series.is_available else 1,
+                amount if amount is not None else Decimal("Infinity"))
+        if key not in best or rank < best[key][0]:
+            best[key] = (rank, row)
+        first_seen.setdefault(key, position)
+    return [best[key][1] for key in sorted(best, key=lambda k: first_seen[k])]
+
+
 def cheapest(shown: list[Shown]) -> Decimal | None:
     """The lowest of what is actually on the row.
 

@@ -373,7 +373,8 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                   overrides: dict[str, str] | None = None,
                   only_room_type_id: int | None = None,
                   channels: dict[str, dict[str, str]] | None = None,
-                  skip_primary: list[int] | None = None) -> dict[str, Any]:
+                  skip_primary: list[int] | None = None,
+                  preview_channels: list[str] | None = None) -> dict[str, Any]:
     """Compute tonight's proposals and, unless ``mode`` is ``dry_run``, set them in RMS.
 
     ``mode``: ``manual`` (Apply pressed), ``auto`` (scheduler), ``dry_run``
@@ -565,6 +566,68 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                 )
                 if prior is not None and prior.our_price == p.our_price and prior.current_rms:
                     rms_for_ratio = prior.current_rms
+
+                # THE CELL MUST STILL HOLD WHAT WE LAST PUT IN IT.
+                #
+                # The target becomes an RMS rate by the ratio between the grid
+                # and the site, and the two are read at different moments --
+                # the grid now, the site up to half an hour ago. That is safe
+                # only while the grid is where we left it. The guard above
+                # covers the site lagging OUR OWN write; this covers the other
+                # direction, which is the one that bit.
+                #
+                # On 22 Sep a run set DELUXE CP to 5,082 and Booking.com duly
+                # showed 4,536. Fourteen minutes later the grid read 8,500
+                # again -- something outside this app had put it back -- while
+                # the site still showed the 4,536 that 5,082 produced. The
+                # ratio was then 8,500 over a price that came from 5,082, and
+                # the next run wrote 8,001: a rule set to sit a hundred under
+                # a competitor proposing eighteen hundred over them.
+                #
+                # There is no arithmetic that survives two readings of
+                # different moments, so this does not try to be clever. It
+                # notices, refuses, and says so -- which is also the only way
+                # the owner learns their rates are being changed underneath
+                # them. A price they type is exempt: that is an instruction
+                # about a number, not a conclusion drawn from the pair.
+                #
+                # UNATTENDED WRITES ONLY. The danger is a rate moving with
+                # nobody watching off a pair that cannot be trusted; an owner
+                # pressing Apply has the page in front of them and a confirm
+                # box naming the numbers, and "Apply again to set it from
+                # where it is now" has to be an instruction they can actually
+                # carry out. So a manual run is told, in the log, and goes on.
+                if (mode == "auto"
+                        and prior is not None and prior.applied_rms is not None
+                        and current[anchor] is not None
+                        and int(prior.applied_rms) != int(current[anchor])
+                        and p.room_type_id not in typed):
+                    reason = (
+                        f"the {anchor} cell holds {current[anchor]:,.0f}, but this app set it to "
+                        f"{prior.applied_rms:,.0f} at {prior.created_at:%H:%M}. Something changed it "
+                        f"outside the app, so the site price and the grid are no longer a pair and "
+                        f"the rate cannot be worked back from them. Apply again to set it from where "
+                        f"it is now."
+                    )
+                    _record(session, owner_user_id, p, m, channel=channel, check_in=check_in,
+                            mode=mode, status="held", plan=anchor, rate_type=anchor_row,
+                            current_rms=current[anchor], reason=reason)
+                    outcome["lines"].append(
+                        f"{m.rms_room} {anchor}: held, changed outside the app "
+                        f"({prior.applied_rms:,.0f} → {current[anchor]:,.0f})")
+                    log.warning("repricing_cell_changed_outside", owner_user_id=owner_user_id,
+                                room=m.rms_room, plan=anchor, ours=str(prior.applied_rms),
+                                found=str(current[anchor]))
+                    continue
+                elif (prior is not None and prior.applied_rms is not None
+                        and current[anchor] is not None
+                        and int(prior.applied_rms) != int(current[anchor])):
+                    outcome["lines"].append(
+                        f"{m.rms_room} {anchor}: changed outside the app since this run set it "
+                        f"({prior.applied_rms:,.0f} → {current[anchor]:,.0f}); setting from where it is now")
+                    log.warning("repricing_cell_changed_outside", owner_user_id=owner_user_id,
+                                room=m.rms_room, plan=anchor, ours=str(prior.applied_rms),
+                                found=str(current[anchor]), mode=mode)
                 try:
                     new_anchor = rule.to_rms(p.target, p.our_price, rms_for_ratio,
                                              round_to=round_to, exact=p.exact)
@@ -627,12 +690,26 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
             session.commit()
 
         # ── the other channels ──
-        # A Preview reads every one the grid lists, for every mapped room, so
-        # the page can show what each holds today. A manual run writes only
-        # what the owner ticked, with the number they accepted.
+        # A manual run writes only what the owner ticked, with the number they
+        # accepted. A Preview reads them so the page can show what each holds.
+        #
+        # BUT NOT ALL OF THEM, NOT EVERY TIME. Reading every channel the grid
+        # lists, for every mapped room, on every Preview is five rooms times
+        # three plans times six channels -- ninety cells, each its own click
+        # and settle, and it took twenty minutes. The owner presses Preview to
+        # see what Apply is about to do, and Apply touches ONE channel: the
+        # rule's. Ninety cells to answer a question about fifteen is why
+        # nobody waited for it to finish.
+        #
+        # So a Preview reads the rule's channel (the loop above, already done)
+        # and any channel the owner actually ticked. ``preview_channels`` in
+        # the request asks for more by name -- that is how the page fills the
+        # other channels' boxes when somebody wants them, one channel at a
+        # time, instead of all six on every look.
         others = [c for c in listed if c != channel]
         if dry:
-            work = {ch: list(mappings) for ch in others}
+            wanted = {c for c in (preview_channels or []) if c in others}
+            work = {ch: list(mappings) for ch in others if ch in wanted}
         else:
             work = {}
             for rid, chans in picks.items():

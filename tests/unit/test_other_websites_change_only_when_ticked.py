@@ -104,7 +104,8 @@ def proposal(room_type_id=27, *, our="6358", target="6000") -> rule.Proposal:
 def run(monkeypatch):
     """``run(grid, mode, channels=..., skip=..., floor=...)`` -> the grid afterwards."""
 
-    def go(grid: FakeGrid, mode: str, *, channels=None, skip=None, floor=None):
+    def go(grid: FakeGrid, mode: str, *, channels=None, skip=None, floor=None,
+           preview_channels=None):
         settings = SimpleNamespace(channel=MAIN, round_to=10, known_channels=[],
                                    benchmark_meal_plan=None)
         app = SimpleNamespace(login_url="x", client_number="1", username="u", encrypted_password="p",
@@ -132,7 +133,8 @@ def run(monkeypatch):
             return kw["after_login"](object(), probe)
 
         monkeypatch.setattr(task, "attempt_login", login)
-        result = task.run_repricing.run(2, mode, {}, None, channels or {}, skip or [])
+        result = task.run_repricing.run(2, mode, {}, None, channels or {}, skip or [],
+                                        preview_channels or [])
         grid.result = result
         grid.settings = settings
         return grid
@@ -190,13 +192,40 @@ def test_automatic_mode_never_touches_another_channel(run):
     assert written(grid, "Goibibo") == set()
 
 
-def test_a_preview_reads_every_channel_and_writes_nothing(run):
+def test_a_preview_reads_the_rules_channel_and_writes_nothing(run):
+    """WHAT APPLY IS ABOUT TO DO, which is one channel's worth of rates.
+
+    It used to read every channel the grid listed, for every mapped room --
+    five rooms times three plans times six channels, each cell its own click
+    and settle. Twenty minutes to answer a question about fifteen cells, and
+    nobody waited for it. The other channels are still listed (that is what
+    fills the page's tick boxes) and still readable on request.
+    """
     grid = run(rms(), "dry_run", channels={"27": {"Goibibo": "8500"}})
     assert grid.writes == []
     read = {(r.channel, r.rms_rate_type, r.current_rms) for r in FakeSession.rows if r.status == "read"}
-    assert ("Goibibo", "Online Rate CP", D("9000")) in read
-    assert ("Expedia", "Online Rate MAP", D("11800")) in read
+    assert not any(channel != MAIN for channel, _, _ in read)
+    # Naming them is cheap -- one look at the Channel view -- and it is how
+    # the page knows which boxes to offer.
     assert grid.settings.known_channels == [MAIN, "Goibibo", "Expedia"]
+
+
+def test_a_preview_reads_a_channel_that_was_asked_for(run):
+    """One channel, by name, instead of all of them. The owner who wants to
+    see Goibibo can have Goibibo without paying for Expedia and Agoda."""
+    grid = run(rms(), "dry_run", preview_channels=["Goibibo"])
+    assert grid.writes == []
+    read = {(r.channel, r.rms_rate_type, r.current_rms) for r in FakeSession.rows if r.status == "read"}
+    assert ("Goibibo", "Online Rate CP", D("9000")) in read
+    assert not any(channel == "Expedia" for channel, _, _ in read)
+
+
+def test_a_channel_that_is_not_on_the_grid_cannot_be_asked_for(run):
+    """Names from the request are filtered against what the grid lists, so a
+    typo or a stale tick asks for nothing rather than failing the run."""
+    grid = run(rms(), "dry_run", preview_channels=["Nowhere"])
+    assert grid.writes == []
+    assert grid.result["failed"] == 0
 
 
 def test_the_suggestion_moves_a_channel_by_the_main_channels_share():

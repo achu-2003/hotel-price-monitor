@@ -9,8 +9,27 @@ from pydantic import Field, field_validator
 from app.schemas.common import ORMModel
 
 
+class AutomaticIn(ORMModel):
+    """What the toggle beside Apply sends, and nothing else.
+
+    Its own shape rather than a corner of the rule's, so that the request
+    which lets rates move by themselves cannot arrive as a side effect of
+    saving a percentage.
+    """
+
+    enabled: bool
+
+
 class RepricingSettingsIn(ORMModel):
-    auto_enabled: bool = False
+    #: OMITTED MEANS "LEAVE IT ALONE", and that is not a convenience.
+    #:
+    #: The switch lives beside Apply now, not in this form, so the form no
+    #: longer sends it -- and a plain ``bool = False`` would then have Save
+    #: rule turn automation OFF every time somebody adjusted a percentage,
+    #: silently, with the page still showing the toggle on. The switch has
+    #: its own endpoint (``PUT /automatic``) so that turning rates loose is
+    #: always a deliberate act with its own audit line.
+    auto_enabled: bool | None = None
     position_pct: Decimal = Field(default=Decimal("0"), ge=-50, le=50)
     max_step_pct: Decimal = Field(default=Decimal("10"), ge=0, le=100)
     floor_pct: Decimal = Field(default=Decimal("30"), ge=0, le=90)
@@ -83,6 +102,15 @@ class RunIn(ORMModel):
     #: and the rest are not, which used to mean clearing three boxes back to
     #: the rule's number and hoping none were missed.
     only_room_type_id: int | None = Field(default=None, gt=0)
+    #: Extra channels a Preview should read, by name. Empty is the default and
+    #: means the rule's channel alone.
+    #:
+    #: It used to read every channel the grid listed, for every mapped room,
+    #: on every Preview: ninety cells, each its own click and settle, twenty
+    #: minutes. Apply touches one channel, so a Preview that answers "what is
+    #: Apply about to do" needs one channel -- and the owner who genuinely
+    #: wants to see Goibibo can ask for Goibibo.
+    preview_channels: list[str] = Field(default_factory=list, max_length=20)
 
     #: Other RMS channels the owner ticked, per room: ``{room_type_id:
     #: {channel: rms_rate}}``. The rate is the RMS figure for the room's

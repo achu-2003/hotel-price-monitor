@@ -280,6 +280,45 @@
   // the login test, the job runs on the worker with a browser open and the
   // page polls; unlike it, there is no code box -- a one-time code is
   // answered on the Rate app page, and a run that meets one says so.
+  // -- the automatic switch, beside Preview and Apply -------------------
+  //
+  // Saves itself the moment it is pressed, to its own endpoint, and renders
+  // from what comes BACK rather than from what was clicked. A toggle that
+  // flips optimistically and then fails leaves the page promising that rates
+  // are moving by themselves when they are not, which is the one lie this
+  // control must never tell.
+  //
+  // Turning it ON asks first. Turning it off never does: stopping something
+  // is not a decision anyone needs protecting from.
+  document.querySelectorAll("button.auto-toggle").forEach(function (toggle) {
+    const label = toggle.querySelector(".auto-label small");
+
+    function render(on) {
+      toggle.classList.toggle("on", on);
+      toggle.setAttribute("aria-checked", on ? "true" : "false");
+      if (label) label.textContent = on ? "on — every 30 minutes" : "off — nothing moves by itself";
+    }
+
+    toggle.addEventListener("click", async function () {
+      if (toggle.disabled || toggle.classList.contains("busy")) return;
+      const wanted = !toggle.classList.contains("on");
+      if (wanted && toggle.dataset.confirmOn && !window.confirm(toggle.dataset.confirmOn)) return;
+
+      toggle.classList.add("busy");
+      const result = await api(toggle.dataset.endpoint, "PUT", { enabled: wanted });
+      toggle.classList.remove("busy");
+
+      if (!result.ok) {
+        // Left exactly as it was, and said out loud. A silent no-op reads
+        // as a dead button and gets clicked again.
+        render(toggle.classList.contains("on"));
+        window.alert("Could not change the automatic switch. " + problemText(result));
+        return;
+      }
+      render(Boolean(result.body && result.body.auto_enabled));
+    });
+  });
+
   document.querySelectorAll("form.repricing-run-form").forEach(function (form) {
     const buttons = Array.from(form.querySelectorAll("button.run"));
     // The per-room buttons live in the table, outside this form, but they

@@ -67,4 +67,43 @@
   </table>
   </div>
 </section>
+
+<section class="repricing-section">
+  <h2>What the repricer did</h2>
+  <p class="muted">
+    Every decision, including the ones that changed nothing. Newest first.
+    The rule that makes them, and tonight's proposals, are on
+    <a href="/repricing">Repricing</a>.
+  </p>
+  {% if not actions %}
+    <p class="muted">Nothing yet.</p>
+  {% else %}
+  <div class="grid-wrap">
+  <table class="grid">
+    <thead>
+      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num">Market</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+    {% for a in actions %}
+      <tr class="{{ a.status }}">
+        <td>{{ a.created_at | localtime }}</td>
+        <td>{{ a.mode }}</td>
+        <td>{{ a.room_name or '—' }}{% if a.rms_room %} <span class="muted">/ {{ a.rms_room }}</span>{% endif %}</td>
+        <td>{{ a.plan or '—' }}</td>
+        <td class="num">{{ money(a.market_price) if a.market_price is not none else '—' }}</td>
+        <td class="num">{{ money(a.target_price) if a.target_price is not none else '—' }}</td>
+        <td class="num">{{ money(a.current_rms) if a.current_rms is not none else '—' }}</td>
+        <td class="num">{{ money(a.applied_rms) if a.applied_rms is not none else (money(a.proposed_rms) ~ ' (proposed)' if a.proposed_rms is not none else '—') }}</td>
+        <td>
+          <span class="tag {{ a.status }}">{{ a.status }}</span>
+          {% if a.reason %}<span class="muted">{{ a.reason }}</span>{% endif %}
+          {% if a.screenshot_path %} <a href="/api/v1/repricing/actions/{{ a.id }}/screenshot" target="_blank" rel="noopener">grid</a>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
 {% endblock %}
