@@ -49,8 +49,35 @@ def _settings_out(row: RepricingSettings) -> RepricingSettingsOut:
         auto_enabled=row.auto_enabled, position_pct=row.position_pct, max_step_pct=row.max_step_pct,
         floor_pct=row.floor_pct, ceiling_pct=row.ceiling_pct, min_competitors=row.min_competitors,
         round_to=row.round_to, channel=row.channel, weekend_pct=row.weekend_pct,
-        sold_out_pct=row.sold_out_pct, updated_at=row.updated_at,
+        sold_out_pct=row.sold_out_pct, benchmark_hotel_id=row.benchmark_hotel_id,
+        benchmark_undercut=row.benchmark_undercut,
+        benchmark_with_tax=row.benchmark_with_tax,
+        benchmark_meal_plan=row.benchmark_meal_plan,
+        benchmark_room_pairs={int(k): v for k, v in (row.benchmark_room_pairs or {}).items()},
+        updated_at=row.updated_at,
     )
+
+
+async def _own_competitor(session, user, hotel_id: int) -> None:
+    """The benchmark has to be one of the caller's own active competitors.
+
+    It feeds a prompt, so an id taken on trust would put another account's
+    rates -- and their hotel's name -- into this owner's advice. The owner's
+    OWN property is refused as well: a benchmark against yourself is a gap of
+    zero, and a question with nothing in it.
+    """
+    ok = await session.scalar(
+        select(Hotel.id).where(
+            Hotel.id == hotel_id,
+            Hotel.owner_user_id == user.id,
+            Hotel.is_active.is_(True),
+            Hotel.is_own_property.is_(False),
+        )
+    )
+    if ok is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "That hotel is not one of your active competitors."
+        )
 
 
 @router.get("/settings", response_model=RepricingSettingsOut)
@@ -64,9 +91,18 @@ async def read_settings(session: DbSession, user: CurrentUser):
 async def replace_settings(payload: RepricingSettingsIn, request: Request, session: DbSession, user: CurrentUser):
     """The rule's numbers and the automatic switch. Audited: a rate that moves
     by itself has to be traceable to whoever turned the switch on."""
+    if payload.benchmark_hotel_id is not None:
+        await _own_competitor(session, user, payload.benchmark_hotel_id)
+    for room_type_id in payload.benchmark_room_pairs:
+        # Same reason as the benchmark hotel: an id taken on trust would let
+        # one account point its rule at another's room.
+        await _own_room(session, user, room_type_id)
     row = await _settings(session, user)
     before = _settings_out(row).model_dump(mode="json", exclude={"updated_at"})
     for field, value in payload.model_dump().items():
+        # JSONB keys are strings on the way in; the rule coerces on the way out.
+        if field == "benchmark_room_pairs":
+            value = {str(k): v for k, v in value.items()}
         setattr(row, field, value)
     await record_audit(
         session, user=user, action="update", entity="repricing_settings", entity_id=user.id,

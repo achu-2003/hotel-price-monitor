@@ -309,6 +309,18 @@
       const typed = box.value.trim();
       return typed !== "" && Number(typed) > 0 && Number(typed) !== Number(box.dataset.rule || NaN);
     }
+    // The same sum as repricing.to_rms(), including which way it rounds, so
+    // the row shows the rate Apply will actually write. A guest price that is
+    // an instruction -- one the owner typed, or a benchmark follow a fixed sum
+    // under another hotel -- takes the whole rupee below the ratio's answer
+    // instead of the tidy multiple of round_to, because ten rupees of
+    // tidiness in RMS is six on the line the guest reads and the gap was set
+    // in rupees. Everything else keeps the rounding.
+    function toRms(box, price, cur, our) {
+      const raw = price * cur / our;
+      if (box.dataset.exact === "1" || edited(box)) return Math.floor(raw);
+      return Math.round(raw / roundTo) * roundTo;
+    }
     function refresh(box) {
       const row = box.closest("tr");
       const statusCell = row.querySelector("td.status");
@@ -323,7 +335,7 @@
       let outside = null;
       const rmsNew = row.querySelector(".rms-new");
       if (rmsNew && box.dataset.cur && valid && our) {
-        const amount = Math.round(price * Number(box.dataset.cur) / our / roundTo) * roundTo;
+        const amount = toRms(box, price, Number(box.dataset.cur), our);
         rmsNew.textContent = rupees(amount);
         if (box.dataset.floor && amount < Number(box.dataset.floor)) {
           outside = "below this room's RMS floor of " + inr.format(Number(box.dataset.floor));
@@ -332,6 +344,23 @@
         }
       } else if (rmsNew) {
         rmsNew.textContent = "—";
+      }
+
+      // WHAT THE GUEST ENDS UP SEEING. The typed number is a guest price and
+      // the RMS rate is derived from it, so the two agree only as far as the
+      // conversion's rounding allows -- which is why an instruction converts
+      // to the rupee (see toRms) and lands on the number asked for, give or
+      // take one rupee under it. Showing the trip back is what makes that
+      // checkable instead of a surprise on the site tomorrow.
+      const siteNew = row.querySelector(".site-new");
+      if (siteNew) {
+        const cur = Number(box.dataset.cur);
+        if (cur && valid && our) {
+          const amount = toRms(box, price, cur, our);
+          siteNew.textContent = rupees(Math.round(amount * our / cur));
+        } else {
+          siteNew.textContent = "—";
+        }
       }
 
       row.classList.toggle("edited", edited(box));
@@ -344,6 +373,27 @@
         : '<span class="tag ok">will apply</span> <span class="muted">your price</span>';
       if (outside) statusCell.querySelector(".muted").textContent = outside;
     }
+    // -- which room of theirs each of ours competes with ---------------
+    //
+    // The selects are the interface; the hidden JSON field is what the form
+    // actually posts, because the api-form serialiser sends flat values and
+    // this is a map. Rebuilt from the selects on every change so the two
+    // cannot drift, and an empty choice drops the key rather than posting a
+    // pairing to nothing.
+    const pairField = document.querySelector('input[name="benchmark_room_pairs"]');
+    const pairSelects = Array.from(document.querySelectorAll("select.pair-select"));
+    if (pairField && pairSelects.length) {
+      const syncPairs = function () {
+        const map = {};
+        pairSelects.forEach(function (sel) {
+          if (sel.value) map[sel.dataset.roomTypeId] = sel.value;
+        });
+        pairField.value = JSON.stringify(map);
+      };
+      pairSelects.forEach(function (sel) { sel.addEventListener("change", syncPairs); });
+      syncPairs();
+    }
+
     // -- other websites in RMS ----------------------------------------
     //
     // Each room's second row lists every channel RMS has. The main one is

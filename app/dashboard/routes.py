@@ -1953,6 +1953,31 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         )).all()
     }
 
+    # Who the owner may benchmark the AI against, and who they have. Their own
+    # property is not in the list: a benchmark against yourself is a gap of
+    # zero. Read from the same list the picker offers, so a benchmark that has
+    # since been deactivated shows as "the market" here exactly as the worker
+    # treats it, rather than naming a hotel nothing is being compared with.
+    competitors = (
+        await session.scalars(
+            select(Hotel).where(
+                Hotel.owner_user_id == user.id, Hotel.is_active.is_(True),
+                Hotel.is_own_property.is_(False),
+            ).order_by(Hotel.name)
+        )
+    ).all()
+    benchmark = next((c for c in competitors if c.id == settings.benchmark_hotel_id), None)
+    # The rooms the owner may pair against, by name. Names and not ids: the
+    # rule re-matches by name every night, so what is offered here has to be
+    # the same thing it will look for.
+    benchmark_rooms = (
+        await session.scalars(
+            select(RoomType.name).where(
+                RoomType.hotel_id == benchmark.id, RoomType.is_active.is_(True)
+            ).order_by(RoomType.name)
+        )
+    ).all() if benchmark else []
+
     check_in = local_today(get_settings().timezone)
     check_out = check_in + timedelta(days=1)
     proposals = []
@@ -1960,15 +1985,24 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         rows = await _priced_rows(session, user, check_in, check_out, 2)
         enabled = {rt for rt, m in mappings.items() if m.is_enabled}
         own_rule = repricing_rule.Rule.from_row(settings)
-        history = repricing_data.one_night((await session.execute(
+        # The same statement the worker runs, so the page cannot show a
+        # proposal the Apply behind it would compute differently.
+        rule_benchmark = repricing_data.benchmark_for(
+            (await session.execute(
+                repricing_data.benchmark_stmt(user.id, settings.benchmark_hotel_id)
+            )).first() if settings.benchmark_hotel_id else None,
+            settings,
+        )
+        history = [] if rule_benchmark else repricing_data.one_night((await session.execute(
             repricing_data.history_stmt(user.id, check_in)
         )).all())
         proposals = repricing_rule.propose(
             rows, own_hotel_id=own.id, rule=own_rule,
             room_type_ids=enabled or None,
-            usual=repricing_rule.usual_gaps(history, own_hotel_id=own.id,
-                                            min_competitors=own_rule.min_competitors),
+            usual=None if rule_benchmark else repricing_rule.usual_gaps(
+                history, own_hotel_id=own.id, min_competitors=own_rule.min_competitors),
             night=check_in,
+            benchmark=rule_benchmark,
             moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in, settings.channel))),
         )
 
@@ -2042,6 +2076,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     return await _render(
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
+        competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
         check_in=check_in, actions=actions, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms, other_channels=other_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,

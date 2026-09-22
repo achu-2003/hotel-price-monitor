@@ -105,7 +105,8 @@ def run(monkeypatch):
     """``run(grid, mode, channels=..., skip=..., floor=...)`` -> the grid afterwards."""
 
     def go(grid: FakeGrid, mode: str, *, channels=None, skip=None, floor=None):
-        settings = SimpleNamespace(channel=MAIN, round_to=10, known_channels=[])
+        settings = SimpleNamespace(channel=MAIN, round_to=10, known_channels=[],
+                                   benchmark_meal_plan=None)
         app = SimpleNamespace(login_url="x", client_number="1", username="u", encrypted_password="p",
                               encrypted_session_state=None)
         FakeSession.rows = []

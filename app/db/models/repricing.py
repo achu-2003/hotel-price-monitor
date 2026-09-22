@@ -10,12 +10,13 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric,
-    String, Text, func,
+    String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
+from app.services.meal_plan import rms_plan
 
 #: The meal plans a rate can be set for, in the order RMS lists them. EP is
 #: room only, CP adds breakfast, MAP adds breakfast and one main meal.
@@ -63,6 +64,61 @@ class RepricingSettings(Base, TimestampMixin):
     #: them. The others are only ever written when the owner ticks them for a
     #: room on the Repricing page -- never by the automatic run.
     known_channels: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    #: The ONE competitor this owner prices against, for an owner who prices
+    #: off a single property rather than off the hill. NULL -- the default --
+    #: and the median rule applies as it always has.
+    #:
+    #: It drives BOTH the proposed price (services/repricing.Benchmark: their
+    #: entry price for the tier, less ``benchmark_undercut``) and what the
+    #: advisor is shown. One picker, because they are one decision: an owner
+    #: who prices against Sterling does not also want a second opinion about
+    #: a market they have stopped reading.
+    #:
+    #: SET NULL on delete, not CASCADE: losing the benchmarked hotel must
+    #: cost the owner their benchmark, never their whole rule. The proposal
+    #: then falls back to the median rule rather than stopping.
+    benchmark_hotel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hotels.id", ondelete="SET NULL"), nullable=True
+    )
+    #: How far UNDER the benchmark to sit, in rupees. Rupees and not a
+    #: percentage on purpose: the owner's rule is "a hundred less than
+    #: Sterling", and a percentage of a price that moves is a gap that moves
+    #: with it. Ignored entirely when no benchmark is set.
+    benchmark_undercut: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("100"), nullable=False, server_default="100"
+    )
+    #: Whether the gap is measured on the price the GUEST pays -- the rate
+    #: plus the tax line the site prints beside it -- rather than the rate
+    #: alone. On by default, because that is the figure a guest compares and
+    #: the tax rates are not equal: Booking.com printed 5.68% on ours and
+    #: 5.01% on Sterling's on the same night, so a hundred under them before
+    #: tax is not a hundred under them on screen.
+    benchmark_with_tax: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    #: The board both sides are quoted on ("Breakfast", "Room Only", ...),
+    #: or NULL to take each room's cheapest rate whatever it includes.
+    #: Booking.com sells one room on two or three plans and the supplements
+    #: are not alike -- adding breakfast cost ASG 374 and Sterling 1,350 on
+    #: the same night -- so a rule that does not pin the board is comparing
+    #: two different products most nights.
+    benchmark_meal_plan: Mapped[str | None] = mapped_column(String(60))
+    #: Which room of theirs each room of ours competes with:
+    #: ``{"25": "Classic room", "27": "Mountain View Classic Room"}``.
+    #: Empty keeps the tier matching the median rule uses.
+    #:
+    #: THEIR SIDE IS A NAME, not an id. Their rooms are rows in our
+    #: ``room_types`` too, but a competitor's room can be re-discovered,
+    #: renamed or retired without anyone here noticing, and a dangling id
+    #: would silently stop pairing. A name is matched through
+    #: ``normalize_room_name`` each night and says plainly when it stops
+    #: matching.
+    #:
+    #: Our side is the room_type id, because it is ours and it is stable.
+    #: Keys arrive as strings through JSON and are coerced on the way out.
+    benchmark_room_pairs: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb")
+    )
 
 
 class RmsRoomMapping(Base, TimestampMixin):
@@ -108,6 +164,29 @@ class RmsRoomMapping(Base, TimestampMixin):
         with breakfast (RMS's DELUXE has a CP row and nothing else) anchors on
         that, and the other plans follow it by their supplement."""
         return next((plan for plan in PLANS if self.rate_type_for(plan)), None)
+
+    def anchor_for(self, board: str | None) -> str | None:
+        """The RMS row the site price belongs to, given the board it was quoted on.
+
+        WHY :attr:`anchor_plan` IS NOT ALWAYS THE ANSWER. It picks the entry
+        plan -- EP where a room has one -- which is right when the figure
+        being scaled is the room-only rate, because that is the rate the
+        sites lead with. Pin the comparison to breakfast and it stops being
+        right: the price is now the CP rate, and scaling the EP row by a CP
+        ratio writes a number that produces neither.
+
+        On ASG's Deluxe Double on 21 Sep that was the difference between
+        Booking.com showing 5,690 and showing about 5,050.
+
+        Falls back to :attr:`anchor_plan` when no board is pinned, or when
+        the room is not sold on the one that is -- a room with only a CP row
+        anchors there whatever the rule asked for, because that is the only
+        rate there is to move.
+        """
+        wanted = rms_plan(board)
+        if wanted and self.rate_type_for(wanted):
+            return wanted
+        return self.anchor_plan
 
 
 class RepricingAction(Base):

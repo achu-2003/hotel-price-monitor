@@ -77,12 +77,14 @@ grid are the caller's business (``tasks_repricing``).
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from statistics import median
 
 from app.services.price_display import displayed_price
+from app.services.room_matching import normalize_room_name
 from app.services.room_category import OTHER, classify, label_for
 
 
@@ -98,10 +100,17 @@ class Competitor:
     #: No room of the tier is on sale at this hotel tonight; ``price`` is
     #: the last one it showed. See :func:`_night`.
     sold_out: bool = False
+    #: WHICH SITE said so. A hotel can be tracked on more than one (Sterling
+    #: is on Booking.com and on its own booking engine, and the two differ by
+    #: hundreds of rupees), and a comparison that takes whichever is cheaper
+    #: is comparing our Booking.com rate against their direct rate. The
+    #: median does not care -- it is the market's level either way -- but
+    #: :class:`Benchmark` does, because that is the whole of its input.
+    source_id: int | None = None
 
     def as_json(self) -> dict:
         return {"hotel": self.hotel, "room": self.room, "price": str(self.price), "note": self.note,
-                "sold_out": self.sold_out}
+                "sold_out": self.sold_out, "source_id": self.source_id}
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +145,30 @@ class Proposal:
     demand_note: str | None = None
     #: Competitor hotels of the tier with no room on sale tonight.
     sold_out: tuple[str, ...] = ()
+    #: The one hotel this proposal was priced against, when the owner prices
+    #: off a single competitor rather than the median. ``market`` is then
+    #: THAT hotel's entry price, not a median, and the page says so. Set
+    #: even when the benchmark had nothing to price against, so the held
+    #: reason can name it.
+    benchmark: str | None = None
+    #: The exact competitor row the target was computed from -- their room,
+    #: their price, the site it came from. Kept so that everything else
+    #: which needs to know what we priced against (the page, the advisor's
+    #: prompt) reads the rule's own choice instead of repeating the
+    #: selection and risking a different answer.
+    benchmark_entry: Competitor | None = None
+    #: The board ``our_price`` is quoted on. Normally the one the rule was
+    #: told to use, but a room the site sells only room-only falls back to
+    #: what it does sell, and then this is what says so -- and what the page
+    #: reads to pick the RMS row a typed price would be written to.
+    board: str | None = None
+    #: ``target`` IS THE NUMBER, not an aim at it. True for the benchmark
+    #: follow, where the target is a hundred rupees under a named hotel, and
+    #: for a price the owner typed. Both are instructions, and the rounding
+    #: that makes a median's approximate aim read nicely is, on an
+    #: instruction, an error: see :func:`to_rms`, which is the last place
+    #: the number can be lost.
+    exact: bool = False
 
     @property
     def change_pct(self) -> float | None:
@@ -177,6 +210,69 @@ class Rule:
             weekend_pct=Decimal(row.weekend_pct),
             sold_out_pct=Decimal(row.sold_out_pct),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class Benchmark:
+    """Price off ONE named competitor, a fixed number of rupees under them.
+
+    The owner's actual rule, in their words: "we have set the price hundred
+    rupees less". Sterling moves 1,000 to 1,300 and we set 1,200; they drop
+    to 1,200 and we set 1,100. It is a FOLLOW, not an aim -- which is why
+    none of the median machinery applies to it (see :func:`propose`).
+
+    ``undercut`` is rupees, not a percentage, and that is the point: a
+    percentage of a moving price is a gap that changes every time they move,
+    and the owner's gap does not.
+
+    ``with_tax`` says WHICH price the gap is measured on, and it is not a
+    presentation choice. Booking.com published 361 of tax on our 6,358 and
+    163 on Sterling's 3,256 -- 5.68% against 5.01% -- so a hundred rupees
+    under them before tax is NOT a hundred rupees under them on the line the
+    guest reads. The owner competes on the figure the guest compares, so
+    that is the figure the gap is taken on, and the rate we write is worked
+    back from it.
+    """
+
+    hotel_id: int
+    hotel: str
+    undercut: Decimal = Decimal("100")
+    with_tax: bool = True
+    #: The board both sides are quoted on -- one of ``services.meal_plan``'s
+    #: plans, or None to take whatever each room's cheapest rate includes.
+    #:
+    #: It matters more than it looks. Booking.com sells the same room on two
+    #: or three plans, and the supplements are not alike: on 24 Sep adding
+    #: breakfast cost ASG 374 and Sterling 1,350. Comparing our room-only
+    #: rate against their breakfast one reported us 1,269 dearer than we
+    #: were, and comparing like with like closed a gap of 2,015 to 346.
+    meal_plan: str | None = None
+    #: The board to use for a room the chosen one does not reach. Booking.com
+    #: sells ASG's Standard Double room-only and nothing else, so pinning
+    #: breakfast left that room with no comparison at all -- and a room the
+    #: owner competes with every night is not a room to leave unpriced.
+    #:
+    #: APPLIED TO BOTH SIDES TOGETHER. The fallback is not "use our room-only
+    #: rate against their breakfast one": that is the cross-board mistake the
+    #: board setting exists to prevent, and it would report us over a
+    #: thousand rupees cheaper than we are. The room drops to this board and
+    #: their room drops with it, so the pair stays like for like.
+    fallback_board: str | None = None
+    #: WHICH room of theirs each room of ours competes with:
+    #: ``{our room_type_id: their room name}``. Empty keeps the tier
+    #: matching the median rule uses.
+    #:
+    #: NAMED, because no classifier will ever pair these. The owner's rooms
+    #: are "Deluxe Double Room" and "Standard Double Room"; the rooms they
+    #: actually lose guests to are Sterling's "Classic room" and "Mountain
+    #: View Classic Room". The tier reader puts those four in three
+    #: different tiers and is right to -- it reads names, and these names
+    #: disagree about which rooms compete. Only the owner knows.
+    #:
+    #: A room of ours that is not a key gets no proposal: it was not paired,
+    #: so nothing has been said about what it competes with, and inventing a
+    #: comparison is how a rate moves for a reason nobody chose.
+    room_pairs: Mapping[int, str] = field(default_factory=dict)
 
 
 #: How far back :func:`usual_gaps` looks, and how many of those nights must
@@ -243,6 +339,27 @@ def _round_to(amount: Decimal, step: int) -> Decimal:
     return (amount / step).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * step
 
 
+def _round_within(amount: Decimal, step: int, toward: Decimal) -> Decimal:
+    """Round ``amount`` to a multiple of ``step``, never further from ``toward``.
+
+    THE NEAREST MULTIPLE CAN OVERSHOOT THE LIMIT THAT PRODUCED IT. A room at
+    6,719 with a 30% cap may go to 4,703.3; rounded to the nearest ten that
+    is 4,700, which is three rupees past the cap -- and where the floor is
+    the same 30%, three rupees is the difference between a move and a
+    refusal. The rate was held for being "below the floor of 4,703" while
+    showing 4,700, which reads as arithmetic nobody can argue with and is
+    really just a rounding artefact.
+
+    So a capped move rounds back towards today's price. It gives up at most
+    ``step`` rupees of the move and can never breach the bound it was
+    measured against.
+    """
+    if step <= 1:
+        return amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    rounding = ROUND_CEILING if amount < toward else ROUND_FLOOR
+    return (amount / step).quantize(Decimal("1"), rounding=rounding) * step
+
+
 def guard(our: Decimal, wanted: Decimal, rule: Rule) -> tuple[Decimal, str | None, str | None]:
     """Apply the percentage limits. Returns ``(target, held_reason, capped_note)``.
 
@@ -257,10 +374,10 @@ def guard(our: Decimal, wanted: Decimal, rule: Rule) -> tuple[Decimal, str | Non
     capped = None
     step = our * rule.max_step_pct / 100
     if target > our + step:
-        target = _round_to(our + step, rule.round_to)
+        target = _round_within(our + step, rule.round_to, our)
         capped = f"capped at +{_pct(rule.max_step_pct)}% per step (wanted {wanted:,.0f})"
     elif target < our - step:
-        target = _round_to(our - step, rule.round_to)
+        target = _round_within(our - step, rule.round_to, our)
         capped = f"capped at -{_pct(rule.max_step_pct)}% per step (wanted {wanted:,.0f})"
 
     low = our * (1 - rule.floor_pct / 100)
@@ -272,7 +389,7 @@ def guard(our: Decimal, wanted: Decimal, rule: Rule) -> tuple[Decimal, str | Non
     return target, None, capped
 
 
-def _night(rows, own_hotel_id: int):
+def _night(rows, own_hotel_id: int, with_tax: bool = False, meal_plan: str | None = None):
     """One night's rows, sorted into ours and theirs.
 
     Returns ``(ours, theirs, sold_out)``: ours is ``room_type_id -> [(series,
@@ -294,7 +411,17 @@ def _night(rows, own_hotel_id: int):
     listed: dict[str, dict[int, str]] = {}
 
     for series, hotel, room_name in rows:
-        shown = displayed_price(series, False)
+        # BOTH SIDES ON ONE BOARD. Dropped here rather than after the entry
+        # price is chosen, because the cheapest rate of a room is usually the
+        # room-only one and picking it first would mean the filter never saw
+        # the breakfast rate it was asked for.
+        #
+        # A rate whose board could not be read is dropped too. It is not
+        # evidence of being the board wanted, and letting it through is how a
+        # room-only rate gets compared against a rival's breakfast one.
+        if meal_plan is not None and series.meal_plan != meal_plan:
+            continue
+        shown = displayed_price(series, with_tax)
         if hotel.id == own_hotel_id:
             ours.setdefault(series.room_type_id, []).append((series, room_name, shown))
             continue
@@ -304,11 +431,13 @@ def _night(rows, own_hotel_id: int):
             continue
         if not series.is_available:
             last_known.setdefault(tier, {}).setdefault(hotel.id, []).append(
-                Competitor(hotel=hotel.name, room=room_name, price=shown.amount, note=shown.note, sold_out=True)
+                Competitor(hotel=hotel.name, room=room_name, price=shown.amount, note=shown.note,
+                           sold_out=True, source_id=series.source_id)
             )
             continue
         theirs.setdefault(tier, {}).setdefault(hotel.id, []).append(
-            Competitor(hotel=hotel.name, room=room_name, price=shown.amount, note=shown.note)
+            Competitor(hotel=hotel.name, room=room_name, price=shown.amount, note=shown.note,
+                       source_id=series.source_id)
         )
     sold_out = {
         tier: {hid: name for hid, name in hotels.items() if hid not in theirs.get(tier, {})}
@@ -321,11 +450,18 @@ def _night(rows, own_hotel_id: int):
     return ours, theirs, sold_out
 
 
-def _our_entry(entries) -> tuple[Decimal | None, str | None]:
+def _our_entry(entries) -> tuple[Decimal | None, str | None, int | None]:
+    """Our entry price for the room, the tax marker, and the site it came from.
+
+    The source travels with it because :class:`Benchmark` compares like for
+    like: the competitor's price on the SAME site as ours, not their cheapest
+    across every site they are listed on.
+    """
     on_sale = [(s, n, p) for s, n, p in entries if s.is_available and p.amount is not None]
     price = min((p.amount for _, _, p in on_sale), default=None)
     note = next((p.note for _, _, p in on_sale if p.amount == price), None)
-    return price, note
+    source_id = next((s.source_id for s, _, p in on_sale if p.amount == price), None)
+    return price, note, source_id
 
 
 def _entry_prices(theirs_in_tier: dict[int, list[Competitor]]) -> tuple[Competitor, ...]:
@@ -356,7 +492,7 @@ def usual_gaps(rows, *, own_hotel_id: int, min_competitors: int = 2) -> dict[int
             tier = classify(entries[0][1])
             if tier == OTHER:
                 continue
-            our_price, _ = _our_entry(entries)
+            our_price, _, _ = _our_entry(entries)
             competitors = _entry_prices(theirs.get(tier, {}))
             if our_price is None or len(competitors) < min_competitors:
                 continue
@@ -371,10 +507,157 @@ def usual_gaps(rows, *, own_hotel_id: int, min_competitors: int = 2) -> dict[int
     }
 
 
+def _benchmark_entry(theirs_in_tier: dict[int, list[Competitor]], hotel_id: int,
+                     source_id: int | None) -> Competitor | None:
+    """The benchmark's cheapest BOOKABLE room of the tier ON OUR SITE, or nothing.
+
+    THE SITE MATTERS HERE AND NOWHERE ELSE. Sterling is tracked twice --
+    Booking.com and its own booking engine -- and on one night those read
+    2,931 and 2,460 for the same room. To the median that is a competitor
+    priced somewhere around 2,700 and either figure would do. To a rule that
+    sets our rate a fixed sum under theirs it is the entire input, and taking
+    whichever happens to be cheaper prices our Booking.com room against their
+    direct-booking discount. So the comparison is pinned to the site our own
+    price came from, and a night that site did not report theirs produces no
+    proposal rather than a cross-site one.
+
+    Sold-out rooms are excluded, which is a departure from the median: that
+    deliberately keeps a full hotel in at its last price so a busy night does
+    not read as a cheap one. Here it would be the whole input, and the rate
+    we wrote would sit under a price that has stopped existing.
+    """
+    return _cheapest_of(theirs_in_tier.get(hotel_id) or [], source_id)
+
+
+def _cheapest_of(rooms: list[Competitor], source_id: int | None) -> Competitor | None:
+    on_sale = [c for c in rooms
+               if not c.sold_out and (source_id is None or c.source_id == source_id)]
+    if not on_sale:
+        return None
+    return min(on_sale, key=lambda c: c.price)
+
+
+def _fallback_rate(rows, own_hotel_id: int, room_type_id: int,
+                   with_tax: bool) -> tuple[Decimal | None, str | None, str | None]:
+    """Our cheapest bookable rate for one room, on whatever board sells it.
+
+    Only for rooms the chosen board does not reach. It is deliberately NOT
+    fed to the comparison -- a room-only rate set against a rival's
+    breakfast one is the mistake this whole board business exists to stop.
+    It is the ratio a typed price needs, and the label that says which rate
+    is on screen.
+    """
+    best: tuple[Decimal | None, str | None, str | None] = (None, None, None)
+    for series, hotel, _name in rows:
+        if hotel.id != own_hotel_id or series.room_type_id != room_type_id:
+            continue
+        if not series.is_available:
+            continue
+        shown = displayed_price(series, with_tax)
+        if shown.amount is None:
+            continue
+        if best[0] is None or shown.amount < best[0]:
+            best = (shown.amount, shown.note, series.meal_plan)
+    return best
+
+
+def _benchmark_room(theirs: dict, hotel_id: int, source_id: int | None,
+                    room_name: str) -> Competitor | None:
+    """The benchmark's NAMED room, on our site, bookable tonight.
+
+    Matched through ``normalize_room_name`` rather than on the string, for
+    the same reason the alias table is: the owner picks the name off a list
+    that came from the site, and the site then writes "Classic room" one
+    week and "Classic Room" the next. Token order is normalised away too, so
+    a rename to "Mountain View Classic" still finds it.
+
+    Searched across every tier, because the tier is exactly what this
+    pairing exists to overrule -- their "Classic room" and our "Deluxe
+    Double Room" are competitors whatever the classifier makes of the two
+    names.
+
+    ``None`` when that room is not on sale tonight, on our site, on the
+    chosen board. The caller holds the proposal and says so; it does not
+    slide across to whichever other room of theirs happens to be cheapest,
+    because the owner named this one.
+    """
+    key = normalize_room_name(room_name)
+    if not key:
+        return None
+    rooms = [c for by_hotel in theirs.values()
+             for c in (by_hotel.get(hotel_id) or [])
+             if normalize_room_name(c.room) == key]
+    return _cheapest_of(rooms, source_id)
+
+
+def usual_gaps_against(rows, *, own_hotel_id: int,
+                       benchmark_hotel_id: int) -> dict[int, tuple[Decimal, int]]:
+    """Where each of our rooms usually sits against ONE named hotel.
+
+    The same measurement :func:`usual_gaps` makes, with the market narrowed
+    to a single competitor: the median of one price is that price, so the
+    ratio it produces is our price over theirs, night by night.
+
+    ``min_competitors=1`` here is not the guard being waived. That guard
+    exists to refuse a market of one hotel that nobody chose; this is a
+    market of one hotel the owner chose on purpose, and refusing it would
+    mean the setting could be set and never take effect.
+    :data:`MIN_HISTORY_NIGHTS` still applies, so a benchmark added this week
+    has no gap yet and says so rather than inventing one.
+
+    NOT INTERCHANGEABLE WITH :func:`usual_gaps`. Our premium over a budget
+    chain and our premium over the median are different numbers for the same
+    room, and only the advisor's prompt reads this one -- the rule's
+    arithmetic keeps using the median's.
+    """
+    return usual_gaps(
+        [row for row in rows if row[1].id in (own_hotel_id, benchmark_hotel_id)],
+        own_hotel_id=own_hotel_id,
+        min_competitors=1,
+    )
+
+
+def benchmark_history(rows, *, own_hotel_id: int, benchmark_hotel_id: int, tier: str,
+                      nights: int = 8) -> tuple[tuple[date, Decimal], ...]:
+    """One hotel's entry price for one tier, night by night, oldest first.
+
+    With a single competitor, its LEVEL is already accounted for by the
+    usual gap, so what is left to reason from is its MOVEMENT -- which the
+    advisor cannot see in one night's figure. The last ``nights`` nights of
+    it, taken from the history rows the caller already loaded.
+
+    A NIGHT IT WAS FULL IS A GAP IN THE LINE, not a repeated price.
+    :func:`_night` deliberately keeps a sold-out hotel in the market at the
+    last figure it showed, which is right for a median and wrong here: in a
+    series of one hotel, that stale number reads as "they held their price"
+    on precisely the night they had nothing to sell. Dropped, so a gap in
+    the dates is visible as a gap. That the benchmark is full TONIGHT is
+    said in the prompt's notes instead, where it is a fact and not a price.
+    """
+    by_night: dict[date, list] = {}
+    for row in rows:
+        by_night.setdefault(row[0].check_in, []).append(row)
+
+    out: list[tuple[date, Decimal]] = []
+    for night in sorted(by_night):
+        _ours, theirs, _sold_out = _night(by_night[night], own_hotel_id)
+        entries = [
+            c for c in _entry_prices({
+                hid: rooms for hid, rooms in theirs.get(tier, {}).items()
+                if hid == benchmark_hotel_id
+            })
+            if not c.sold_out
+        ]
+        if entries:
+            out.append((night, entries[0].price))
+    return tuple(out[-nights:])
+
+
 def propose(rows, *, own_hotel_id: int, rule: Rule,
             room_type_ids: set[int] | None = None,
             usual: dict[int, tuple[Decimal, int]] | None = None,
             night: date | None = None,
+            benchmark: Benchmark | None = None,
             moved_today: set[int] | frozenset[int] = frozenset()) -> list[Proposal]:
     """Rows from the matrix query in, one proposal per room of the owner's out.
 
@@ -386,23 +669,63 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     wants -- a room missing from a dict that WAS passed is held. ``night``
     is the date, for the weekend lift. ``moved_today`` is the rooms already
     written for this night, held until the next.
+
+    ``benchmark`` REPLACES all of that for the rooms it can reach. See
+    :class:`Benchmark`: the target is that one hotel's entry price for the
+    tier, less a fixed number of rupees, and nothing else touches it --
+    not the median, not the usual gap, not the weekend or sold-out lift,
+    not ``position_pct``, and not ``min_competitors``.
+
+    Each of those is skipped for the same reason rather than as a
+    shortcut. The owner's rule names an exact figure, and every one of
+    them would move the rate off it: a lift of 10% on a night the other
+    hotels are full does not make their gap 100 rupees any more, and
+    ``min_competitors`` exists to refuse a market of one hotel that nobody
+    chose -- this is a market of one hotel chosen on purpose.
+
+    What still applies is every LIMIT: the step cap, the floor, the
+    ceiling, the rounding, and one move per room per night. Those are not
+    part of the pricing idea, they are the guard rail around a number
+    arriving from outside, and an unbookable benchmark reading is exactly
+    what they are for.
     """
-    ours, theirs, sold_out = _night(rows, own_hotel_id)
+    # ONE basis for the whole run. The benchmark decides it, because the
+    # benchmark is the only rule here with an opinion: the median compares
+    # like with like whichever basis it is on, and this one has a fixed
+    # rupee gap that means different things on each.
+    with_tax = bool(benchmark and benchmark.with_tax)
+    board = benchmark.meal_plan if benchmark else None
+    spare_board = benchmark.fallback_board if benchmark else None
+
+    # ONE READING PER BOARD, and each room takes the first that sells it.
+    # Both sides move together: a room that drops to the fallback is compared
+    # against their room on the fallback too, never across the two.
+    nights = {board: _night(rows, own_hotel_id, with_tax=with_tax, meal_plan=board)}
+    if board and spare_board and spare_board != board:
+        nights[spare_board] = _night(rows, own_hotel_id, with_tax=with_tax,
+                                     meal_plan=spare_board)
+
+    order: dict[int, str | None] = {}
+    for a_board in nights:
+        for room_type_id in nights[a_board][0]:
+            order.setdefault(room_type_id, a_board)
 
     proposals = []
-    for room_type_id, entries in ours.items():
+    for room_type_id, used_board in order.items():
         if room_type_ids is not None and room_type_id not in room_type_ids:
             continue
+        ours, theirs, sold_out = nights[used_board]
+        entries = ours[room_type_id]
         room_name = entries[0][1]
         tier = classify(room_name)
-        our_price, our_note = _our_entry(entries)
+        our_price, our_note, our_source = _our_entry(entries)
         competitors = _entry_prices(theirs.get(tier, {}))
         gone = tuple(sorted(sold_out.get(tier, {}).values()))
 
         base = dict(
             room_type_id=room_type_id, room_name=room_name, tier=tier,
             tier_label=label_for(tier), our_price=our_price, our_note=our_note,
-            competitors=competitors, sold_out=gone,
+            competitors=competitors, sold_out=gone, board=used_board,
         )
         if tier == OTHER:
             proposals.append(Proposal(**base, market=None, target=None,
@@ -412,6 +735,74 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             proposals.append(Proposal(**base, market=None, target=None,
                                       held="no price of ours on sale tonight to move from"))
             continue
+
+        # PRICED OFF ONE HOTEL. Before the min_competitors gate on purpose:
+        # that gate counts a market the owner did not choose, and would
+        # refuse this one for having exactly the single hotel it is meant
+        # to have.
+        if benchmark is not None:
+            # PAIRED ROOMS PRICE ALONE. A room nobody paired is left to
+            # whoever sets it by hand rather than quietly given a rate from
+            # a comparison the owner never chose.
+            their_room = None
+            if benchmark.room_pairs:
+                their_room = benchmark.room_pairs.get(room_type_id)
+                if their_room is None:
+                    proposals.append(Proposal(
+                        **base, market=None, target=None, benchmark=benchmark.hotel,
+                        held=f"not paired with a room of {benchmark.hotel}'s",
+                    ))
+                    continue
+
+            entry = (
+                _benchmark_room(theirs, benchmark.hotel_id, our_source, their_room)
+                if their_room is not None
+                else _benchmark_entry(theirs.get(tier, {}), benchmark.hotel_id, our_source)
+            )
+            if entry is None:
+                # Deliberately one reason and not two. "No room of that tier"
+                # and "no room of that tier on the site we are priced on" are
+                # different facts, but the answer to both is the same and the
+                # owner reads the sentence, not the branch.
+                board = f" on {used_board.lower()}" if used_board else ""
+                what = f'"{their_room}"' if their_room else label_for(tier)
+                proposals.append(Proposal(
+                    **base, market=None, target=None, benchmark=benchmark.hotel,
+                    held=f"{benchmark.hotel} has no {what} on sale tonight{board} "
+                         f"on the site our own price comes from",
+                ))
+                continue
+            # NOT rounded to ``round_to``. That setting exists because the
+            # median rule's aim is approximate anyway and a rate reads better
+            # as 5,720 than 5,718. Here the gap IS the instruction -- "a
+            # hundred less than Sterling" -- and rounding a 2,936 benchmark
+            # to the nearest ten makes it ninety-six less, which is not what
+            # anybody set. The limits below still round what they change.
+            # ONE OF THEM DID NOT PUBLISH ITS TAX. ``displayed_price`` then
+            # falls back to the component it does have and marks it, which
+            # is right for a matrix cell and wrong for this: subtracting a
+            # hundred from an all-in price to set a pre-tax one is a gap of
+            # several hundred wearing the number the owner typed. The marker
+            # is the only warning there is, so it stops the proposal.
+            if benchmark.with_tax and (entry.note or our_note):
+                whose = benchmark.hotel if entry.note else "our own listing"
+                proposals.append(Proposal(
+                    **base, market=entry.price, target=None, benchmark=benchmark.hotel,
+                    benchmark_entry=entry,
+                    held=f"{whose} did not publish its tax tonight, so the two prices "
+                         f"are not on the same footing to take {benchmark.undercut:,.0f} off",
+                ))
+                continue
+
+            wanted = entry.price - benchmark.undercut
+            target, held, capped = guard(our_price, wanted, rule)
+            if held is None and room_type_id in moved_today:
+                held = "already moved once tonight; the next move is tomorrow"
+            proposals.append(Proposal(**base, market=entry.price, target=target, held=held,
+                                      capped=capped, wanted=wanted, benchmark=benchmark.hotel,
+                                      benchmark_entry=entry, exact=True))
+            continue
+
         if len(competitors) < rule.min_competitors:
             proposals.append(Proposal(**base, market=None, target=None,
                                       held=f"only {len(competitors)} competitor(s) price this tier; "
@@ -437,7 +828,55 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                                   wanted=wanted, usual_gap=gap if usual is not None else None,
                                   demand_pct=lift, demand_note=why))
 
-    proposals.sort(key=lambda p: (p.tier_label, p.room_name))
+    # OUR ROOMS THAT HAVE NO RATE ON THE CHOSEN BOARD. They never reach the
+    # loop above, because the board filter drops their rows before the rooms
+    # are grouped -- so without this they do not appear on the page at all.
+    #
+    # A room that is simply absent is the one outcome this system refuses
+    # everywhere else: the comparison page keeps a category nobody prices so
+    # that "nobody sells this" stays visible, and a sold-out room keeps its
+    # row. A rate the owner cannot see is a rate the owner cannot fix, and
+    # "Booking.com sells this one room-only" is exactly the fact they need in
+    # order to go and add a breakfast rate to it.
+    if benchmark is not None and board:
+        priced = {p.room_type_id for p in proposals}
+        theirs_named = benchmark.room_pairs.get if benchmark.room_pairs else lambda _: None
+        for series, hotel, room_name in rows:
+            room_type_id = series.room_type_id
+            if hotel.id != own_hotel_id or room_type_id in priced:
+                continue
+            if room_type_ids is not None and room_type_id not in room_type_ids:
+                continue
+            priced.add(room_type_id)
+            tier = classify(room_name)
+            paired = theirs_named(room_type_id)
+            # ITS CHEAPEST RATE ON WHATEVER BOARD IT DOES SELL. The rule will
+            # not price this room -- there is nothing on the chosen board to
+            # compare -- but the owner still wants to type a figure at it,
+            # and a typed guest price is only convertible to an RMS rate
+            # while there is a price of ours to take the ratio from. Carried
+            # with the board it belongs to, so the RMS row written is the one
+            # that actually sells it.
+            fallback = _fallback_rate(rows, own_hotel_id, room_type_id, with_tax)
+            proposals.append(Proposal(
+                room_type_id=room_type_id, room_name=room_name, tier=tier,
+                tier_label=label_for(tier),
+                our_price=fallback[0], our_note=fallback[1], board=fallback[2],
+                competitors=(), sold_out=(), market=None, target=None,
+                benchmark=benchmark.hotel if paired else None,
+                held=f"we sell this room on neither {board.lower()} nor "
+                     f"{(spare_board or '').lower() or 'any other board'} tonight"
+                     + (f", so there is nothing to compare with {benchmark.hotel}'s "
+                        f'"{paired}"' if paired else "")
+                     + (f" (showing our {fallback[2].lower()} rate)" if fallback[2] else ""),
+            ))
+
+    # THE PAIRED ROOMS FIRST. They are the ones the rule has something to
+    # say about, and the owner opens this page to act on them; the rest are
+    # there to be typed at. Within each group the old order is kept.
+    pairs = benchmark.room_pairs if benchmark else {}
+    proposals.sort(key=lambda p: (0 if p.room_type_id in pairs else 1,
+                                  p.tier_label, p.room_name))
     return proposals
 
 
@@ -455,20 +894,40 @@ def override(proposal: Proposal, price: Decimal) -> Proposal:
     if proposal.our_price is None:
         return replace(proposal, held="no price of ours on sale tonight to scale your price from")
     was = f"the rule proposed {proposal.target:,.0f}" if proposal.target is not None else "the rule had no proposal"
-    return replace(proposal, target=price, held=None, capped=f"your price ({was})")
+    return replace(proposal, target=price, held=None, capped=f"your price ({was})", exact=True)
 
 
-def to_rms(target_guest: Decimal, our_guest: Decimal, current_rms: Decimal, *, round_to: int) -> Decimal:
+def to_rms(target_guest: Decimal, our_guest: Decimal, current_rms: Decimal, *,
+           round_to: int, exact: bool = False) -> Decimal:
     """The RMS rate that would make the channel show ``target_guest``.
 
     By the ratio the channel is applying today: RMS shows 7,500 where the
     site shows 5,610, so a target of 6,000 on the site is 6,000 × 7,500/5,610
     in RMS. Read both on the same morning, so the deal in force is the deal
     in the ratio.
+
+    ``round_to`` IS COSMETIC AND THIS IS THE ONE PLACE IT CANNOT AFFORD TO BE.
+    The setting exists because the median rule's aim is approximate anyway and
+    a rate reads better as 5,720 than 5,718. But the ratio here is about 0.56,
+    so ten rupees of tidiness on the RMS rate comes back out as six on the
+    line the guest reads -- and where the target was an instruction rather
+    than an aim, those six rupees are the instruction being disobeyed. A gap
+    the owner set at a hundred under Sterling was applied as ninety-eight:
+    5,216 became RMS 9,290 and came back out at 5,218. The target had already
+    refused to round itself for exactly this reason (see :func:`propose`); it
+    was rounded here instead, one step further down the pipe.
+
+    So ``exact`` -- a benchmark follow, or a price the owner typed -- takes
+    the whole rupee BELOW the ratio's answer. Never above: the gap the owner
+    set is a promise about how far under the other hotel we sit, and landing
+    a rupee further under keeps it where landing a rupee over breaks it.
     """
     if not our_guest:
         raise ValueError("our guest price is zero; no ratio to scale by")
-    return _round_to(target_guest * current_rms / our_guest, round_to)
+    wanted = target_guest * current_rms / our_guest
+    if exact:
+        return wanted.quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    return _round_to(wanted, round_to)
 
 
 def same_share(current: Decimal, before: Decimal, after: Decimal, *, round_to: int) -> Decimal:

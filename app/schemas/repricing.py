@@ -20,6 +20,20 @@ class RepricingSettingsIn(ORMModel):
     channel: str = Field(default="Booking.com", min_length=1, max_length=120)
     weekend_pct: Decimal = Field(default=Decimal("0"), ge=0, le=50)
     sold_out_pct: Decimal = Field(default=Decimal("10"), ge=0, le=50)
+    #: The one competitor this owner prices against, or None for the median
+    #: rule. Checked against the caller's own active competitors in the
+    #: route -- a bare id here would let one account name another's hotel.
+    benchmark_hotel_id: int | None = Field(default=None, gt=0)
+    #: Rupees under the benchmark. 0 is "match them", which is a real choice;
+    #: the upper bound is a typo guard, not a policy.
+    benchmark_undercut: Decimal = Field(default=Decimal("100"), ge=0, le=100000)
+    #: Measure the gap on what the guest pays, tax included. See the model.
+    benchmark_with_tax: bool = True
+    #: One of services.meal_plan's plans, or None for "whatever is cheapest".
+    benchmark_meal_plan: str | None = Field(default=None, max_length=60)
+    #: ``{our room_type_id: their room name}``. Every key is checked against
+    #: the caller's own property in the route.
+    benchmark_room_pairs: dict[int, str] = Field(default_factory=dict, max_length=50)
 
     @field_validator("channel")
     @classmethod

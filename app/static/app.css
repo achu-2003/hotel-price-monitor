@@ -1582,6 +1582,23 @@ ul.plain li { padding: .1em 0; }
 .repricing-section .grid td.competitors li .who { flex: 1 1 auto; min-width: 0; }
 .repricing-section .grid td.competitors li small { display: block; font-size: 12px; line-height: 1.25; }
 .repricing-section .grid td.room { min-width: 11em; }
+/* THE HELD REASON IS A SENTENCE, so its column has to be wide enough to be
+   one. Without a width it took whatever the other nine columns left over,
+   which was about four characters: "we have no breakfast rate on sale
+   tonight..." came out one word per line and stretched the row past 400px,
+   pushing the two rooms that matter off the screen. The table already
+   scrolls sideways (.grid-wrap), so the width costs nothing but a scroll. */
+.repricing-section .grid td.status { min-width: 16em; max-width: 26em; }
+.repricing-section .grid td.status .muted {
+  display: block; font-size: 12px; line-height: 1.4; margin-top: .25em;
+}
+/* The money columns never wrap a number onto two lines. */
+.repricing-section .grid td.rms,
+.repricing-section .grid td.site,
+.repricing-section .grid td.market { min-width: 9em; white-space: normal; }
+.repricing-section .grid td.rms .muted,
+.repricing-section .grid td.site .muted { display: block; font-size: 12px; line-height: 1.35; }
+.repricing-section .grid td.proposed { min-width: 10em; }
 /* The rule: its numbers in columns, the automatic switch on its own line
    above them where it cannot be mistaken for one more number. */
 .rule-form { max-width: none; }
@@ -1596,6 +1613,65 @@ ul.plain li { padding: .1em 0; }
 .with-unit { display: flex; align-items: center; gap: 6px; }
 .with-unit input { flex: 1 1 auto; min-width: 0; }
 .with-unit .unit { color: var(--muted); font-size: 13px; }
+
+/* A SELECT IS SIZED BY ITS LONGEST OPTION, not by its column. The numbers
+   above are inputs and were held to the column width; a dropdown holding
+   "Mountain View Classic Room" was not, so it pushed its own cell wider than
+   the 190px track and the box drew itself outside the panel. Grid items also
+   default to min-width: auto, which is what let the track give way. */
+.rule-fields label { min-width: 0; }
+.rule-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* THE SWITCHES. A checkbox is not a field to fill in, so none of the sizing
+   above is meant for it, and two browser defaults were left standing:
+   - a checkbox carries a margin of the browser's own (3px 3px 3px 4px in
+     Chrome), so the Automatic row drew its box 4px inside the column that
+     every label and input below it starts at — the one row on the form whose
+     left edge did not line up. Set on all four sides: flush on the left, and
+     enough on top to sit on the middle of the first line of its sentence.
+   - .rule-fields label is a column of "caption above field", which a checkbox
+     row is not: it dropped the sentence onto the line below its own box. */
+.rule-form .checkbox input[type="checkbox"] {
+  width: auto; flex: 0 0 auto; margin: 4px 0 0;
+}
+.rule-fields label.checkbox { flex-direction: row; align-items: flex-start; gap: var(--s2); }
+
+/* A field that carries a sentence, or a set of its own, needs more than one
+   190px column: in one column the prose falls into a ribbon four words wide
+   and the dropdown does not fit its own options. A set takes the whole row; a
+   label with a paragraph takes two columns, which is a reading measure rather
+   than a ribbon and still leaves the field beside it on the same row. The
+   two-column span waits for a window wide enough to hold three columns, so it
+   can never ask the grid for a track that is not there. */
+.rule-fields .wide { grid-column: 1 / -1; }
+.rule-fields .wide > select { max-width: 32em; }
+.rule-fields .wide > small { max-width: 60em; }
+/* The note under a checkbox sits inside the sentence's span, so it inherits
+   inline and a measure means nothing to it: on a full-width row it ran the
+   whole window. Blocked, it reads like every other note on the form. */
+.rule-fields .checkbox small { display: block; max-width: 60em; margin-top: 2px; }
+@media (min-width: 720px) {
+  .rule-fields label.wide:not(.checkbox) { grid-column: span 2; }
+}
+
+/* WHICH ROOM OF THEIRS EACH OF OURS COMPETES WITH: one question, so one box,
+   with the pairs in the same column rhythm as the numbers above it. Boxed
+   like .channel-set, which is the same shape of thing — a fieldset whose
+   legend names a set rather than a field. */
+.rule-fields .room-pairs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s3) var(--s4); align-items: start;
+  margin: 0; padding: var(--s3) var(--s4);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); min-width: 0;
+}
+.room-pairs legend {
+  padding: 0 var(--s2);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted);
+}
+/* The empty-state sentence sits under the legend, not in the first column. */
+.room-pairs > p { grid-column: 1 / -1; margin: 0; font-size: 13px; }
 
 /* Room mapping: one grid, one form per row (display: contents keeps each
    form's cells in the grid and the form itself the thing that submits). */

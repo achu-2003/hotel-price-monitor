@@ -62,6 +62,7 @@ from app.config import get_settings
 from app.core.errors import AdapterConfigError, SchemaDriftError
 from app.core.logging import get_logger
 from app.core.ratelimit import get_redis
+from app.services import meal_plan
 
 log = get_logger("adapter.direct_site")
 
@@ -385,14 +386,33 @@ class PlaywrightDirectSiteAdapter:
 
         offers: list[NormalizedOffer] = []
         reasons: list[str] = []
+        # THE NAME CARRIES DOWN THE ROWSPAN. Booking.com lists one <tr> per
+        # RATE, not per room, and puts the room's name in a cell that spans
+        # them -- so only the first row of each room has a name and the rest
+        # are the other plans. Skipping them threw away every
+        # breakfast-included and half-board rate on the page: for ASG's
+        # Deluxe Double on 24 Sep that was 5,984 and 8,228, kept only 5,610,
+        # and left the owner comparing a room-only rate against a rival's
+        # breakfast one.
+        #
+        # ONLY EVER FROM A CARD THAT ALREADY PARSED, which is what keeps the
+        # drift check intact. The failure this guard was written for is a
+        # stale selector matching layout elements that hold no room at all
+        # (Treebo's styled-component classes: eight matches, no names). There
+        # is no first name in that run, nothing is inherited, and every card
+        # still fails exactly as before.
+        inherited: str | None = None
         for card in cards:
             try:
-                offers.append(self._offer_from_card(card, selectors, context))
+                offer = self._offer_from_card(card, selectors, context, inherited=inherited)
             except SchemaDriftError as exc:
                 # One malformed card must not discard the other four rooms that
                 # parsed cleanly. The gap is visible; a lost page load is not.
                 reasons.append(str(exc))
                 log.warning("room_card_skipped", reason=str(exc), hotel=context.hotel_name)
+            else:
+                inherited = offer.raw_room_name
+                offers.append(offer)
 
         if not offers:
             # ASK WHETHER THE HOTEL IS FULL, HERE TOO.
@@ -476,8 +496,9 @@ class PlaywrightDirectSiteAdapter:
         log.info("offers_from_dom", count=len(offers), hotel=context.hotel_name)
         return offers, not any(o.is_available for o in offers)
 
-    def _offer_from_card(self, card, selectors: dict, context: FetchContext) -> NormalizedOffer:
-        name = _text_in(card, selectors["room_name"])
+    def _offer_from_card(self, card, selectors: dict, context: FetchContext,
+                         inherited: str | None = None) -> NormalizedOffer:
+        name = _text_in(card, selectors["room_name"]) or inherited
         if not name:
             raise SchemaDriftError("Room card carried no name")
 
@@ -555,12 +576,29 @@ class PlaywrightDirectSiteAdapter:
             price_exclusive=exclusive,
             taxes_fees=taxes,
             currency=detect_currency(price_text or "", default=context.currency),
-            meal_plan=_text_in(card, selectors.get("meal_plan")),
+            meal_plan=_meal_plan(card, selectors, card_text),
             refundable=_refundable(card, selectors),
             is_available=is_available,
             rooms_left=parse_rooms_left(_text_in(card, selectors.get("rooms_left"))),
             raw_payload={"card_text": card_text[:1000]},
         )
+
+
+def _meal_plan(card, selectors: dict, card_text: str) -> str | None:
+    """Which board this rate includes, as a plan rather than as a sentence.
+
+    NO SELECTOR REQUIRED, and that is deliberate. A ``meal_plan`` selector is
+    honoured when a config has one, but the fallback reads the row's own text
+    -- so every site that prints "breakfast included" beside a rate starts
+    reporting board without anybody configuring anything, and without a
+    selector that can go stale and take the plan with it.
+
+    ``services.meal_plan`` does the deciding, and returns None for text it
+    cannot place. That None is stored as it always was: a rate whose board we
+    could not read is not a rate we may claim is room-only.
+    """
+    configured = _text_in(card, selectors.get("meal_plan"))
+    return meal_plan.classify(configured) or meal_plan.classify(card_text)
 
 
 #: Returns the indices of the matched elements that contain no other match.

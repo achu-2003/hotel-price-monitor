@@ -105,6 +105,16 @@ def mappings_for(session, owner_user_id: int) -> list[RmsRoomMapping]:
     ))
 
 
+def benchmark_for(session, owner_user_id: int, settings) -> rule.Benchmark | None:
+    """The one competitor this owner prices against, or None for the median rule."""
+    if not settings.benchmark_hotel_id:
+        return None
+    row = session.execute(
+        data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)
+    ).first()
+    return data.benchmark_for(row, settings)
+
+
 def own_hotel_id(session, owner_user_id: int) -> int | None:
     return session.scalar(
         select(Hotel.id).where(
@@ -122,12 +132,22 @@ def compute(session, owner_user_id: int, check_in, check_out) -> tuple[list[rule
         return [], settings, mappings
     rows = priced_rows(session, owner_user_id, check_in, check_out)
     own_rule = rule.Rule.from_row(settings)
-    history = data.one_night(session.execute(data.history_stmt(owner_user_id, check_in)).all())
+    benchmark = benchmark_for(session, owner_user_id, settings)
+
+    # The usual gap is the median rule's input and costs a 14-night read.
+    # A benchmarked owner never reaches the line that uses it, so it is not
+    # loaded: following one hotel by a fixed sum has no use for where we
+    # historically sat against ten.
+    history = [] if benchmark else data.one_night(
+        session.execute(data.history_stmt(owner_user_id, check_in)).all()
+    )
     proposals = rule.propose(
         rows, own_hotel_id=own, rule=own_rule,
         room_type_ids=set(mappings) or None,
-        usual=rule.usual_gaps(history, own_hotel_id=own, min_competitors=own_rule.min_competitors),
+        usual=None if benchmark else rule.usual_gaps(
+            history, own_hotel_id=own, min_competitors=own_rule.min_competitors),
         night=check_in,
+        benchmark=benchmark,
         moved_today=set(session.scalars(data.moved_stmt(owner_user_id, check_in, settings.channel))),
     )
     return proposals, settings, mappings
@@ -170,6 +190,33 @@ def _recent_prices(session, room_type_id: int, limit: int = 8) -> tuple:
     return tuple(price for _, price in reversed(rows))
 
 
+def _notes(proposal, theirs, benchmark: str | None) -> tuple[str, ...]:
+    """The caveats on the prices the model is actually being shown.
+
+    A note about a hotel it cannot see is worse than no note: it invites a
+    rationale that names a competitor the owner never gave it. So the
+    approximate-price caveats follow ``theirs``, and the sold-out line
+    narrows too.
+
+    A SOLD-OUT BENCHMARK IS NOT A MISSING ONE. ``_night`` keeps a full hotel
+    in the market at the last price it showed, which is right for a median
+    and dangerous for a set of one: read plainly, that stale figure is the
+    only evidence there is. So it is said out loud.
+    """
+    notes = tuple(
+        f"{c.hotel}'s price is approximate ({c.note})" for c in theirs if c.note
+    )
+    if benchmark is None:
+        if proposal.sold_out:
+            notes += (f"Sold out tonight in this tier: {', '.join(proposal.sold_out)}",)
+    elif benchmark in proposal.sold_out:
+        notes += (
+            f"{benchmark} has no room of this tier on sale tonight. The price "
+            f"above is the last one it showed, not a rate a guest can book.",
+        )
+    return notes
+
+
 def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in, mode: str) -> int:
     """Record what a model would have proposed, beside what the rule did.
 
@@ -197,14 +244,65 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
         .where(RoomType.id == proposals[0].room_type_id)
     ) if proposals else None
 
+    # THE ONE COMPETITOR THIS OWNER PRICES AGAINST, if they have named one.
+    # The same resolver the proposal used, so the AI column and the price
+    # beside it can never be about different hotels.
+    own = own_hotel_id(session, owner_user_id) if settings.benchmark_hotel_id else None
+    benchmark = benchmark_for(session, owner_user_id, settings) if own is not None else None
+
+    # Loaded once for the whole run, not per room: the usual gap over the
+    # benchmark, and how the benchmark has moved. Same rows the rule read.
+    history: list = []
+    benchmark_gaps: dict[int, tuple] = {}
+    if benchmark is not None:
+        history = data.one_night(session.execute(data.history_stmt(owner_user_id, check_in)).all())
+        benchmark_gaps = rule.usual_gaps_against(
+            history, own_hotel_id=own, benchmark_hotel_id=benchmark.hotel_id
+        )
+
     written = 0
     for p in proposals:
-        # Only rooms the rule itself could price. A room it held on (no tier,
-        # no price of ours, too few competitors) has nothing for a model to
-        # improve on either, and asking anyway would spend a call to learn
-        # what the rule already said.
-        if p.our_price is None or p.market is None or not p.competitors:
+        # A room with no price of ours has no question in it for anybody.
+        if p.our_price is None:
             continue
+
+        benchmark_gap = None
+        benchmark_recent: tuple = ()
+        if benchmark is not None:
+            # THE RULE'S OWN CHOICE, not a second narrowing of the competitor
+            # list. propose() already picked the row -- cheapest bookable of
+            # the tier, on the site our price comes from -- and picking again
+            # here from the same list by hotel name alone would quietly hand
+            # the model their direct-booking rate while the price beside it
+            # was computed from their Booking.com one.
+            if p.benchmark_entry is None:
+                # Not a thin market -- NO market. Recorded rather than
+                # skipped: a blank nobody can explain is the one thing a
+                # shadow log must never produce, and the rule's own held
+                # reason is already the sentence that explains it.
+                session.add(RepricingAdvice(
+                    owner_user_id=owner_user_id, room_type_id=p.room_type_id,
+                    room_name=p.room_name, check_in=check_in, mode=mode,
+                    our_price=p.our_price, market_price=p.market,
+                    competitors=[c.as_json() for c in p.competitors],
+                    rule_position_pct=own_rule.position_pct, rule_target=p.target,
+                    error=p.held or f"{benchmark.hotel} has nothing to price against tonight",
+                ))
+                written += 1
+                continue
+            theirs = (p.benchmark_entry,)
+            gap = benchmark_gaps.get(p.room_type_id)
+            benchmark_gap = gap[0] if gap else None
+            benchmark_recent = rule.benchmark_history(
+                history, own_hotel_id=own, benchmark_hotel_id=benchmark.hotel_id, tier=p.tier,
+            )
+        else:
+            # The median rule. A room it could not price has nothing for a
+            # model to improve on either, and asking anyway spends a call to
+            # learn what the rule already said.
+            if p.market is None or not p.competitors:
+                continue
+            theirs = tuple(p.competitors)
 
         ask = advisor.Ask(
             hotel=hotel_name or "the owner's hotel",
@@ -212,14 +310,14 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
             tier_label=p.tier_label,
             check_in=check_in,
             our_price=p.our_price,
-            competitors=tuple((c.hotel, c.room, c.price) for c in p.competitors),
+            competitors=tuple((c.hotel, c.room, c.price) for c in theirs),
             rule_position_pct=own_rule.position_pct,
             usual_gap=p.usual_gap,
             our_recent=_recent_prices(session, p.room_type_id),
-            notes=tuple(
-                f"{c.hotel}'s price is approximate ({c.note})"
-                for c in p.competitors if c.note
-            ) + ((f"Sold out tonight in this tier: {', '.join(p.sold_out)}",) if p.sold_out else ()),
+            notes=_notes(p, theirs, benchmark.hotel if benchmark else None),
+            benchmark=benchmark.hotel if benchmark else None,
+            benchmark_gap=benchmark_gap,
+            benchmark_recent=benchmark_recent,
         )
         try:
             advice = advisor.advise(
@@ -423,7 +521,11 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
         with sync_session() as session:
             for p in actionable:
                 m = mappings[p.room_type_id]
-                anchor = m.anchor_plan
+                # The row the site price belongs to. With the board pinned to
+                # breakfast the figure being scaled is the CP rate, and
+                # scaling the EP row by it writes a number that produces
+                # neither price.
+                anchor = m.anchor_for(settings.benchmark_meal_plan)
                 if anchor is None:
                     _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             reason="no rate row is mapped for this room")
@@ -464,7 +566,8 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                 if prior is not None and prior.our_price == p.our_price and prior.current_rms:
                     rms_for_ratio = prior.current_rms
                 try:
-                    new_anchor = rule.to_rms(p.target, p.our_price, rms_for_ratio, round_to=round_to)
+                    new_anchor = rule.to_rms(p.target, p.our_price, rms_for_ratio,
+                                             round_to=round_to, exact=p.exact)
                 except ValueError as exc:
                     _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             plan=anchor, rate_type=anchor_row, current_rms=current[anchor], reason=str(exc))
@@ -548,9 +651,9 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
                     continue
                 for rid in rooms:
                     p, m = by_room.get(rid), mappings[rid]
-                    if p is None or m.anchor_plan is None:
+                    anchor = m.anchor_for(settings.benchmark_meal_plan)
+                    if p is None or anchor is None:
                         continue
-                    anchor = m.anchor_plan
                     state.write(owner_user_id, "running", KIND, message=f"Reading {ch} / {m.rms_room}…")
                     try:
                         current = {plan: read_rate(page, channel=ch, room=m.rms_room, rate_type=m.rate_type_for(plan), day_index=0)

@@ -44,6 +44,32 @@ carries on with the rule's own proposal, because a rate run that dies because
 an API was slow is a worse outcome than one that simply had no second
 opinion.
 
+ONE COMPETITOR, WHEN THE OWNER PRICES AGAINST ONE
+=================================================
+The rule's market is every hotel on the hill. Some owners do not price that
+way: they watch one property -- the one their guests actually choose between
+-- and everything else is noise. ``repricing_settings.benchmark_hotel_id``
+says so, and when it is set this module is shown that hotel's entry price
+ALONE, with how it has moved over recent nights and the gap the owner's
+price usually keeps to IT rather than to the median.
+
+WHICH row that is, is not decided here. ``repricing.propose`` already chose
+it -- cheapest bookable room of the tier, on the site our own price comes
+from -- and hands it over as ``Proposal.benchmark_entry``. Choosing it a
+second time from a different angle is how the AI column and the price
+beside it end up being about two different rooms.
+
+The rule downstream is untouched: it still aims at the median times its own
+usual gap. That is deliberate and it is not a contradiction. Both "usual
+levels" are estimates of the same thing -- the price this room normally
+asks -- so a lean of -3% off one is a lean of -3% off the other, and the
+advisor's single judgement transfers without the arithmetic moving. What
+changes is the EVIDENCE the judgement is made on.
+
+A benchmark that sells nothing in the room's tier is not a thin market, it
+is no market: there is no question to ask, so no call is made and the blank
+says which hotel and which tier (see ``tasks_repricing.shadow_advice``).
+
 PURE AT THE EDGES
 =================
 The prompt is built from plain values and the HTTP call goes through an
@@ -74,10 +100,11 @@ SCHEMA = {
             "type": "number",
             "description": (
                 "Where the owner's guest price should sit against its USUAL "
-                "level -- the competitors' median times the gap the owner "
-                "usually keeps to it -- as a percentage. 0 means the usual "
-                "level exactly, -5 means five per cent cheaper than usual, "
-                "5 means five per cent dearer."
+                "level -- what the competition they are measured against "
+                "asks tonight, times the gap the owner usually keeps to it "
+                "-- as a percentage. 0 means the usual level exactly, -5 "
+                "means five per cent cheaper than usual, 5 means five per "
+                "cent dearer."
             ),
         },
         "confidence": {
@@ -136,6 +163,49 @@ large one, and the owner sees your rationale beside the number.\
 """
 
 
+#: Used instead of :data:`SYSTEM` when the owner has named one reference
+#: hotel. The difference is not a shorter list: it is that a single price
+#: carries no consensus, so the evidence worth reasoning from is how that one
+#: hotel has MOVED, and an odd reading has nothing to be averaged against.
+SYSTEM_BENCHMARK = """\
+You advise on room pricing for a small hotel in Yelagiri, Tamil Nadu, India.
+
+This owner does not price against the whole market. They have chosen ONE
+competitor as their reference -- the property their guests actually choose
+between -- and that hotel is the only one you are shown. You are given the
+owner's room for one night, that competitor's entry price for the same tier
+of room, how it has moved over recent nights, and the gap the owner's price
+usually keeps to it (their room is usually well above it -- that premium is
+the product, not a mistake). That gap applied to tonight's reference price
+is the room's USUAL level. You return where the owner's price should sit
+against that usual level, as a percentage.
+
+How to think about it:
+
+* The usual level is the anchor. Your job is to say whether tonight is a
+  night to sit under it, on it, or above it, and by how much.
+* MOVEMENT is most of what you have. One hotel's price tonight says very
+  little on its own; that same hotel cutting three mornings running, or
+  climbing into a weekend, says a great deal.
+* Move away from the usual level only for a reason you can name from the
+  data you were given. "They are asking 2,460" is not a reason -- the usual
+  gap already accounts for where they sit. "They have cut 12% since
+  Tuesday" is.
+* A weekend or a festival night in the hill stations is a reason to sit
+  higher; a mid-week night in the monsoon is a reason to sit lower.
+* ONE reference hotel is a thin basis for a large move, and a single odd
+  reading from it has nothing to be averaged against. Where tonight's
+  reference price is out of line with its own recent nights, treat it as a
+  probable bad reading: say so, lower your confidence, and stay near 0
+  rather than chase it.
+* You do not know how full either hotel is, and you have no booking or
+  occupancy data. Never write as though you do.
+
+Be conservative. A position near 0 is the right answer far more often than a
+large one, and the owner sees your rationale beside the number.\
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class Advice:
     """What the model made of one room on one night.
@@ -182,20 +252,34 @@ class Ask:
     our_recent: tuple[Decimal, ...] = ()
     notes: tuple[str, ...] = field(default=())
 
+    #: The ONE competitor this owner prices against, by name. When it is set,
+    #: ``competitors`` holds that hotel's entry price and nothing else, and
+    #: the prompt anchors on it rather than on a market median.
+    benchmark: str | None = None
+    #: Our usual price over the BENCHMARK's entry price (2.60 = 160% above
+    #: it), measured exactly as ``usual_gap`` is but against that one hotel.
+    #: The two are different numbers for the same room and must not be
+    #: swapped: a gap over a budget chain is not a gap over the median.
+    benchmark_gap: Decimal | None = None
+    #: What the benchmark has asked for this tier on recent nights, oldest
+    #: first, as ``(night, entry price)``. With one competitor this is most
+    #: of the evidence there is -- see :data:`SYSTEM_BENCHMARK`.
+    benchmark_recent: tuple[tuple[date, Decimal], ...] = ()
+
     def as_prompt(self) -> str:
-        lines = [
+        """The night as the model sees it -- against one hotel, or against the set."""
+        return self._against_benchmark() if self.benchmark else self._against_market()
+
+    def _head(self) -> list[str]:
+        return [
             f"Hotel: {self.hotel}",
             f"Room: {self.room_name}  (tier: {self.tier_label})",
             f"Night: {self.check_in.isoformat()} ({self.check_in.strftime('%A')})",
             f"Our current guest price: {self.our_price:,.0f}",
-            *([f"We usually sit {(self.usual_gap - 1) * 100:+.0f}% against the competitors' median"]
-              if self.usual_gap is not None else
-              ["There is not enough history to say where we usually sit; take the median itself as the usual level"]),
-            "",
-            f"Competitor entry prices for this tier ({len(self.competitors)} hotels):",
         ]
-        for hotel, room, price in self.competitors:
-            lines.append(f"  - {hotel}: {price:,.0f}  ({room})")
+
+    def _tail(self) -> list[str]:
+        lines = []
         if self.our_recent:
             movement = ", ".join(f"{p:,.0f}" for p in self.our_recent)
             lines += ["", f"Our price for this room over recent checks (oldest first): {movement}"]
@@ -208,7 +292,52 @@ class Ask:
             "",
             "Where should this rate sit tonight, and why?",
         ]
-        return "\n".join(lines)
+        return lines
+
+    def _against_market(self) -> str:
+        lines = self._head() + [
+            *([f"We usually sit {(self.usual_gap - 1) * 100:+.0f}% against the competitors' median"]
+              if self.usual_gap is not None else
+              ["There is not enough history to say where we usually sit; take the median itself as the usual level"]),
+            "",
+            f"Competitor entry prices for this tier ({len(self.competitors)} hotels):",
+        ]
+        for hotel, room, price in self.competitors:
+            lines.append(f"  - {hotel}: {price:,.0f}  ({room})")
+        return "\n".join(lines + self._tail())
+
+    def _against_benchmark(self) -> str:
+        """One named hotel, what it asks tonight, and how it got there.
+
+        The market median is deliberately absent. Naming it here would give
+        the model a second anchor to average against, and the whole point of
+        a benchmark is that the owner has decided the rest of the hill is
+        not what their guests are choosing between.
+        """
+        lines = self._head() + [
+            "",
+            f"You compare against ONE hotel tonight: {self.benchmark}.",
+        ]
+        tonight = None
+        for hotel, room, price in self.competitors:
+            tonight = price if tonight is None else tonight
+            lines.append(f"  {hotel} tonight: {price:,.0f}  ({room})")
+        if self.benchmark_gap is None:
+            lines.append(
+                f"There is not enough history to say where we usually sit against "
+                f"{self.benchmark}; take tonight's own gap as the usual one."
+            )
+        else:
+            usual = f", which puts tonight's usual level near {tonight * self.benchmark_gap:,.0f}" if tonight else ""
+            lines.append(
+                f"We usually sit {(self.benchmark_gap - 1) * 100:+.0f}% above "
+                f"{self.benchmark}'s entry price{usual}."
+            )
+        if self.benchmark_recent:
+            movement = ", ".join(f"{night.strftime('%d %b')} {price:,.0f}"
+                                 for night, price in self.benchmark_recent)
+            lines += ["", f"{self.benchmark}'s entry price for this tier on recent nights: {movement}"]
+        return "\n".join(lines + self._tail())
 
 
 def _clamp(value: Decimal, limit: Decimal) -> tuple[Decimal, str | None]:
@@ -282,7 +411,10 @@ def advise(ask: Ask, *, complete, model: str, max_position_pct: Decimal) -> Advi
     """
     started = time.monotonic()
     try:
-        payload = complete(system=SYSTEM, user=ask.as_prompt(), schema=SCHEMA, model=model)
+        # The benchmark prompt is a different brief, not a shorter one: it
+        # tells the model that one price carries no consensus.
+        system = SYSTEM_BENCHMARK if ask.benchmark else SYSTEM
+        payload = complete(system=system, user=ask.as_prompt(), schema=SCHEMA, model=model)
     except Exception as exc:  # noqa: BLE001 -- a failed advisor is never fatal
         elapsed = int((time.monotonic() - started) * 1000)
         log.warning(

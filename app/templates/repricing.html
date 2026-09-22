@@ -41,12 +41,26 @@
       <tr>
         <th>Room</th>
         <th>Tier</th>
-        <th class="num">Our price</th>
-        <th class="num">Market (median)</th>
+        <th class="num">Our price{% if benchmark is defined and benchmark and settings.benchmark_with_tax %} <small class="muted">with tax</small>{% endif %}</th>
+        {# Not always a median any more: with a benchmark set it is that one
+           hotel's entry price, and a column still headed "(median)" would be
+           telling the owner the number came from ten hotels. #}
+        <th class="num">{% if benchmark is defined and benchmark %}{{ benchmark.name }}{% if settings.benchmark_with_tax %} <small class="muted">with tax</small>{% endif %}{% else %}Market (median){% endif %}</th>
         <th>Competitors</th>
         <th class="num">Proposed price</th>
-        <th class="ai">AI suggests <small class="muted">(not applied)</small></th>
+        {# The header names the basis, because the AI's and the rule's are no
+           longer the same one: the rule reads the median of everybody, the
+           AI reads whichever competitor the owner benchmarked against. A
+           column headed only "AI suggests" would hide that. #}
+        <th class="ai">AI suggests
+          <small class="muted">vs {{ benchmark.name if benchmark is defined and benchmark else 'the market' }} · (not applied)</small></th>
         <th class="num">In RMS</th>
+        {# THE ROUND TRIP, SHOWN. The proposed price is a guest price and the
+           RMS rate is derived from it, so the two are only equivalent while
+           the rounding is invisible. Printing what the written rate actually
+           comes back out as is the difference between trusting the sum and
+           checking it. #}
+        <th class="num">Guest will see</th>
         <th>Status</th>
       </tr>
     </thead>
@@ -66,12 +80,33 @@
             <br><span class="muted">we usually sit {{ '%+.0f'|format((p.usual_gap - 1) * 100) }}%</span>
             <br><span class="muted">→ {{ money((p.market * p.usual_gap)|round|int) }} keeps it</span>
           {% endif %}
+          {#- The whole sum, shown. The owner's rule is one subtraction and
+              they should be able to check it at a glance rather than trust
+              that the box below did it right. -#}
+          {% if p.benchmark_entry is defined and p.benchmark_entry %}
+            <br><span class="muted">{{ p.benchmark_entry.room }}</span>
+            <br><span class="muted">− {{ money(settings.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
+          {% endif %}
           {% if p.demand_note %}<br><span class="muted demand">{{ p.demand_note }}</span>{% endif %}
         </td>
         <td class="competitors">
           {% if p.competitors %}
+            {#
+              CONTEXT, AND UNDER A BENCHMARK ONLY CONTEXT. This list is every
+              hotel in the tier on every site they are tracked on, which is
+              what the median reads. A benchmarked row did not read it -- and
+              the same hotel can appear here at a different price from the
+              one beside it, because that one is pinned to our own site and
+              this one is not. Saying so is the difference between a list and
+              a contradiction.
+            #}
             <details>
-              <summary>{{ p.competitors|length }} hotel{{ 's' if p.competitors|length != 1 }}</summary>
+              <summary>{{ p.competitors|length }} hotel{{ 's' if p.competitors|length != 1 }}{% if p.benchmark %} — not used{% endif %}</summary>
+              {% if p.benchmark %}
+                <p class="muted">Your rate follows {{ p.benchmark }} alone. These are every site's
+                figures for the tier, including {{ p.benchmark }}'s own booking engine, and none
+                of them went into tonight's number.</p>
+              {% endif %}
               <ul class="plain">
               {% for c in p.competitors %}
                 <li><span class="num">{{ money(c.price) }}</span> <span class="who">{{ c.hotel }}{% if c.sold_out %} <em class="muted">sold out</em>{% endif %}<small class="muted">{{ c.room }}</small></span></li>
@@ -88,11 +123,11 @@
           ratio from, cannot be applied, so it gets no box.
         #}
         {% set ns = namespace(cur=none, rms_new=none, outside=none) %}
-        {% if m and m.anchor_plan and (m.rms_room, m.rate_type_for(m.anchor_plan)) in latest_rms %}
-          {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_plan))] %}
+        {% if m and m.anchor_for(p.board or settings.benchmark_meal_plan) and (m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))) in latest_rms %}
+          {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)))] %}
         {% endif %}
         {% if ns.cur is not none and p.target is not none and p.our_price %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.cur, round_to=settings.round_to) %}
+          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.cur, round_to=settings.round_to, exact=p.exact) %}
           {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
         {% endif %}
         <td class="num proposed">
@@ -103,9 +138,13 @@
                    data-rule="{{ p.target|int if p.target is not none else '' }}"
                    data-our="{{ p.our_price }}"
                    data-cur="{{ ns.cur if ns.cur is not none else '' }}"
-                   data-plan="{{ m.anchor_plan or '' }}"
+                   data-plan="{{ m.anchor_for(p.board or settings.benchmark_meal_plan) or '' }}"
                    data-floor="{{ m.floor_amount if m.floor_amount is not none else '' }}"
                    data-ceiling="{{ m.ceiling_amount if m.ceiling_amount is not none else '' }}"
+                   {#- Whether the rule's own number is an instruction, so the
+                       script converts it to RMS the way to_rms() does. A price
+                       the owner types is always one, exact row or not. -#}
+                   data-exact="{{ '1' if p.exact else '' }}"
                    value="{{ p.target|int if p.target is not none else '' }}"
                    placeholder="type a price" aria-label="Proposed price for {{ p.room_name }}">
             <br><span class="muted change">{% if p.change_pct is not none %}{{ '%+.1f'|format(p.change_pct) }}%{% endif %}</span>
@@ -166,9 +205,20 @@
         <td class="num rms">
           {% if ns.cur is not none %}
             {{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>
-            <br><span class="muted">{{ m.anchor_plan }}; the other plans keep their supplement</span>
+            <br><span class="muted">{{ m.anchor_for(p.board or settings.benchmark_meal_plan) }}; the other plans keep their supplement</span>
           {% elif m %}
             <span class="muted">read the grid first (Preview)</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="num site">
+          {% if ns.cur and ns.rms_new is not none and p.our_price %}
+            <strong class="site-new">{{ money((ns.rms_new * p.our_price / ns.cur)|round|int) }}</strong>
+            <br><span class="muted">on Booking.com{% if settings.benchmark_with_tax %}, tax in{% endif %}</span>
+            {% if p.benchmark_entry %}
+              <br><span class="muted site-gap">vs {{ p.benchmark }} {{ money(p.market) }}</span>
+            {% endif %}
+          {% elif m %}
+            <span class="muted">Preview to see</span>
           {% else %}—{% endif %}
         </td>
         <td class="status">
@@ -185,10 +235,10 @@
         with the same share the main channel moves by, and theirs to change.
         A channel with no reading yet cannot be ticked: Preview reads them.
       #}
-      {% if m and m.is_enabled and p.our_price and m.anchor_plan %}
-      {% set anchor_row = m.rate_type_for(m.anchor_plan) %}
+      {% if m and m.is_enabled and p.our_price and m.anchor_for(p.board or settings.benchmark_meal_plan) %}
+      {% set anchor_row = m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)) %}
       <tr class="channels-row" data-room-type-id="{{ p.room_type_id }}">
-        <td colspan="9">
+        <td colspan="10">
           <div class="channel-picks">
             <span class="channel-picks-label">Change in RMS:</span>
             <label class="channel-pick main">
@@ -248,6 +298,19 @@
 
 <section class="repricing-section">
   <h2>The rule</h2>
+  {% if benchmark is defined and benchmark %}
+  <p class="muted">
+    You price against <strong>{{ benchmark.name }}</strong>. For each of your rooms the rule
+    takes their entry price for the same tier — their cheapest bookable room of that kind,
+    on the same site your own price comes from{% if settings.benchmark_with_tax %}, tax
+    included, as a guest sees it{% endif %} — and sets yours
+    <strong>₹{{ settings.benchmark_undercut|float|round|int }} under it</strong>. They raise,
+    you raise; they cut, you cut. A room they do not sell that night gets no proposal and
+    says so, rather than being priced against a room of a different kind.
+    The step cap, the floor and the ceiling still apply, and a room still moves
+    <strong>at most once per night</strong>.
+  </p>
+  {% else %}
   <p class="muted">
     The market figure is the <strong>median</strong> of every competitor's entry price
     in the same tier. Your room is not expected to match it: over the last
@@ -258,6 +321,7 @@
     capped by the step, held outside the floor or ceiling, and <strong>made at most once
     per room per night</strong>. Percentages are of our current price for the room.
   </p>
+  {% endif %}
   <form class="panel api-form rule-form" id="repricing-settings"
         data-endpoint="/api/v1/repricing/settings" data-method="PUT">
     <label class="checkbox rule-auto">
@@ -294,6 +358,83 @@
       </label>
       <label>Channel row in RMS
         <input type="text" name="channel" data-text value="{{ settings.channel }}">
+      </label>
+      {#
+        THE WHOLE RULE, when it is set. Everything above this box describes
+        the median rule, and none of it applies to a benchmarked room: the
+        price is their price less the gap, and the step, floor and ceiling
+        are the only settings above that still bite.
+      #}
+      <label class="wide">Price against
+        <select name="benchmark_hotel_id">
+          <option value="">every competitor — follow the median</option>
+          {% for c in (competitors if competitors is defined else []) %}
+            <option value="{{ c.id }}"{% if settings.benchmark_hotel_id == c.id %} selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+        <small class="muted">
+          Pick one hotel and your rate follows theirs: their entry price for the same tier,
+          less the gap below. They go up, you go up; they come down, you come down. The
+          median, the usual gap and the weekend and sold-out lifts are all switched off —
+          the number is their price minus the gap and nothing else.
+        </small>
+      </label>
+      <label>Sit under them by
+        <span class="with-unit"><span class="unit">₹</span><input type="number" name="benchmark_undercut"
+               step="10" min="0" max="100000" value="{{ settings.benchmark_undercut|float|round|int }}"></span>
+        <small class="muted">rupees, not a percent — a gap that does not move when they move</small>
+      </label>
+      {#
+        ROOM FOR ROOM, BY NAME. The rooms that actually compete are called
+        "Deluxe Double Room" here and "Classic room" there; no reading of
+        those names will pair them, so the owner does it once and the rule
+        follows it. A room left unpaired is priced by nobody rather than
+        given a comparison that was never chosen.
+
+        The map is posted as one JSON field because the api-form handler
+        sends flat values; the script below keeps it in step with the
+        selects, so nothing here depends on a serialiser that understands
+        nested names.
+      #}
+      <fieldset class="wide room-pairs">
+        <legend>Which room of theirs each of yours competes with</legend>
+        <input type="hidden" name="benchmark_room_pairs" data-json
+               value='{{ (settings.benchmark_room_pairs or {}) | tojson }}'>
+        {% for r in (rooms if rooms is defined else []) %}
+          {% set chosen = (settings.benchmark_room_pairs or {}).get(r.id|string) %}
+          <label>{{ r.name }}
+            <select class="pair-select" data-room-type-id="{{ r.id }}">
+              <option value="">— not priced from them —</option>
+              {% for name in (benchmark_rooms if benchmark_rooms is defined else []) %}
+                <option value="{{ name }}"{% if chosen == name %} selected{% endif %}>{{ name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        {% endfor %}
+        {% if not (benchmark_rooms if benchmark_rooms is defined else []) %}
+          <p class="muted">Pick a hotel to price against first, and its rooms will appear here.</p>
+        {% endif %}
+      </fieldset>
+      <label class="wide">Compare rates that include
+        <select name="benchmark_meal_plan">
+          <option value=""{% if not settings.benchmark_meal_plan %} selected{% endif %}>whatever is cheapest</option>
+          {% for plan in ("Room Only", "Breakfast", "Breakfast and Dinner") %}
+            <option value="{{ plan }}"{% if settings.benchmark_meal_plan == plan %} selected{% endif %}>{{ plan }}</option>
+          {% endfor %}
+        </select>
+        <small class="muted">
+          Both sides quoted on the same board. The supplements are not alike — adding
+          breakfast cost us ₹374 and Sterling ₹1,350 on the same night — so an unpinned
+          board compares two different products.
+        </small>
+      </label>
+      <label class="checkbox wide">
+        <input type="checkbox" name="benchmark_with_tax" value="true"
+               {% if settings.benchmark_with_tax %}checked{% endif %}>
+        <span>Measure the gap on <strong>what the guest pays</strong>, tax included
+          <small class="muted">The two tax lines are not the same — Booking.com printed 5.68% on
+            ours and 5.01% on Sterling's on one night — so ₹100 under them before tax is not
+            ₹100 under them on screen. Off compares the rate alone.</small></span>
       </label>
     </div>
     <div class="actions">

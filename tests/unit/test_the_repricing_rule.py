@@ -23,9 +23,10 @@ ANANTHYAM = SimpleNamespace(id=1, name="Ananthyam")
 THANGA = SimpleNamespace(id=12, name="Thanga Kottai")
 
 
-def _series(room_type_id: int, excl: str, available: bool = True, night: date = date(2026, 9, 18)):
+def _series(room_type_id: int, excl: str, available: bool = True, night: date = date(2026, 9, 18),
+            source_id: int = 2):
     return SimpleNamespace(
-        room_type_id=room_type_id, is_available=available,
+        room_type_id=room_type_id, is_available=available, source_id=source_id,
         last_price_exclusive=Decimal(excl), last_taxes_fees=Decimal("0"),
         last_price_inclusive=None, currency="INR",
         check_in=night, check_out=night + timedelta(days=1),

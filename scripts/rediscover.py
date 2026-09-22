@@ -100,8 +100,22 @@ def _sources(match: str | None) -> list[tuple[int, str, str | None]]:
             .order_by(Hotel.name)
         ).all()
     if match:
+        # BY ID, NAME OR URL. --list has always printed the id in brackets,
+        # which reads as an offer to use it, and until now only the hotel
+        # name was accepted. That was harmless while every hotel had one
+        # source and became wrong the moment one had two: Sterling is on
+        # Booking.com AND on its own engine, both rows are called
+        # "Sterling", and naming the hotel rediscovers both -- including the
+        # one nobody asked about.
+        #
+        # The URL is matched too, because that is the other thing on the
+        # --list line and the only one that says which site a row is.
         needle = match.lower()
-        rows = [r for r in rows if needle in r[1].lower()]
+        if needle.isdigit():
+            rows = [r for r in rows if r[0] == int(needle)]
+        else:
+            rows = [r for r in rows
+                    if needle in r[1].lower() or needle in (r[2] or "").lower()]
     return [(r[0], r[1], r[2]) for r in rows]
 
 
