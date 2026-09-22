@@ -1730,6 +1730,36 @@ ul.plain li { padding: .1em 0; }
    The plan's name leads each line so three numbers in a narrow column read as
    three rates rather than one sum with workings. The followers are quieter:
    they are consequences of the first line, not decisions. */
+/* THE DATA SOURCE FORMS, under a table that spans the panel.
+   They were `.stack`, which is a 460px column -- right for a form of several
+   fields, wrong for one field and a button. Every button stretched to 460px,
+   the caption sat on its own line above a lonely input, and the whole thing
+   hugged the left edge of a full-width panel with white space beside it. A
+   URL is a long value: give it the room the table above it already takes. */
+.source-forms { margin-top: var(--s4); }
+.source-form {
+  display: flex; flex-direction: column; gap: 6px;
+  max-width: 880px; margin-bottom: var(--s4);
+}
+.source-form-label { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.source-form-label .muted { font-weight: 400; }
+.source-form .field-row { display: flex; gap: var(--s2); align-items: center; }
+/* min-width:0 or the input refuses to shrink below its size attribute and
+   pushes the button off the panel on a narrow window. */
+.source-form .field-row input { flex: 1 1 auto; min-width: 0; }
+.source-form .field-row button { flex: 0 0 auto; white-space: nowrap; }
+.source-form .form-status { margin: 0; }
+.source-forms-note, .source-form > .muted {
+  max-width: 880px; margin: 0 0 var(--s4); font-size: 12px; line-height: 1.5;
+}
+.source-form-add { margin-top: var(--s5); }
+
+@media (max-width: 720px) {
+  /* The button under the field rather than beside it: at this width they
+     would each be too narrow to read. */
+  .source-form .field-row { flex-direction: column; align-items: stretch; }
+}
+
 .rms-plan { display: inline-block; white-space: nowrap; }
 .rms-plan .plan {
   display: inline-block; min-width: 2.6em; margin-right: 4px;

@@ -496,28 +496,35 @@
       forever and the prices would go stale while still looking current — so
       the URL is re-detected exactly as it was on attach.
     #}
-    {% for hotel_source, source in sources %}
-    <form class="stack replace-url" style="margin-top:12px"
-          data-hotel-source-id="{{ hotel_source.id }}">
-      <label>
-        Replace the booking link
-        {% if sources|length > 1 %}<span class="muted">— {{ source.display_name }}</span>{% endif %}
-        <input name="url" size="70" required placeholder="https://…">
-      </label>
-      <label class="inline confirm-discard" hidden>
-        <input type="checkbox" name="discard_history" value="true">
-        Yes — this is a different property, drop the stored baselines
-      </label>
-      <button type="submit">Re-detect and save</button>
-      <p class="form-status" hidden></p>
-      <span class="muted">
+    {#
+      ONE PARAGRAPH, NOT ONE PER SOURCE. The caveat below is about the act,
+      not about any one site, and repeating it under every Replace box pushed
+      the box that adds a site off the bottom of the panel -- which is how a
+      hotel with two sources came to look like it had no way to gain a third.
+    #}
+    <div class="source-forms">
+      {% for hotel_source, source in sources %}
+      <form class="replace-url source-form" data-hotel-source-id="{{ hotel_source.id }}">
+        <span class="source-form-label">Replace the booking link
+          {% if sources|length > 1 %}<span class="muted">— {{ source.display_name }}</span>{% endif %}</span>
+        <span class="field-row">
+          <input name="url" required placeholder="https://…">
+          <button type="submit">Re-detect and save</button>
+        </span>
+        <label class="inline confirm-discard" hidden>
+          <input type="checkbox" name="discard_history" value="true">
+          Yes — this is a different property, drop the stored baselines
+        </label>
+        <p class="form-status" hidden></p>
+      </form>
+      {% endfor %}
+      <p class="muted source-forms-note">
         Paste the corrected page while it is showing rates for specific dates.
         If it turns out to be a different property, this will stop and ask:
         prices already collected belong to the old one, and comparing the two
         would report the gap between two hotels as a price change.
-      </span>
-    </form>
-    {% endfor %}
+      </p>
+    </div>
     {% endif %}
 
     {#
@@ -539,14 +546,16 @@
       Hotelzify source is refused, correctly and confusingly.
     #}
     {% if is_admin %}
-    <form class="stack api-form" style="margin-top:12px"
+    <form class="api-form source-form source-form-add"
           data-endpoint="/api/v1/hotels/{{ hotel.id }}/sources/from-url"
           data-method="POST"
           data-busy="Inspecting the page…"
           data-busy-note="Opening the page in a browser and looking for its prices. This can take up to a minute for a site not seen before.">
-      <label>{{ "Add another site" if has_source else "Booking URL" }}
-        <input name="url" size="70" required placeholder="https://…"></label>
-      <button type="submit">Detect and attach</button>
+      <span class="source-form-label">{{ "Add another site" if has_source else "Booking URL" }}</span>
+      <span class="field-row">
+        <input name="url" required placeholder="https://…">
+        <button type="submit">Detect and attach</button>
+      </span>
       <p class="form-status" hidden></p>
       <span class="muted">
         {% if has_source %}A hotel can be watched on several sites at once —
