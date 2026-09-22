@@ -83,7 +83,8 @@ from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
 from app.services.price_display import cheapest as cheapest_shown
 from app.services.price_display import (
-    Shown, displayed_price, displayed_price_sql, entry_rows, is_on_asked_basis_sql,
+    Shown, displayed_price, displayed_price_sql, entry_offers, entry_rows,
+    is_on_asked_basis_sql,
 )
 from app.services.room_category import CATEGORIES, classify, is_category, label_for
 
@@ -1332,11 +1333,31 @@ async def hotel_detail(
         )
     ).all()
 
+    show_with_tax = await _show_prices_with_tax(session)
+
+    # ONE ROW PER ROOM, as on the matrix and the comparison grid. This table
+    # is "tonight's prices", and a room sold room-only, with breakfast and
+    # with dinner filed three rows of it -- one tracked on two sites, six --
+    # every one under the same room's name:
+    #
+    #     Classic Room  Breakfast   5,316
+    #     Classic Room  Room Only   4,040
+    #     Classic Room  Room Only   3,454.99
+    #
+    # which reads as three Classic Rooms. The entry price is the figure the
+    # rest of the system compares on, so it is the one this page shows too.
+    # See price_display.entry_offers; the same rule decides all three screens.
+    prices = entry_offers(
+        prices, show_with_tax,
+        key=lambda row: getattr(row[0], "room_type_id", None)
+        or " ".join(str(row[1] or "").split()).casefold(),
+        series_of=lambda row: row[0],
+    )
+
     unlisted_keys = unlisted_offer_keys([row[0] for row in prices])
 
     # Keyed by offer_key rather than folded into the rows above, so the tuple
     # shape the rest of this handler reads stays what it was.
-    show_with_tax = await _show_prices_with_tax(session)
     shown_prices = {
         series.offer_key: displayed_price(series, show_with_tax) for series, _ in prices
     }

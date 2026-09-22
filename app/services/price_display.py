@@ -326,26 +326,42 @@ def entry_rows(rows, show_with_tax: bool) -> list:
     hotel's own room order, and a grid that reshuffled on every fetch would
     be unreadable.
     """
-    best: dict[tuple, tuple] = {}
-    first_seen: dict[tuple, int] = {}
-    for position, row in enumerate(rows):
-        series, hotel, room_name = row
+    return entry_offers(
+        rows, show_with_tax,
         # BY ROOM, AND BY NAME WHEN THERE IS NO ROOM. The id is the honest
         # key -- two sites can spell one room differently and it is still one
         # room -- but the grids draw names, so two cells reading "Deluxe
         # Double Room" are a repetition to whoever is looking whatever the
         # ids say. The name is also all a caller assembling rows by hand has.
-        key = (hotel.id, getattr(series, "room_type_id", None)
-               or " ".join(str(room_name or "").split()).casefold())
+        key=lambda row: (row[1].id, getattr(row[0], "room_type_id", None)
+                         or " ".join(str(row[2] or "").split()).casefold()),
+        series_of=lambda row: row[0],
+    )
+
+
+def entry_offers(rows, show_with_tax: bool, *, key, series_of) -> list:
+    """:func:`entry_rows` for rows of any shape: ``key`` says what makes two
+    of them the same room, ``series_of`` finds the price on one.
+
+    Separate because the screens hold their rows differently -- the grids
+    carry ``(series, hotel, room_name)`` and a hotel's own page, being about
+    one hotel, carries ``(series, room_name)`` -- and the rule for which
+    offer survives must not be written twice and drift.
+    """
+    best: dict[object, tuple] = {}
+    first_seen: dict[object, int] = {}
+    for position, row in enumerate(rows):
+        series = series_of(row)
+        k = key(row)
         amount = displayed_price(series, show_with_tax).amount
         # Available beats sold out; then cheapest. A missing price sorts last
         # so a row that could not be read never wins over one that could.
         rank = (0 if series.is_available else 1,
                 amount if amount is not None else Decimal("Infinity"))
-        if key not in best or rank < best[key][0]:
-            best[key] = (rank, row)
-        first_seen.setdefault(key, position)
-    return [best[key][1] for key in sorted(best, key=lambda k: first_seen[k])]
+        if k not in best or rank < best[k][0]:
+            best[k] = (rank, row)
+        first_seen.setdefault(k, position)
+    return [best[k][1] for k in sorted(best, key=lambda x: first_seen[x])]
 
 
 def cheapest(shown: list[Shown]) -> Decimal | None:
