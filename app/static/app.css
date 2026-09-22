@@ -244,6 +244,14 @@ section > h2:first-child { margin-top: 0; }
    above tabular numbers it sits at the far side of its own column, which reads
    as belonging to the column before it -- the wider the column, the worse. */
 .grid th.num { text-align: right; }
+/* THE SMALL PRINT IN A HEADER IS STILL PRINT. "with tax", "vs Sterling",
+   "(not applied)" -- each one qualifies the column it sits in, and each one
+   took the page's --muted, a grey chosen for near-white rows. On the dark
+   green band that lands around 1.5:1: the words are there and cannot be read.
+   The header's own white, dialled back, so they stay secondary to the label
+   above them and still clear the contrast line. */
+.grid th .muted,
+.grid th small { color: rgba(255, 255, 255, .88); }
 .grid td { padding: 11px var(--s4); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .grid tbody tr:first-child td { padding-top: 13px; }
 .grid tbody tr:last-child td { border-bottom: none; }
