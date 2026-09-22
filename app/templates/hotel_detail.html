@@ -520,14 +520,39 @@
     {% endfor %}
     {% endif %}
 
-    {% if is_admin and not has_source %}
+    {#
+      A HOTEL IS SOLD IN MORE THAN ONE PLACE, and this box used to disappear
+      the moment it was sold in one.
+
+      It was gated on ``not has_source`` because it is also step 1 of the
+      setup wizard above, and a second copy of that step would be noise on a
+      hotel already collecting. But it is the ONLY way to attach a site, so
+      hiding it made the second site unreachable: a competitor tracked on
+      their own engine could never be added on Booking.com, which is exactly
+      the comparison the repricing rule needs -- it prices against their
+      rate on the site our own price comes from, and that site has to exist
+      as a source before it can be read.
+
+      The way back was "Replace the booking link", which is a different act
+      with a different meaning: it swaps THIS source's URL and checks the new
+      one is still the same engine, so pasting a Booking.com link into a
+      Hotelzify source is refused, correctly and confusingly.
+    #}
+    {% if is_admin %}
     <form class="stack api-form" style="margin-top:12px"
           data-endpoint="/api/v1/hotels/{{ hotel.id }}/sources/from-url"
-          data-method="POST">
-      <label>Booking URL <input name="url" size="70" required placeholder="https://…"></label>
+          data-method="POST"
+          data-busy="Inspecting the page…"
+          data-busy-note="Opening the page in a browser and looking for its prices. This can take up to a minute for a site not seen before.">
+      <label>{{ "Add another site" if has_source else "Booking URL" }}
+        <input name="url" size="70" required placeholder="https://…"></label>
       <button type="submit">Detect and attach</button>
       <p class="form-status" hidden></p>
       <span class="muted">
+        {% if has_source %}A hotel can be watched on several sites at once —
+        its own engine and an OTA, say. Each is priced and shown separately.
+        To CHANGE one of the links above, use its own Replace box: that one
+        keeps the engine and only moves the URL.<br>{% endif %}
         Recognised: {% for e in known_engines %}<code>{{ e.domains|join(', ') }}</code>{{ ", " if not loop.last }}{% endfor %}.
         Anything else needs <code>scripts/probe_site.py</code> first — this will
         not invent a configuration for a site nobody has inspected.
