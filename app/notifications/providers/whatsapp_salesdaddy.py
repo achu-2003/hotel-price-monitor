@@ -38,6 +38,16 @@ from app.notifications.base import (
 )
 from app.notifications.providers.whatsapp_cloud import _clean
 
+#: What a newline becomes in a parameter on THIS route.
+#:
+#: A middle dot, not a space: the slots that carry newlines are laid out as
+#: blocks -- a property name with its rooms under it, or the stamp with the
+#: comparison link after it -- and flattening those on a space runs the heading
+#: into the first room. The separator is the one the stamp already uses, so a
+#: flattened block reads as a list rather than as a sentence that lost its
+#: punctuation.
+_NEWLINE_AS = " · "
+
 log = get_logger("notify.whatsapp.salesdaddy")
 
 _TIMEOUT = httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0)
@@ -55,6 +65,26 @@ _PERMANENT_ERRORS = {
     "invalid_number",
     "invalid_request",
 }
+
+
+def _one_line(text: str) -> str:
+    """``_clean`` output with its newlines turned into separators.
+
+    Empty lines are dropped rather than separated: a block written with a
+    blank line between its parts would otherwise flatten to " ·  · ".
+
+    A line that ends in a colon keeps a plain space after it, because it is a
+    label for the line below rather than an item beside it. Without that the
+    comparison link arrives as "See the full comparison: · https://..." --
+    punctuation where a reader expects the thing being announced.
+    """
+    parts = [part for part in text.splitlines() if part]
+    if not parts:
+        return text
+    out = parts[0]
+    for part in parts[1:]:
+        out += (" " if out.endswith(":") else _NEWLINE_AS) + part
+    return out
 
 
 class SalesDaddyWhatsAppProvider:
@@ -126,8 +156,38 @@ class SalesDaddyWhatsAppProvider:
             "template": template,
             "language": settings.whatsapp_template_lang,
             # Meta's rules on a variable still apply underneath, so the same
-            # cleaning as the direct Meta path.
-            "params": [_clean(p) for p in params],
+            # cleaning as the direct Meta path -- AND ONE MORE THAT IS THIS
+            # ROUTE'S ALONE.
+            #
+            # THE NEWLINE IS BACK ON THE FORBIDDEN LIST, FOR SALES DADDY.
+            #
+            # ``_clean`` deliberately keeps newlines: one was accepted on 9 Sep
+            # 2026 and arrived laid out on the handset, and ``render`` has used
+            # that ever since to make a slot a block. That measurement was
+            # taken on the direct Meta path. It does not hold here.
+            #
+            # On 23 Sep 2026 the first price_change alert through an approved
+            # template was accepted by Sales Daddy (200, status ``queued``,
+            # id 3e28d284) and then rejected by Meta:
+            #
+            #     (#132018) There's an issue with the parameters in your template
+            #
+            # The same seven parameters with their newlines flattened, sent a
+            # minute later (id 4db41013), reached the handset and were read.
+            # Nothing else differed -- same template, same language, same
+            # count, same rupee signs and arrows. The newline is the whole of
+            # the difference.
+            #
+            # It matters most for the summary, whose every slot is a block by
+            # design (``render._summary_params``), so that template would have
+            # failed the same way the moment it was approved -- accepted, then
+            # silently dropped, which is the failure this codebase has already
+            # chased once.
+            #
+            # Here and not in ``render``: the message is the same message, and
+            # which characters survive is a fact about the transport carrying
+            # it. The email and the dashboard keep their line breaks.
+            "params": [_one_line(_clean(p)) for p in params],
             # Creates or updates the lead in the Sales Daddy inbox, so the
             # conversation there is labelled with who it is.
             "name": destination.name,
