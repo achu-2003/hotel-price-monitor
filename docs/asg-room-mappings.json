@@ -1,0 +1,60 @@
+{
+  "owner": "ags@123",
+  "mappings": [
+    {
+      "hotel": "ASG HOLIDAY RESORTS",
+      "room": "Deluxe Double Room",
+      "rms_room": "CLASSIC",
+      "rate_type_ep": "Online Rate EP",
+      "rate_type_cp": "Online Rate CP",
+      "rate_type_map": "Online Rate MAP",
+      "floor_amount": "5700.00",
+      "ceiling_amount": null,
+      "is_enabled": true
+    },
+    {
+      "hotel": "ASG HOLIDAY RESORTS",
+      "room": "Junior Suite",
+      "rms_room": "Luxury Villa",
+      "rate_type_ep": "Online Rate EP",
+      "rate_type_cp": "Online Rate CP",
+      "rate_type_map": "Online Rate MAP",
+      "floor_amount": "13000.00",
+      "ceiling_amount": null,
+      "is_enabled": true
+    },
+    {
+      "hotel": "ASG HOLIDAY RESORTS",
+      "room": "Standard Double Room",
+      "rms_room": "DELUXE",
+      "rate_type_ep": null,
+      "rate_type_cp": "Online Rate CP",
+      "rate_type_map": null,
+      "floor_amount": "4900.00",
+      "ceiling_amount": null,
+      "is_enabled": true
+    },
+    {
+      "hotel": "ASG HOLIDAY RESORTS",
+      "room": "Superior King Room",
+      "rms_room": "HONEYMOON SUITE",
+      "rate_type_ep": null,
+      "rate_type_cp": "Online Rate CP",
+      "rate_type_map": null,
+      "floor_amount": "15000.00",
+      "ceiling_amount": null,
+      "is_enabled": true
+    },
+    {
+      "hotel": "ASG HOLIDAY RESORTS",
+      "room": "Family Suite",
+      "rms_room": "SUITE",
+      "rate_type_ep": "Online Rate EP",
+      "rate_type_cp": "Online Rate CP",
+      "rate_type_map": "Online Rate MAP",
+      "floor_amount": "10000.00",
+      "ceiling_amount": null,
+      "is_enabled": true
+    }
+  ]
+}
