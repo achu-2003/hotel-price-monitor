@@ -2054,6 +2054,32 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     # keyed ``(channel, rms_room, rate_type)``. Read from the last week of
     # rows rather than the log on /notifications: one Preview reads every
     # channel and would push the main channel's figures out of a short log.
+    #
+    # ONE NIGHT'S CELLS, AND ONLY THAT NIGHT'S.
+    #
+    # The RMS grid is a cell PER DATE, and ``read_rate(..., day_index=0)``
+    # reads tonight's column. This query had no ``check_in`` filter, so the
+    # key ``(rms_room, rate_type)`` collapsed every night into one entry and
+    # the newest row won whatever night it was about. That is harmless while
+    # the page is open on the day it was written and wrong the moment the
+    # date rolls over.
+    #
+    # On 23 Sep it showed as two rooms "held, below this room's RMS floor"
+    # with nothing whatever having changed: our price (7,586 / 7,140) and
+    # Sterling's (4,636 / 5,316) were to the rupee what they were when the
+    # same rooms applied cleanly at 10:16 the night before. What the page
+    # had was 22 SEPTEMBER's cells -- DELUXE 5,082 and CLASSIC 5,844, the
+    # rates that run had just written -- offered as tonight's. Dividing by a
+    # rate that already contains yesterday's cut proposes the cut a second
+    # time: 5,082 -> 3,040, under a 4,900 floor the true 8,500 clears
+    # comfortably. The suites were worse, still showing 17-18 Sep.
+    #
+    # ``ratio_base`` below has always filtered on the night, which is why
+    # the guard against exactly this double cut went empty at midnight and
+    # stopped guarding: the two halves disagreed about which night they
+    # were describing. They now agree, and a night nothing has read simply
+    # has no reading -- which the row says ("read the grid first"), instead
+    # of inventing one from yesterday. Preview fills it in.
     latest_rms: dict[tuple[str, str], object] = {}
     channel_rms: dict[tuple[str, str, str], object] = {}
     readings = (
@@ -2062,6 +2088,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                 RepricingAction.owner_user_id == user.id,
                 RepricingAction.rms_room.isnot(None),
                 RepricingAction.rms_rate_type.isnot(None),
+                RepricingAction.check_in == check_in,
                 RepricingAction.created_at >= datetime.now(UTC) - timedelta(days=7),
             ).order_by(RepricingAction.created_at.desc()).limit(2000)
         )
