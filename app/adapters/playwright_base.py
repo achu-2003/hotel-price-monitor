@@ -48,6 +48,7 @@ from app.core.errors import (
     BlockedError,
     BrowserCrashError,
     FetchError,
+    HttpStatusError,
     NetworkError,
     TimeoutError_,
 )
@@ -392,7 +393,30 @@ def open_page(
         _install_json_capture(page, captured)
 
         try:
-            page.goto(url, wait_until=wait_until, timeout=settings.browser_nav_timeout_ms)
+            response = page.goto(
+                url, wait_until=wait_until, timeout=settings.browser_nav_timeout_ms
+            )
+            # THE STATUS, BEFORE ANYBODY PARSES THE BODY. Chromium renders a
+            # 502 as happily as a hotel page, so without this the site's error
+            # page reaches the adapter and its selectors match nothing -- which
+            # is then reported as a redesign, alerts somebody, and spends a
+            # rediscovery attempt on a page that never had a room table.
+            #
+            # Here rather than in one adapter because every adapter navigates
+            # through this function, and a site having a bad minute is not a
+            # fact about the adapter that happened to ask.
+            #
+            # 5xx ONLY. A 4xx is ours to fix -- a wrong URL, a dropped
+            # affiliate parameter, a page that has genuinely gone -- and
+            # retrying it three times would hammer the site and hide it. It
+            # falls through to the parse-stage checks, which say what was on
+            # the page rather than guessing from a number.
+            if response is not None and response.status >= 500:
+                raise HttpStatusError(
+                    f"{response.status} from {url}",
+                    status_code=response.status,
+                    context={"url": url},
+                )
         except PlaywrightTimeout as exc:
             raise TimeoutError_(
                 f"Timed out loading {url}", context={"url": url}

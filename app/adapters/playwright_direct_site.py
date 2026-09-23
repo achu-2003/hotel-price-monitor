@@ -33,6 +33,7 @@ All of it is configuration on ``hotel_sources.adapter_config``:
 """
 from __future__ import annotations
 
+import re
 import time
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -60,7 +61,11 @@ from app.adapters.parsing import (
 from app.adapters.playwright_base import BrowserFetch, build_user_agent, open_page
 from app.adapters.robots import RobotsChecker
 from app.config import get_settings
-from app.core.errors import AdapterConfigError, SchemaDriftError
+from app.core.errors import (
+    AdapterConfigError,
+    HttpStatusError,
+    SchemaDriftError,
+)
 from app.core.logging import get_logger
 from app.core.ratelimit import get_redis
 from app.services import meal_plan
@@ -371,6 +376,24 @@ class PlaywrightDirectSiteAdapter:
                 log.info("sold_out_detected", hotel=context.hotel_name,
                          page_text_chars=len(body))
                 return [], True
+            # ASKED BEFORE DRIFT IS ALLEGED, for the same reason the sold-out
+            # phrase is: a page the site never rendered cannot testify about
+            # our selectors. Both of these raise TRANSIENT classes, which is
+            # what keeps them out of rediscovery.REPAIRABLE and stops a bad
+            # minute at the source from spending a repair attempt.
+            status = _served_an_error_page(body)
+            if status is not None:
+                log.info("error_page_served", hotel=context.hotel_name,
+                         status_code=status, page_text_chars=len(body))
+                raise HttpStatusError(
+                    f"The site served its own error page, not the hotel's: "
+                    f"{len(body):,} characters of text naming error code "
+                    f"{status}. Nothing was read, so {card_selector!r} "
+                    f"matching nothing says nothing about the selector.",
+                    status_code=status,
+                    context={"selector": card_selector, "hotel": context.hotel_name,
+                             "page_text_chars": len(body)},
+                )
             # What was searched, and how much of it. The old message asserted
             # a redesign and offered nothing to check that claim against, so
             # a marker this list is simply missing looks identical, on the
@@ -827,6 +850,44 @@ def _element_text(element) -> str:
         return " ".join((element.inner_text() or "").split())
     except PlaywrightError:
         return ""
+
+
+#: "Oops! Something went wrong on our end ... Error code: 502. Try again."
+_ERROR_CODE = re.compile(r"error\s*code:?\s*(5\d\d)", re.IGNORECASE)
+
+
+def _served_an_error_page(body: str) -> int | None:
+    """Did the site hand back its own error page instead of the hotel's?
+
+    THE PAGE WAS NEVER READ, AND THAT IS A DIFFERENT FAULT. A selector that
+    matches nothing on a page the site never rendered says nothing whatever
+    about the selector, and reporting it as drift costs three things at once:
+    an alert somebody has to close, a rediscovery attempt spent on a page with
+    nothing to teach -- ``rediscovery.REPAIRABLE`` admits schema drift exactly
+    because it is supposed to mean "the page no longer matches what we stored"
+    -- and, if that repair writes anything, the evidence that the site was
+    merely having a bad minute.
+
+    Seen in production on three of sixty-one runs for one hotel in a day, and
+    two or three in ~380 over ten days for two others: the same 2,894-byte
+    page each time. A redesign does not fail three runs in sixty-one, and the
+    shape of the mistake is what makes it expensive -- a site that is down for
+    a minute is indistinguishable, on the screen where somebody has to act,
+    from one that has moved its markup.
+
+    This is the sold-out check's twin. Both stand between "nothing matched"
+    and "the markup moved", and both exist because that inference was being
+    drawn from a page that could not support it.
+
+    ASKS ONLY WHAT THE PAGE SAYS OF ITSELF. A short page is suggestive and
+    nothing more, and "too short to be real" is a judgement that collides with
+    a decision already made and tested here: an empty page still raises drift,
+    because the alert has to fire for a site that really did move its markup
+    and silence is the one outcome that cannot be recovered from. So this
+    returns a code only when the page names one, and says nothing otherwise.
+    """
+    found = _ERROR_CODE.search(body)
+    return int(found.group(1)) if found else None
 
 
 def _page_says_sold_out(page, config: dict, wait_ms: int = 0) -> tuple[bool, str]:

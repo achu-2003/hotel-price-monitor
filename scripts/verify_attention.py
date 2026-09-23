@@ -36,8 +36,14 @@ from app.services.ingest import IngestSummary  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 
 
+#: A live Booking.com hotel page saves at about 1.9 MB; the error page seen in
+#: production saves at 2,894 bytes. Anything under this never held a room table,
+#: so a selector "missing" from it is missing from nothing.
+_ERROR_PAGE_MAX_BYTES = 20_000
+
+
 def _find_saved_page(html_path: str | None) -> Path | None:
-    """The artifact the fetcher saved, wherever this box actually keeps it.
+    r"""The artifact the fetcher saved, wherever this box actually keeps it.
 
     The stored path is whatever ARTIFACT_DIR was when the row was written, and
     that has been three different things: a POSIX '/data/artifacts' inherited
@@ -151,6 +157,28 @@ with sync_session() as session:
             print(f"    >> BLOCK PAGE. The site refused us: {blocks[0]}")
             print("       The fetcher never had the hotel page, so nothing here "
                   "says anything about the selector.")
+            continue
+
+        # THE SITE'S OWN ERROR PAGE: not a refusal, and not a redesign.
+        # Booking.com's reads "Oops! Something went wrong on our end ... Error
+        # code: 502. Try again." and carries not one of the phrases above, so
+        # it fell through to the class test below -- where a 2,894-byte error
+        # page is of course missing every class it is asked about, and was
+        # reported as "this one may really be a redesign" every time. Three
+        # such runs in sixty-one for one hotel in a day, and the same page
+        # saved for two others on other days.
+        #
+        # Bytes of MARKUP here, against characters of rendered TEXT in the
+        # adapter: the two measure different things and must not share a
+        # number. A live Booking.com page saves at about 1.9 MB, so anything
+        # under this never had a hotel in it.
+        code = re.search(r"error\s*code:?\s*(5\d\d)", body, re.IGNORECASE)
+        if code or len(body) < _ERROR_PAGE_MAX_BYTES:
+            why = f"error code {code.group(1)}" if code else f"only {len(body):,} bytes"
+            print(f"    >> THE SITE'S ERROR PAGE, not the hotel's: {why}.")
+            print("       Nothing rendered, so the selector is not on trial here. "
+                  "Transient, and no longer reaches this screen at all -- see "
+                  "_served_an_error_page in adapters/playwright_direct_site.py.")
             continue
 
         # THE DECISIVE TEST. Every class in the selector it says matched
