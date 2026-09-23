@@ -600,6 +600,11 @@ async def _show_prices_with_tax(session) -> bool:
 async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
     """The night the comparison screen opens on, and the sentence saying why.
 
+    TONIGHT FIRST. Everything below is what to do when tonight has no prices
+    yet; while it has any, tonight is the answer, because that is the night
+    Repricing is about and two screens disagreeing about which night they
+    show is worse than either choice of default.
+
     A NIGHT ONE HOTEL HAS IS NOT A NIGHT WORTH COMPARING
     ====================================================
     This used to be ``MAX(check_in)`` over everything collected, which is the
@@ -635,6 +640,32 @@ async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
         )
         .order_by(PriceSeries.check_in.desc())
     )
+    # TONIGHT, WHENEVER TONIGHT HAS PRICES AT ALL.
+    #
+    # Repricing computes its night as local_today and every proposal on it is
+    # about tonight. A matrix that opens on a different date is two screens
+    # describing two different nights with nothing on either saying so, and
+    # the owner comparing a number from one against a number from the other.
+    #
+    # It also closes the gap the rule below cannot. A night counts as
+    # monitored if some target asked about it, and a target watching a window
+    # weeks out -- ASG has a second Booking.com target doing exactly that --
+    # makes a night only that one hotel is priced for the newest monitored
+    # one. Legitimately monitored, and still a comparison of one property
+    # against nobody, which is the failure the rest of this docstring is
+    # about arriving by a road the fix did not cover.
+    #
+    # Falls through when tonight holds nothing yet, so the first morning
+    # before any fetch still opens on real prices rather than an empty grid.
+    # The row's own check_out is returned rather than tonight + 1: a target
+    # on a two-night stay files its prices under its own window.
+    tonight = local_today()
+    row = (await session.execute(
+        collected.where(PriceSeries.check_in == tonight).limit(1)
+    )).first()
+    if row is not None:
+        return row.check_in, row.check_out, "Showing tonight."
+
     # Correlated on the two date columns of the row being considered: "was
     # this night ever asked about, for a hotel of yours?"
     #
