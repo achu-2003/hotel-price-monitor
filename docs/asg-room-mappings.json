@@ -1,5 +1,24 @@
 {
   "owner": "ags@123",
+  "settings": {
+    "position_pct": "0.00",
+    "max_step_pct": "50.00",
+    "floor_pct": "50.00",
+    "ceiling_pct": "50.00",
+    "min_competitors": 2,
+    "round_to": 10,
+    "channel": "Booking.com",
+    "weekend_pct": "0.00",
+    "sold_out_pct": "10.00",
+    "benchmark_undercut": "100.00",
+    "benchmark_with_tax": true,
+    "benchmark_meal_plan": "Breakfast",
+    "benchmark_hotel": "Sterling",
+    "benchmark_room_pairs": {
+      "Deluxe Double Room": "Classic Room",
+      "Standard Double Room": "Mountain View Classic Room"
+    }
+  },
   "mappings": [
     {
       "hotel": "ASG HOLIDAY RESORTS",

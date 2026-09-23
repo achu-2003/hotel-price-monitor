@@ -78,6 +78,30 @@ FIELDS = (
 )
 
 
+#: The rule's own numbers. Carried by name where they point at a row:
+#: ``benchmark_hotel_id`` and the keys of ``benchmark_room_pairs`` are ids,
+#: and ids are per database exactly as room_type_id is.
+#:
+#: ``auto_enabled`` IS DELIBERATELY NOT HERE. Copying a file must never be
+#: what starts a machine moving live rates by itself; that switch has its own
+#: endpoint and its own audit line on purpose, and it should stay a thing
+#: somebody turns on while looking at the page it affects.
+SETTINGS_FIELDS = (
+    "position_pct",
+    "max_step_pct",
+    "floor_pct",
+    "ceiling_pct",
+    "min_competitors",
+    "round_to",
+    "channel",
+    "weekend_pct",
+    "sold_out_pct",
+    "benchmark_undercut",
+    "benchmark_with_tax",
+    "benchmark_meal_plan",
+)
+
+
 def _owner(session, username: str | None) -> tuple[int, str]:
     """The account the mappings belong to.
 
@@ -103,6 +127,76 @@ def _owner(session, username: str | None) -> tuple[int, str]:
     )
 
 
+def _settings_out(session, owner_id: int) -> dict | None:
+    """The rule, with every id turned back into the name it stands for."""
+    row = session.execute(
+        text(
+            "select " + ", ".join(SETTINGS_FIELDS) + ", benchmark_hotel_id, "
+            "       benchmark_room_pairs "
+            "from repricing_settings where owner_user_id = :o"
+        ),
+        {"o": owner_id},
+    ).mappings().first()
+    if row is None:
+        return None
+
+    out = {f: (str(row[f]) if isinstance(row[f], Decimal) else row[f]) for f in SETTINGS_FIELDS}
+    out["benchmark_hotel"] = session.execute(
+        text("select name from hotels where id = :h"), {"h": row["benchmark_hotel_id"]}
+    ).scalar() if row["benchmark_hotel_id"] else None
+
+    # {our room id: their room name} becomes {our room NAME: their room name}.
+    # Only our side is an id; theirs is already a name, because the rule
+    # re-matches it on the page every night.
+    pairs = {}
+    for room_id, their_room in (row["benchmark_room_pairs"] or {}).items():
+        name = session.execute(
+            text("select name from room_types where id = :r"), {"r": int(room_id)}
+        ).scalar()
+        if name:
+            pairs[name] = their_room
+    out["benchmark_room_pairs"] = pairs
+    return out
+
+
+def _settings_in(session, owner_id: int, wanted: dict) -> tuple[dict, list[str]]:
+    """Turn the names back into this database's ids. Unresolved names are named."""
+    params = {f: wanted.get(f) for f in SETTINGS_FIELDS}
+    unresolved: list[str] = []
+
+    hotel_name = wanted.get("benchmark_hotel")
+    params["benchmark_hotel_id"] = None
+    if hotel_name:
+        # The same three conditions the API's _own_competitor applies, so a
+        # benchmark written here is one the endpoint would have accepted.
+        hid = session.execute(
+            text(
+                "select id from hotels where name = :n and owner_user_id = :o "
+                "and is_active and not is_own_property"
+            ),
+            {"n": hotel_name, "o": owner_id},
+        ).scalar()
+        if hid is None:
+            unresolved.append(f"benchmark hotel {hotel_name!r} (not an active competitor here)")
+        params["benchmark_hotel_id"] = hid
+
+    pairs = {}
+    for our_room, their_room in (wanted.get("benchmark_room_pairs") or {}).items():
+        rid = session.execute(
+            text(
+                "select rt.id from room_types rt join hotels h on h.id = rt.hotel_id "
+                "where rt.name = :r and h.owner_user_id = :o and h.is_own_property"
+            ),
+            {"r": our_room, "o": owner_id},
+        ).scalar()
+        if rid is None:
+            unresolved.append(f"room pair {our_room!r}")
+            continue
+        pairs[str(rid)] = their_room
+    params["benchmark_room_pairs"] = json.dumps(pairs)
+    return params, unresolved
+
+
 def export(path: Path, username: str | None) -> int:
     with sync_session() as s:
         owner_id, owner_name = _owner(s, username)
@@ -119,6 +213,7 @@ def export(path: Path, username: str | None) -> int:
             ),
             {"o": owner_id},
         ).mappings().all()
+        settings = _settings_out(s, owner_id)
 
     if not rows:
         print(f"{owner_name} has no room mappings here. Nothing to export.", file=sys.stderr)
@@ -126,6 +221,7 @@ def export(path: Path, username: str | None) -> int:
 
     payload = {
         "owner": owner_name,
+        "settings": settings,
         "mappings": [
             {
                 "hotel": r["hotel"],
@@ -144,11 +240,22 @@ def export(path: Path, username: str | None) -> int:
             f"{p.upper()}={m['rate_type_' + p]}" for p in ("ep", "cp", "map") if m["rate_type_" + p]
         )
         print(f"  {m['hotel']} / {m['room']} -> {m['rms_room']}  {plans}")
+    if settings:
+        print(f"\n  rule: under {settings['benchmark_hotel'] or 'the median'} "
+              f"by {settings['benchmark_undercut']}"
+              f"{', tax in' if settings['benchmark_with_tax'] else ''}"
+              f"{', on ' + settings['benchmark_meal_plan'] if settings['benchmark_meal_plan'] else ''}"
+              f"; step {settings['max_step_pct']}%, floor {settings['floor_pct']}%, "
+              f"ceiling {settings['ceiling_pct']}%")
+        for ours, theirs in (settings["benchmark_room_pairs"] or {}).items():
+            print(f"        {ours} competes with their {theirs}")
+
     print(f"\n{len(rows)} mapping(s) for {owner_name} written to {path}.")
+    print("Import with --import; add --settings to carry the rule across too.")
     return 0
 
 
-def import_(path: Path, username: str | None, write: bool) -> int:
+def import_(path: Path, username: str | None, write: bool, with_settings: bool) -> int:
     payload = json.loads(path.read_text(encoding="utf-8"))
     wanted = payload.get("mappings") or []
     if not wanted:
@@ -192,6 +299,24 @@ def import_(path: Path, username: str | None, write: bool) -> int:
             verb = "update" if existing else "create"
             print(f"  {verb:6} {room['hotel']} / {room['name']} -> {m['rms_room']}  {plans}{was}")
 
+        rule_params, rule_unresolved = None, []
+        if with_settings:
+            if not payload.get("settings"):
+                print("\n  --settings asked for, but the file carries none.", file=sys.stderr)
+                return 2
+            rule_params, rule_unresolved = _settings_in(s, owner_id, payload["settings"])
+            w = payload["settings"]
+            print(f"\n  rule:  under {w.get('benchmark_hotel') or 'the median'} "
+                  f"by {w.get('benchmark_undercut')}"
+                  f"{', on ' + w['benchmark_meal_plan'] if w.get('benchmark_meal_plan') else ''}"
+                  f"; step {w.get('max_step_pct')}%, floor {w.get('floor_pct')}%, "
+                  f"ceiling {w.get('ceiling_pct')}%")
+            for ours, theirs in (w.get("benchmark_room_pairs") or {}).items():
+                print(f"         {ours} competes with their {theirs}")
+            print("         (the automatic switch is never copied; turn it on "
+                  "from the page)")
+            missing.extend(rule_unresolved)
+
         if missing:
             # Loudly, and without writing the rest by default: a partial copy
             # that nobody noticed is a deployment mapped differently from the
@@ -207,7 +332,8 @@ def import_(path: Path, username: str | None, write: bool) -> int:
             return 2
 
         if not write:
-            print(f"\nDry run. Re-run with --yes to write {len(planned)} mapping(s).")
+            extra = " and the rule" if rule_params else ""
+            print(f"\nDry run. Re-run with --yes to write {len(planned)} mapping(s){extra}.")
             return 0
 
         for room, m, _ in planned:
@@ -245,9 +371,27 @@ def import_(path: Path, username: str | None, write: bool) -> int:
                     "on": m["is_enabled"],
                 },
             )
+
+        if rule_params is not None:
+            rule_params["o"] = owner_id
+            s.execute(
+                text(
+                    "update repricing_settings set "
+                    + ", ".join(f"{f} = :{f}" for f in SETTINGS_FIELDS)
+                    + ", benchmark_hotel_id = :benchmark_hotel_id"
+                    # Cast explicitly. The parameter arrives as JSON text
+                    # and the column is jsonb, which Postgres will not
+                    # coerce on its own inside an UPDATE.
+                    + ", benchmark_room_pairs = cast(:benchmark_room_pairs as jsonb)"
+                    # No default fires on an UPDATE, unlike the insert above.
+                    + ", updated_at = now() where owner_user_id = :o"
+                ),
+                rule_params,
+            )
         s.commit()
 
-    print(f"\nWrote {len(planned)} mapping(s) for {owner_name}.")
+    print(f"\nWrote {len(planned)} mapping(s) for {owner_name}"
+          f"{' and the rule' if with_settings else ''}.")
     print("Open the Repricing page: every room should now name its RMS row, and "
           "Preview in RMS has something to read.")
     return 0
@@ -261,12 +405,15 @@ def main() -> int:
     what.add_argument("--export", metavar="FILE", help="write this machine's mappings out")
     what.add_argument("--import", dest="import_", metavar="FILE", help="read them in")
     ap.add_argument("--owner", help="the username the mappings belong to")
+    ap.add_argument("--settings", action="store_true",
+                    help="carry the rule as well: the benchmark hotel, the gap, "
+                         "the board, the room pairs and the limits (import only)")
     ap.add_argument("--yes", action="store_true", help="actually write them (import only)")
     args = ap.parse_args()
 
     if args.export:
         return export(Path(args.export), args.owner)
-    return import_(Path(args.import_), args.owner, args.yes)
+    return import_(Path(args.import_), args.owner, args.yes, args.settings)
 
 
 if __name__ == "__main__":
