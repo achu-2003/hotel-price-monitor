@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
@@ -288,7 +288,17 @@ def schedule_next_run(
 def record_success(
     session: Session, target_ids: list[int], now: datetime | None = None
 ) -> None:
-    """Clear the failure state and close any half-open circuit."""
+    """Clear the failure state, close any half-open circuit, and resolve the
+    transient errors this success has answered.
+
+    A transient error -- a timeout, a 502 page from the site itself -- is
+    marked "retries by itself", and it did: this check is the retry. Left
+    open, it sat on Attention until somebody pressed Resolve, and a page
+    full of problems that had already gone away is how the one that has
+    not gets missed. Only transient errors of THESE targets, and only ones
+    from before this success; a selector fault or a block still needs a
+    person, and stays.
+    """
     now = now or datetime.now(UTC)
     targets = session.execute(
         select(MonitorTarget).where(MonitorTarget.id.in_(target_ids))
@@ -300,6 +310,19 @@ def record_success(
             log.info("circuit_closed", target_id=target.id)
         target.circuit_state = CircuitState.CLOSED
         target.circuit_opened_at = None
+    cleared = session.execute(
+        update(MonitoringError)
+        .where(
+            MonitoringError.monitor_target_id.in_(target_ids),
+            MonitoringError.is_transient.is_(True),
+            MonitoringError.resolved_at.is_(None),
+            MonitoringError.occurred_at <= now,
+        )
+        .values(resolved_at=now)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if cleared:
+        log.info("transient_errors_resolved", target_ids=target_ids, count=cleared)
 
 
 def record_failure(
