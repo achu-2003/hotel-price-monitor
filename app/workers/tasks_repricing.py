@@ -29,9 +29,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from celery import shared_task
 from sqlalchemy import or_, select
@@ -39,6 +40,7 @@ from sqlalchemy import or_, select
 from app.config import get_settings
 from app.core.crypto import decrypt, encrypt
 from app.core.logging import get_logger
+from app.core.ratelimit import get_redis
 from app.db.models import (
     PLANS, Hotel, PriceSeries, RateApplication, RepricingAction, RepricingAdvice,
     RepricingSettings, RmsRoomMapping, RoomType,
@@ -374,13 +376,111 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
     return written
 
 
+#: Held by an automatic run for as long as it can possibly take (the task's
+#: hard time limit), so two browser workers cannot drive RMS for one owner at
+#: once. The server runs two, and a benchmark read on two sites a minute apart
+#: queues two runs.
+_LOCK_SECONDS = 660
+
+
+def _lock_key(owner_user_id: int) -> str:
+    return f"rate_app:repricing_lock:{owner_user_id}"
+
+
+def _rerun_key(owner_user_id: int) -> str:
+    return f"rate_app:repricing_rerun:{owner_user_id}"
+
+
+def _take_lock(owner_user_id: int) -> bool:
+    try:
+        return bool(get_redis().set(_lock_key(owner_user_id), "1", nx=True, ex=_LOCK_SECONDS))
+    except Exception as exc:  # noqa: BLE001 -- no Redis, no lock: run as before
+        log.warning("repricing_lock_unavailable", error=str(exc)[:200])
+        return True
+
+
+def _release_lock(owner_user_id: int) -> None:
+    try:
+        get_redis().delete(_lock_key(owner_user_id))
+    except Exception:  # noqa: BLE001 -- it expires on its own
+        pass
+
+
+def _ask_rerun(owner_user_id: int) -> None:
+    try:
+        get_redis().set(_rerun_key(owner_user_id), "1", ex=_LOCK_SECONDS * 2)
+    except Exception as exc:  # noqa: BLE001 -- the next tick still comes
+        log.warning("repricing_rerun_unrecorded", error=str(exc)[:200])
+
+
+def _take_rerun(owner_user_id: int) -> bool:
+    try:
+        r = get_redis()
+        key = _rerun_key(owner_user_id)
+        # GET then DELETE, not GETDEL: see rate_app_test_state.take_code.
+        wanted = r.get(key)
+        if wanted:
+            r.delete(key)
+        return bool(wanted)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @shared_task(name="repricing.run", soft_time_limit=600, time_limit=660)
 def run_repricing(owner_user_id: int, mode: str = "manual",
                   overrides: dict[str, str] | None = None,
                   only_room_type_id: int | None = None,
                   channels: dict[str, dict[str, str]] | None = None,
                   skip_primary: list[int] | None = None,
-                  preview_channels: list[str] | None = None) -> dict[str, Any]:
+                  preview_channels: list[str] | None = None,
+                  trigger: str | None = None,
+                  trigger_id: str | None = None) -> dict[str, Any]:
+    """:func:`_run`, one automatic run per owner at a time.
+
+    ``trigger`` says why an automatic run started -- ``tick`` (the 30-minute
+    schedule), ``benchmark`` (the benchmark's price just moved, see
+    :func:`benchmark_moved`) or ``rerun`` -- and is kept on the run state so
+    the page can say it. ``trigger_id`` is unique per requested run: it is
+    what tells a redelivered message from a new run that happens to start a
+    few minutes after the last one.
+
+    NO PILE-UP. An automatic run that finds another run going does not queue
+    a second browser behind it. It leaves a note, and whichever run is going
+    starts one more pass when it finishes, on the prices as they are then.
+    """
+    if mode == "auto":
+        busy = state.read(owner_user_id, KIND)
+        if (busy and busy.get("status") == "running") or not _take_lock(owner_user_id):
+            _ask_rerun(owner_user_id)
+            log.info("repricing_run_deferred", owner_user_id=owner_user_id, trigger=trigger)
+            return {"status": "deferred", "trigger": trigger}
+    log.info("repricing_run_started", owner_user_id=owner_user_id, mode=mode, trigger=trigger)
+    try:
+        result = _run(owner_user_id, mode, overrides, only_room_type_id, channels,
+                      skip_primary, preview_channels, trigger_id=trigger_id)
+        if trigger and result.get("status") == "done" and not result.get("repeat"):
+            fields = {k: v for k, v in result.items() if k not in ("status", "updated_at")}
+            result = state.write(owner_user_id, "done", KIND, **fields,
+                                 trigger=trigger, trigger_id=trigger_id)
+        return result
+    finally:
+        if mode == "auto":
+            _release_lock(owner_user_id)
+        if _take_rerun(owner_user_id):
+            run_repricing.apply_async(
+                args=[owner_user_id, "auto"],
+                kwargs={"trigger": "rerun", "trigger_id": uuid4().hex},
+                queue="browser",
+            )
+
+
+def _run(owner_user_id: int, mode: str = "manual",
+         overrides: dict[str, str] | None = None,
+         only_room_type_id: int | None = None,
+         channels: dict[str, dict[str, str]] | None = None,
+         skip_primary: list[int] | None = None,
+         preview_channels: list[str] | None = None,
+         *, trigger_id: str | None = None) -> dict[str, Any]:
     """Compute tonight's proposals and, unless ``mode`` is ``dry_run``, set them in RMS.
 
     ``mode``: ``manual`` (Apply pressed), ``auto`` (scheduler), ``dry_run``
@@ -430,6 +530,11 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
     if picks or skip:
         chosen = sorted(f"{rid}:{ch}" for rid, chans in picks.items() for ch in chans)
         scope += "|" + ",".join(chosen) + "|skip:" + ",".join(map(str, sorted(skip)))
+    #
+    # A RUN WITH A TRIGGER ID IS RECOGNISED BY IT, not by the clock. The
+    # benchmark moving is a reason to run five minutes after the last run,
+    # and the time window would have swallowed it as a redelivery; the id is
+    # exact -- a redelivery carries the same one, a new request never does.
     last = state.read(owner_user_id, KIND)
     if (last and last.get("status") == "done"
             and last.get("check_in") == check_in.isoformat()
@@ -438,9 +543,13 @@ def run_repricing(owner_user_id: int, mode: str = "manual",
             finished = datetime.fromisoformat(last["updated_at"])
         except (KeyError, ValueError):
             finished = None
-        if finished and (datetime.now(UTC) - finished) < timedelta(minutes=REPEAT_GUARD_MINUTES):
+        if trigger_id:
+            repeat = last.get("trigger_id") == trigger_id
+        else:
+            repeat = bool(finished and (datetime.now(UTC) - finished) < timedelta(minutes=REPEAT_GUARD_MINUTES))
+        if repeat:
             log.info("repricing_run_skipped_recent", owner_user_id=owner_user_id, mode=mode)
-            return last
+            return {**last, "repeat": True}
 
     with sync_session() as session:
         proposals, settings, mappings = compute(session, owner_user_id, check_in, check_out)
@@ -865,6 +974,91 @@ def auto_tick() -> dict[str, Any]:
         current = state.read(owner_user_id, KIND)
         if current and current.get("status") == "running":
             continue
-        run_repricing.apply_async(args=[owner_user_id, "auto"], queue="browser")
+        run_repricing.apply_async(args=[owner_user_id, "auto"], kwargs={"trigger": "tick"},
+                                  queue="browser")
         started.append(owner_user_id)
     return {"started": started, "enabled": len(owners)}
+
+
+def watched_as_benchmark(session, hotel_id: int) -> bool:
+    """Whether some owner with automatic repricing on prices against this hotel."""
+    return session.scalar(
+        select(RepricingSettings.owner_user_id).where(
+            RepricingSettings.benchmark_hotel_id == hotel_id,
+            RepricingSettings.auto_enabled.is_(True),
+        ).limit(1)
+    ) is not None
+
+
+def rooms_whose_benchmark_moved(proposals, mapped, last_market: dict[int, Any]) -> list[str]:
+    """Our rooms whose benchmark figure is not the one the last run priced from.
+
+    ``last_market`` is ``room_type_id -> market_price`` from the newest
+    automatic or manual action tonight. A room with no action yet counts as
+    moved -- nothing has priced it tonight. A room whose benchmark has no
+    figure (not paired, not on sale) does not: there is nothing to follow.
+    """
+    return [
+        p.room_name for p in proposals
+        if p.room_type_id in mapped and p.market is not None
+        and last_market.get(p.room_type_id) != p.market
+    ]
+
+
+def _last_market(session, owner_user_id: int, night) -> dict[int, Any]:
+    rows = session.execute(
+        select(RepricingAction.room_type_id, RepricingAction.market_price)
+        .where(
+            RepricingAction.owner_user_id == owner_user_id,
+            RepricingAction.check_in == night,
+            RepricingAction.mode.in_(("auto", "manual")),
+            RepricingAction.room_type_id.is_not(None),
+        )
+        .order_by(RepricingAction.created_at.desc(), RepricingAction.id.desc())
+    ).all()
+    last: dict[int, Any] = {}
+    for room_type_id, market in rows:
+        last.setdefault(room_type_id, market)
+    return last
+
+
+@shared_task(name="repricing.benchmark_moved", ignore_result=True)
+def benchmark_moved(hotel_id: int, check_in: str) -> dict[str, Any]:
+    """Reprice now if a fresh reading of a benchmark hotel changed its figure.
+
+    Queued by the fetch of that hotel for tonight, so the rate follows
+    Sterling within a minute or two of the reading instead of waiting for the
+    next tick. On the reading, not on a confirmed price change: confirmation
+    takes two sightings, and the rule's lower-of-two already handles a spike.
+
+    Nothing is written here. It computes what the rule would use -- the same
+    ``compute`` the run calls -- and starts a run only when that figure is
+    not the one the last run priced from, so a check that found Sterling
+    where it was costs a query rather than a browser.
+    """
+    night = date.fromisoformat(check_in)
+    if night != local_today(get_settings().timezone):
+        return {"started": []}
+    moved: list[tuple[int, list[str]]] = []
+    with sync_session() as session:
+        owners = list(session.scalars(
+            select(RepricingSettings.owner_user_id).where(
+                RepricingSettings.benchmark_hotel_id == hotel_id,
+                RepricingSettings.auto_enabled.is_(True),
+            )
+        ))
+        for owner_user_id in owners:
+            proposals, _settings, mappings = compute(session, owner_user_id, night,
+                                                     night + timedelta(days=1))
+            rooms = rooms_whose_benchmark_moved(proposals, mappings,
+                                                _last_market(session, owner_user_id, night))
+            if rooms:
+                moved.append((owner_user_id, rooms))
+    for owner_user_id, rooms in moved:
+        log.info("repricing_benchmark_moved", owner_user_id=owner_user_id, rooms=rooms)
+        run_repricing.apply_async(
+            args=[owner_user_id, "auto"],
+            kwargs={"trigger": "benchmark", "trigger_id": uuid4().hex},
+            queue="browser",
+        )
+    return {"started": [o for o, _ in moved]}

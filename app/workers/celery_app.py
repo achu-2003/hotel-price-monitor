@@ -76,6 +76,8 @@ celery_app.conf.update(
         # Sets the owner's rates in that same application: one login, every
         # mapped room. See tasks_repricing.
         "repricing.run": {"queue": "browser"},
+        # A query, not a browser: it only decides whether to queue a run.
+        "repricing.benchmark_moved": {"queue": "http"},
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},

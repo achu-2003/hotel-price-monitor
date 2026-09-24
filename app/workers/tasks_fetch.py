@@ -554,6 +554,16 @@ def _ingest(
         )
         change_ids = list(change_ids)
 
+        # TONIGHT'S READING OF A HOTEL SOMEBODY PRICES AGAINST. Checked here,
+        # while the session is open, and acted on after the commit below.
+        from app.workers.tasks_repricing import watched_as_benchmark
+
+        benchmark_night = (
+            requested_stay.check_out == requested_stay.check_in + timedelta(days=1)
+            and requested_stay.check_in == local_today(get_settings().timezone)
+            and watched_as_benchmark(session, payload["hotel_id"])
+        )
+
     logger.info(
         "fetch_complete",
         offers=offers_found,
@@ -587,6 +597,15 @@ def _ingest(
         dispatch_changes.apply_async(
             args=[change_ids], queue="notify",
             countdown=get_settings().digest_window_seconds,
+        )
+
+    if benchmark_night:
+        # Every reading, not only a confirmed change: whether the figure the
+        # rule uses moved is the task's question, and it answers it cheaply.
+        from app.workers.tasks_repricing import benchmark_moved
+
+        benchmark_moved.apply_async(
+            args=[payload["hotel_id"], requested_stay.check_in.isoformat()], queue="http",
         )
 
     return {
