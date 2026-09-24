@@ -318,4 +318,9 @@ class AlertDefaults(Base, TimestampMixin):
     email_alerts_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true(), nullable=False
     )
+    #: The same kill switch for WhatsApp. Email is untouched by it, and the
+    #: operator alerts are email-only already, so it cannot silence those.
+    whatsapp_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
 

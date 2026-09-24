@@ -1449,6 +1449,7 @@
     const tax = document.querySelector("input[name=show_prices_with_tax]");
     const summary = document.querySelector("input[name=summary_interval_hours]");
     const emailOn = document.querySelector("input[name=email_alerts_enabled]");
+    const whatsappOn = document.querySelector("input[name=whatsapp_alerts_enabled]");
     return {
       min_delta_abs: number("min_delta_abs"),
       // The comparison engine requires BOTH floors to be cleared, so leaving a
@@ -1463,6 +1464,7 @@
       // the sensitivity form saving must not switch a channel back on that
       // somebody has just switched off.
       email_alerts_enabled: emailOn ? emailOn.checked : true,
+      whatsapp_alerts_enabled: whatsappOn ? whatsappOn.checked : true,
       // Read off the live input rather than off the page as rendered, so
       // the sensitivity form -- which PUTs the whole row -- cannot write back
       // the interval the page loaded with after somebody has edited the box.
@@ -1562,6 +1564,13 @@
     "form.email-alerts-form", "email_alerts_enabled",
     "Saved — rate alerts will go out by email.",
     "Saved — no more rate emails. WhatsApp is unaffected.",
+    false
+  );
+
+  wireSwitch(
+    "form.whatsapp-alerts-form", "whatsapp_alerts_enabled",
+    "Saved — rate alerts will go out on WhatsApp.",
+    "Saved — no more rate WhatsApps. Email is unaffected.",
     false
   );
 

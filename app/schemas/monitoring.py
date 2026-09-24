@@ -226,6 +226,8 @@ class AlertDefaultsIn(ORMModel):
     #: client that predates the field must not silently switch a working
     #: channel off. Off is a decision somebody makes on purpose.
     email_alerts_enabled: bool = True
+    #: The same for WhatsApp, defaulted TRUE for the same reason.
+    whatsapp_alerts_enabled: bool = True
 
 
 class AlertDefaultsOut(AlertDefaultsIn):

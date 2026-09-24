@@ -2252,6 +2252,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
             show_prices_with_tax=False,
             summary_interval_hours=2,
             email_alerts_enabled=True,
+            whatsapp_alerts_enabled=True,
         )
     cheapest, dearest = (
         await session.execute(
@@ -2267,6 +2268,7 @@ async def settings_page(request: Request, user: DashUser, session: DbSession):
         show_prices_with_tax=stored.show_prices_with_tax,
         summary_interval_hours=stored.summary_interval_hours,
         email_alerts_enabled=stored.email_alerts_enabled,
+        whatsapp_alerts_enabled=stored.whatsapp_alerts_enabled,
         cheapest_room=cheapest,
         dearest_room=dearest,
     )

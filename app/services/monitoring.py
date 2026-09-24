@@ -402,6 +402,8 @@ class StoredDefaults:
     #: fallback is reached when the row cannot be read, and a database blip
     #: must not silently stop a channel somebody is relying on.
     email_alerts_enabled: bool = True
+    #: See ``AlertDefaults.whatsapp_alerts_enabled``. TRUE for the same reason.
+    whatsapp_alerts_enabled: bool = True
 
 
 #: (expires_at, defaults). Module-level, so each worker process keeps its
@@ -464,6 +466,7 @@ def stored_defaults(settings: Settings | None = None) -> StoredDefaults:
                     summary_interval_hours=row.summary_interval_hours,
                     show_prices_with_tax=bool(row.show_prices_with_tax),
                     email_alerts_enabled=bool(row.email_alerts_enabled),
+                    whatsapp_alerts_enabled=bool(row.whatsapp_alerts_enabled),
                 )
     except Exception as exc:  # noqa: BLE001 - see the docstring
         log.warning("alert_defaults_unreadable", error=str(exc)[:200])
@@ -516,6 +519,15 @@ def email_alerts_enabled(settings: Settings | None = None) -> bool:
     ON, which is what every deployment did before this existed.
     """
     return stored_defaults(settings).email_alerts_enabled
+
+
+def whatsapp_alerts_enabled(settings: Settings | None = None) -> bool:
+    """Whether the rate alerts go out on WhatsApp at all.
+
+    The email switch's twin: rate alerts and summaries only, through the same
+    cached row, and missing row means ON.
+    """
+    return stored_defaults(settings).whatsapp_alerts_enabled
 
 
 def build_thresholds(target: MonitorTarget, settings: Settings | None = None) -> Thresholds:

@@ -136,7 +136,8 @@ _SEND_BACKOFF = (60, 300, 900, 3600, 10800)
 _PRICE_MOVE_DIRECTIONS = (ChangeDirection.INCREASE, ChangeDirection.DECREASE)
 
 
-def _channels_in_use(channels: list[str], email_enabled: bool) -> list[str]:
+def _channels_in_use(channels: list[str], email_enabled: bool,
+                     whatsapp_enabled: bool = True) -> list[str]:
     """A recipient's channels, minus the ones switched off deployment-wide.
 
     The recipient's own choice is a standing preference and this is a kill
@@ -149,9 +150,12 @@ def _channels_in_use(channels: list[str], email_enabled: bool) -> list[str]:
     nothing to be sent. It is not silent -- the caller logs the count -- and it
     reverses the moment the switch goes back on.
     """
-    if email_enabled:
-        return list(channels)
-    return [c for c in channels if c != "email"]
+    off = set()
+    if not email_enabled:
+        off.add("email")
+    if not whatsapp_enabled:
+        off.add("whatsapp")
+    return [c for c in channels if c not in off]
 
 
 @shared_task(name="notify.dispatch_changes", ignore_result=True)
@@ -308,6 +312,9 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         email_ok = monitoring_service.email_alerts_enabled()
         if not email_ok:
             log.info("email_alerts_switched_off")
+        whatsapp_ok = monitoring_service.whatsapp_alerts_enabled()
+        if not whatsapp_ok:
+            log.info("whatsapp_alerts_switched_off")
         lines_by_change = _render_lines(session, changes, hotels, with_tax)
 
         batches = group_for_digest(facts, assignments)
@@ -355,7 +362,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
                 ),
             )
 
-            for channel in _channels_in_use(link.channels or ["email"], email_ok):
+            for channel in _channels_in_use(link.channels or ["email"], email_ok, whatsapp_ok):
                 notification_id = _create_notification(
                     session,
                     recipient=recipient,
@@ -477,6 +484,9 @@ def market_summary() -> dict[str, int]:
         email_ok = monitoring_service.email_alerts_enabled()
         if not email_ok:
             log.info("email_alerts_switched_off")
+        whatsapp_ok = monitoring_service.whatsapp_alerts_enabled()
+        if not whatsapp_ok:
+            log.info("whatsapp_alerts_switched_off")
         lines_by_change = _render_lines(session, changes, hotels, with_tax)
         facts_by_id = {c.id: _facts_for(c) for c in changes}
 
@@ -517,7 +527,7 @@ def market_summary() -> dict[str, int]:
             # dropping a channel here would silence a number that was reaching
             # them yesterday.
             bucket = channels.setdefault(recipient_id, [])
-            for channel in _channels_in_use(link.channels or ["email"], email_ok):
+            for channel in _channels_in_use(link.channels or ["email"], email_ok, whatsapp_ok):
                 if channel not in bucket:
                     bucket.append(channel)
 

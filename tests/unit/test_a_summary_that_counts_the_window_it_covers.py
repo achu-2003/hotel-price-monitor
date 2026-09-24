@@ -1241,3 +1241,30 @@ class TestStoppingTheEmailsWithoutEditingAnybody:
             if f.name == "email_alerts_enabled"
         )
         assert field.default is True
+
+
+class TestStoppingTheWhatsAppsWithoutEditingAnybody:
+    """The email switch's twin, on the other channel."""
+
+    def test_whatsapp_is_dropped_from_the_channels(self):
+        assert tasks_notify._channels_in_use(["email", "whatsapp"], True, False) == ["email"]
+
+    def test_email_is_untouched(self):
+        assert tasks_notify._channels_in_use(["email"], True, False) == ["email"]
+
+    def test_both_off_sends_nothing(self):
+        assert tasks_notify._channels_in_use(["email", "whatsapp"], False, False) == []
+
+    def test_the_default_is_on(self):
+        import dataclasses
+
+        from app.db.models import AlertDefaults
+        from app.schemas.monitoring import AlertDefaultsIn
+        from app.services.monitoring import StoredDefaults
+
+        assert AlertDefaults.__table__.c.whatsapp_alerts_enabled.default.arg is True
+        assert next(f for f in dataclasses.fields(StoredDefaults)
+                    if f.name == "whatsapp_alerts_enabled").default is True
+        # A client that predates the field must not switch WhatsApp off.
+        assert AlertDefaultsIn(min_delta_abs=0, min_delta_pct=0,
+                               confirm_checks=1).whatsapp_alerts_enabled is True

@@ -484,6 +484,7 @@ async def _alert_defaults_out(session, row: AlertDefaults) -> AlertDefaultsOut:
         show_prices_with_tax=row.show_prices_with_tax,
         summary_interval_hours=row.summary_interval_hours,
         email_alerts_enabled=row.email_alerts_enabled,
+        whatsapp_alerts_enabled=row.whatsapp_alerts_enabled,
         cheapest_room=extremes[0],
         dearest_room=extremes[1],
     )
@@ -503,6 +504,8 @@ async def read_alert_defaults(session: DbSession, _user: CurrentUser):
             min_delta_abs=current.min_delta_abs,
             min_delta_pct=current.min_delta_pct,
             confirm_checks=current.confirm_checks,
+            email_alerts_enabled=True,
+            whatsapp_alerts_enabled=True,
         )
     return await _alert_defaults_out(session, row)
 
@@ -530,6 +533,7 @@ async def replace_alert_defaults(
             "confirm_checks": row.confirm_checks,
             "show_prices_with_tax": row.show_prices_with_tax,
             "email_alerts_enabled": row.email_alerts_enabled,
+            "whatsapp_alerts_enabled": row.whatsapp_alerts_enabled,
             "summary_interval_hours": row.summary_interval_hours,
         }
 
@@ -538,6 +542,7 @@ async def replace_alert_defaults(
     row.confirm_checks = payload.confirm_checks
     row.show_prices_with_tax = payload.show_prices_with_tax
     row.email_alerts_enabled = payload.email_alerts_enabled
+    row.whatsapp_alerts_enabled = payload.whatsapp_alerts_enabled
     row.summary_interval_hours = payload.summary_interval_hours
 
     await record_audit(
@@ -549,6 +554,7 @@ async def replace_alert_defaults(
             "confirm_checks": payload.confirm_checks,
             "show_prices_with_tax": payload.show_prices_with_tax,
             "email_alerts_enabled": payload.email_alerts_enabled,
+            "whatsapp_alerts_enabled": payload.whatsapp_alerts_enabled,
             "summary_interval_hours": payload.summary_interval_hours,
         },
         request=request,
@@ -567,6 +573,7 @@ async def replace_alert_defaults(
              confirm_checks=row.confirm_checks,
              show_prices_with_tax=row.show_prices_with_tax,
              email_alerts_enabled=row.email_alerts_enabled,
+             whatsapp_alerts_enabled=row.whatsapp_alerts_enabled,
              summary_interval_hours=row.summary_interval_hours)
     return await _alert_defaults_out(session, row)
 

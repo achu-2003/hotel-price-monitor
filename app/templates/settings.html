@@ -54,11 +54,11 @@
     </div>
   </form>
 
-  <h2>Email</h2>
+  <h2>Email and WhatsApp</h2>
   <p class="muted">
-    Whether the rate alerts reach an inbox at all. Sensitivity above decides
-    whether a move is worth telling anyone; this decides whether the telling
-    goes by email.
+    Whether the rate alerts go out on each channel at all. Sensitivity above
+    decides whether a move is worth telling anyone; these decide how the
+    telling goes.
   </p>
 
   <form class="panel stack email-alerts-form" id="email-alerts">
@@ -85,6 +85,25 @@
       Alerts about the system itself still go out: a source gone quiet is a
       message saying nobody is watching the prices, and this must not silence
       that.
+    </span>
+  </form>
+
+  <form class="panel stack whatsapp-alerts-form" id="whatsapp-alerts">
+    <div class="switch-row">
+      <button type="submit" class="switch" role="switch"
+              aria-checked="{{ 'true' if alert_defaults.whatsapp_alerts_enabled else 'false' }}">
+        <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+        <span class="switch-text">Send rate alerts on WhatsApp</span>
+      </button>
+      <span class="form-status" role="status"></span>
+    </div>
+    <input type="checkbox" name="whatsapp_alerts_enabled" value="true" hidden
+           {% if alert_defaults.whatsapp_alerts_enabled %}checked{% endif %}>
+    <span class="muted">
+      Off stops every rate WhatsApp at once &mdash; alerts and summaries, for
+      everyone, whatever channels their own row lists. <strong>Email is
+      unaffected</strong>, and nobody's row is edited, so turning it back on
+      restores them exactly as they were.
     </span>
   </form>
   </div>
