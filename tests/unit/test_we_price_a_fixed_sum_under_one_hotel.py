@@ -867,3 +867,74 @@ class TestAFollowThatHasCaughtUpSaysNothing:
         bad setting cannot silently stop the rule writing anything."""
         assert not rule.settled(Decimal("5215"), Decimal("5216"), round_to=0)
         assert rule.settled(Decimal("4536"), Decimal("4536"), round_to=0)
+
+
+class TestAOneReadingSpikeIsNotFollowed:
+    """Booking.com shows Sterling about 11% dearer for one reading every so
+    often, then goes straight back. On 24 Sep the rule followed one up and
+    ASG sat 499 above Sterling until the next run brought it down again.
+
+    Their room is read at the lower of its last two readings."""
+
+    BENCH = rule.Benchmark(hotel_id=10, hotel="Sterling", undercut=Decimal("100"),
+                           with_tax=False, meal_plan="Breakfast",
+                           room_pairs={OUR_DELUXE: "Classic Room"})
+
+    def _rows(self, theirs: str):
+        night = date(2026, 9, 24)
+        ours = _series(OUR_DELUXE, "5027", night)
+        ours.meal_plan, ours.offer_key = "Breakfast", "ours-cp"
+        their = _series(110, theirs, night)
+        their.meal_plan, their.offer_key = "Breakfast", "sterling-classic-cp"
+        return [(ours, OURS, "Deluxe Double Room"), (their, STERLING, "Classic Room")]
+
+    def _deluxe(self, theirs: str, previous: str | None):
+        from dataclasses import replace
+        bench = replace(self.BENCH, previous={} if previous is None else
+                        {"sterling-classic-cp": Decimal(previous)})
+        (p,) = [p for p in rule.propose(self._rows(theirs), own_hotel_id=9, rule=OPEN,
+                                        benchmark=bench) if p.room_name == "Deluxe Double Room"]
+        return p
+
+    def test_a_spike_up_is_ignored(self):
+        """Latest 5,625, the reading before 5,063: we stay 100 under 5,063."""
+        p = self._deluxe("5625", previous="5063")
+        assert p.market == Decimal("5063")
+        assert p.target == Decimal("4963")
+
+    def test_a_drop_is_followed_at_once(self):
+        """Never priced off a figure above what they sell at now."""
+        p = self._deluxe("4713", previous="5063")
+        assert p.market == Decimal("4713")
+
+    def test_a_rise_that_holds_is_followed_one_reading_later(self):
+        assert self._deluxe("5625", previous="5625").market == Decimal("5625")
+
+    def test_with_no_earlier_reading_the_latest_is_used(self):
+        assert self._deluxe("5625", previous=None).market == Decimal("5625")
+
+
+class TestThePreviousReadingIsPricedLikeTheRun:
+    """repricing_data.with_previous turns the stored readings into prices on
+    the run's own basis, and leaves out a reading of a sold-out room."""
+
+    def _row(self, key, excl, tax, available=True):
+        return SimpleNamespace(offer_key=key, price_exclusive=Decimal(excl),
+                               taxes_fees=Decimal(tax), price_inclusive=None,
+                               is_available=available)
+
+    def test_with_tax_it_is_the_rate_plus_the_tax(self):
+        from app.services.repricing_data import with_previous
+        bench = rule.Benchmark(hotel_id=10, hotel="Sterling", with_tax=True)
+        out = with_previous(bench, [self._row("a", "5063", "253")])
+        assert out.previous == {"a": Decimal("5316")}
+
+    def test_without_tax_it_is_the_rate(self):
+        from app.services.repricing_data import with_previous
+        bench = rule.Benchmark(hotel_id=10, hotel="Sterling", with_tax=False)
+        assert with_previous(bench, [self._row("a", "5063", "253")]).previous == {"a": Decimal("5063")}
+
+    def test_a_sold_out_reading_is_left_out(self):
+        from app.services.repricing_data import with_previous
+        bench = rule.Benchmark(hotel_id=10, hotel="Sterling", with_tax=False)
+        assert with_previous(bench, [self._row("a", "5063", "0", available=False)]).previous == {}

@@ -310,6 +310,19 @@ class Benchmark:
     #: so nothing has been said about what it competes with, and inventing a
     #: comparison is how a rate moves for a reason nobody chose.
     room_pairs: Mapping[int, str] = field(default_factory=dict)
+    #: Their price at the reading BEFORE the latest, per offer key, on the
+    #: same basis as the run (``with_tax``). Each of their rooms is read at
+    #: the lower of that and the latest.
+    #:
+    #: Booking.com shows Sterling about 11% dearer for a single reading every
+    #: so often and then goes straight back: Classic Breakfast read 5,063,
+    #: 5,625, 5,063 on 22 Sep at 13:14 and twice more on 23 Sep. Taken at the
+    #: latest reading, the rule followed each spike up and back down half an
+    #: hour later, and on 24 Sep ASG sat 499 ABOVE Sterling for that half
+    #: hour. The lower of two ignores a one-reading spike, follows a real rise
+    #: one reading late, and follows a drop at once -- so we are never priced
+    #: off a figure Sterling showed only once.
+    previous: Mapping[str, Decimal] = field(default_factory=dict)
 
 
 #: How far back :func:`usual_gaps` looks, and how many of those nights must
@@ -426,7 +439,8 @@ def guard(our: Decimal, wanted: Decimal, rule: Rule) -> tuple[Decimal, str | Non
     return target, None, capped
 
 
-def _night(rows, own_hotel_id: int, with_tax: bool = False, meal_plan: str | None = None):
+def _night(rows, own_hotel_id: int, with_tax: bool = False, meal_plan: str | None = None,
+           previous: Mapping[str, Decimal] | None = None):
     """One night's rows, sorted into ours and theirs.
 
     Returns ``(ours, theirs, sold_out)``: ours is ``room_type_id -> [(series,
@@ -441,6 +455,9 @@ def _night(rows, own_hotel_id: int, with_tax: bool = False, meal_plan: str | Non
     18 Sep, Thanga Kottai's Deluxe at 8,995 sold out and the median went
     from 3,100 to 2,800). Its price is kept, marked ``sold_out``, and the
     sell-out is counted separately as demand.
+
+    ``previous`` is :attr:`Benchmark.previous`: a competitor offer found in
+    it is read at the lower of its latest price and that one.
     """
     ours: dict[int, list] = {}
     theirs: dict[str, dict[int, list[Competitor]]] = {}
@@ -466,6 +483,9 @@ def _night(rows, own_hotel_id: int, with_tax: bool = False, meal_plan: str | Non
         listed.setdefault(tier, {})[hotel.id] = hotel.name
         if shown.amount is None:
             continue
+        before = previous.get(series.offer_key) if previous else None
+        if before is not None and before < shown.amount:
+            shown = replace(shown, amount=before)
         if not series.is_available:
             last_known.setdefault(tier, {}).setdefault(hotel.id, []).append(
                 Competitor(hotel=hotel.name, room=room_name, price=shown.amount, note=shown.note,
@@ -736,10 +756,12 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
 
     # ONE READING PER BOARD, and each of our rooms takes the first that sells
     # it. The benchmark's side does not move: it is always read on ``board``.
-    nights = {board: _night(rows, own_hotel_id, with_tax=with_tax, meal_plan=board)}
+    previous = benchmark.previous if benchmark else None
+    nights = {board: _night(rows, own_hotel_id, with_tax=with_tax, meal_plan=board,
+                            previous=previous)}
     if board and spare_board and spare_board != board:
         nights[spare_board] = _night(rows, own_hotel_id, with_tax=with_tax,
-                                     meal_plan=spare_board)
+                                     meal_plan=spare_board, previous=previous)
 
     order: dict[int, str | None] = {}
     for a_board in nights:

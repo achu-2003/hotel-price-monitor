@@ -2081,6 +2081,10 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             )).first() if settings.benchmark_hotel_id else None,
             settings,
         )
+        if rule_benchmark is not None:
+            rule_benchmark = repricing_data.with_previous(rule_benchmark, (await session.execute(
+                repricing_data.previous_readings_stmt(rule_benchmark.hotel_id, check_in, check_out)
+            )).all())
         history = [] if rule_benchmark else repricing_data.one_night((await session.execute(
             repricing_data.history_stmt(user.id, check_in)
         )).all())

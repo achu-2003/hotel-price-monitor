@@ -9,11 +9,15 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import Select, or_, select
+from dataclasses import replace
+from types import SimpleNamespace
 
-from app.db.models import Hotel, PriceSeries, RepricingAction, RoomType
+from sqlalchemy import Select, func, or_, select
+
+from app.db.models import Hotel, PriceObservation, PriceSeries, RepricingAction, RoomType
 from app.db.models.repricing import RepricingSettings
 from app.services.meal_plan import ROOM_ONLY
+from app.services.price_display import displayed_price
 from app.services.repricing import HISTORY_NIGHTS, Benchmark
 
 
@@ -58,6 +62,60 @@ def pinned_board_stmt(owner_user_id: int) -> Select:
     return select(RepricingSettings.benchmark_meal_plan).where(
         RepricingSettings.owner_user_id == owner_user_id
     )
+
+
+def previous_readings_stmt(hotel_id: int, check_in: date, check_out: date) -> Select:
+    """The benchmark's last two readings of every offer for the night.
+
+    Ranked newest first per offer key; :func:`with_previous` keeps the second.
+    One night of one hotel is a few dozen rows, so this reads them whole
+    rather than asking the database for exactly one row per offer.
+    """
+    ranked = (
+        select(
+            PriceObservation.offer_key,
+            PriceObservation.price_exclusive,
+            PriceObservation.taxes_fees,
+            PriceObservation.price_inclusive,
+            PriceObservation.is_available,
+            func.row_number().over(
+                partition_by=PriceObservation.offer_key,
+                order_by=PriceObservation.checked_at.desc(),
+            ).label("rank"),
+        )
+        .join(PriceSeries, PriceSeries.offer_key == PriceObservation.offer_key)
+        .where(
+            PriceSeries.hotel_id == hotel_id,
+            PriceSeries.check_in == check_in,
+            PriceSeries.check_out == check_out,
+        )
+        .subquery()
+    )
+    return select(ranked).where(ranked.c.rank == 2)
+
+
+def with_previous(benchmark: Benchmark | None, rows) -> Benchmark | None:
+    """``benchmark`` carrying the readings from :func:`previous_readings_stmt`.
+
+    Priced on the run's own basis, so the lower of the two is a like-for-like
+    comparison. A reading of a room that was not on sale is left out: a
+    sold-out price is not a price Sterling was selling at.
+    """
+    if benchmark is None:
+        return None
+    previous = {}
+    for row in rows:
+        if not row.is_available:
+            continue
+        shown = displayed_price(SimpleNamespace(
+            last_price_exclusive=row.price_exclusive,
+            last_price_inclusive=row.price_inclusive,
+            last_taxes_fees=row.taxes_fees,
+            current_price=None,
+        ), benchmark.with_tax)
+        if shown.amount is not None:
+            previous[row.offer_key] = shown.amount
+    return replace(benchmark, previous=previous)
 
 
 def benchmark_stmt(owner_user_id: int, hotel_id: int | None) -> Select:

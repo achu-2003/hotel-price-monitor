@@ -105,14 +105,19 @@ def mappings_for(session, owner_user_id: int) -> list[RmsRoomMapping]:
     ))
 
 
-def benchmark_for(session, owner_user_id: int, settings) -> rule.Benchmark | None:
+def benchmark_for(session, owner_user_id: int, settings, check_in, check_out) -> rule.Benchmark | None:
     """The one competitor this owner prices against, or None for the median rule."""
     if not settings.benchmark_hotel_id:
         return None
     row = session.execute(
         data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)
     ).first()
-    return data.benchmark_for(row, settings)
+    benchmark = data.benchmark_for(row, settings)
+    if benchmark is None:
+        return None
+    return data.with_previous(benchmark, session.execute(
+        data.previous_readings_stmt(benchmark.hotel_id, check_in, check_out)
+    ).all())
 
 
 def own_hotel_id(session, owner_user_id: int) -> int | None:
@@ -132,7 +137,7 @@ def compute(session, owner_user_id: int, check_in, check_out) -> tuple[list[rule
         return [], settings, mappings
     rows = priced_rows(session, owner_user_id, check_in, check_out)
     own_rule = rule.Rule.from_row(settings)
-    benchmark = benchmark_for(session, owner_user_id, settings)
+    benchmark = benchmark_for(session, owner_user_id, settings, check_in, check_out)
 
     # The usual gap is the median rule's input and costs a 14-night read.
     # A benchmarked owner never reaches the line that uses it, so it is not
@@ -248,7 +253,8 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
     # The same resolver the proposal used, so the AI column and the price
     # beside it can never be about different hotels.
     own = own_hotel_id(session, owner_user_id) if settings.benchmark_hotel_id else None
-    benchmark = benchmark_for(session, owner_user_id, settings) if own is not None else None
+    benchmark = (benchmark_for(session, owner_user_id, settings, check_in, check_in + timedelta(days=1))
+                 if own is not None else None)
 
     # Loaded once for the whole run, not per room: the usual gap over the
     # benchmark, and how the benchmark has moved. Same rows the rule read.
