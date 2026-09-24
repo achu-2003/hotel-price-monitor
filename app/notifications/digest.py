@@ -128,6 +128,10 @@ class ChangeFacts:
     delta: Decimal | None
     delta_pct: Decimal | None
     direction: str
+    #: Which room moved. Optional only so older callers and the threshold
+    #: tests, which are about sizes and not about grouping, need not invent
+    #: one; the dispatcher always supplies it.
+    room_type_id: int | None = None
 
 
 def passes_recipient_threshold(
@@ -158,8 +162,8 @@ def passes_recipient_threshold(
 def group_for_digest(
     facts: list[ChangeFacts],
     assignments: dict[int, list[int]],
-) -> dict[tuple[int, int], list[int]]:
-    """Group changes into one batch per (recipient, hotel).
+) -> dict[tuple[int, int, int | None], list[int]]:
+    """Group changes into one batch per (recipient, hotel, room).
 
     Args:
         facts: the changes being dispatched.
@@ -168,11 +172,23 @@ def group_for_digest(
     Grouping by hotel as well as by recipient is deliberate. Someone
     responsible for four properties gets four messages rather than one mixed
     digest, because each one is a different decision they might act on.
+
+    BY ROOM TOO, AND FOR THE SAME REASON ONE STEP DOWN. Two rooms of one hotel
+    moving are two decisions, and the price-change template can only name one
+    room: batched per hotel they went out as "Deluxe Double Room +3 more",
+    which named one room, priced that one, and left the other unmentioned. A
+    reader cannot act on a room they were not told about.
+
+    This does NOT undo the batching that keeps a weekend-wide reprice from
+    becoming a hundred messages. A room still moves once per window, and the
+    boards it moved on are collapsed before this is called
+    (services/room_moves.py), so the message count is the number of rooms that
+    moved -- not the number of prices that changed.
     """
-    batches: dict[tuple[int, int], list[int]] = defaultdict(list)
+    batches: dict[tuple[int, int, int | None], list[int]] = defaultdict(list)
     for fact in facts:
         for recipient_id in assignments.get(fact.hotel_id, ()):
-            batches[(recipient_id, fact.hotel_id)].append(fact.change_id)
+            batches[(recipient_id, fact.hotel_id, fact.room_type_id)].append(fact.change_id)
     return dict(batches)
 
 

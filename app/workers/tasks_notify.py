@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from collections import defaultdict
+
 from celery import shared_task
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -62,6 +64,7 @@ from app.db.models.price import (
     SUPPRESSED_NOT_A_PRICE_MOVE,
     SUPPRESSED_NO_RECIPIENTS,
     SUPPRESSED_RECIPIENT_INACTIVE,
+    SUPPRESSED_SAME_ROOM_OTHER_BOARD,
 )
 from app.db.session import sync_session
 from app.notifications import registry
@@ -86,6 +89,8 @@ from app.notifications.digest import (
 from app.notifications.render import render_digest, render_summary
 from app.services import comparison_links
 from app.services import monitoring as monitoring_service
+from app.services import repricing_data
+from app.services import room_moves
 from app.services.price_display import Components, displayed_move
 
 log = get_logger("tasks.notify")
@@ -182,6 +187,64 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         if not changes:
             return {"notifications": 0}
 
+        # ONE ALERT PER ROOM, NOT PER RATE PLAN.
+        #
+        # A reprice moves a room's room-only, breakfast and half-board rates
+        # together and writes a change for each. Batched per hotel, those
+        # three plus one other room became a single WhatsApp reading
+        #
+        #     Deluxe Double Room +3 more
+        #
+        # -- the template has one room slot, so the Standard Double Room that
+        # also moved was never named, and the three figures shown were three
+        # boards of the room that was. Which board survives is
+        # services/room_moves.py's decision, taken per hotel because the
+        # pinned board is the owner's.
+        rooms = {
+            s.offer_key: (s.room_type_id, s.meal_plan)
+            for s in session.execute(
+                select(PriceSeries)
+                .where(PriceSeries.offer_key.in_({c.offer_key for c in changes}))
+            ).scalars()
+        }
+        owners = {
+            h.id: h.owner_user_id
+            for h in session.execute(
+                select(Hotel).where(Hotel.id.in_({c.hotel_id for c in changes}))
+            ).scalars()
+        }
+        boards = {
+            owner_id: session.scalar(repricing_data.pinned_board_stmt(owner_id))
+            for owner_id in set(owners.values())
+        }
+        by_hotel: dict[int, list[PriceChange]] = defaultdict(list)
+        for change in changes:
+            by_hotel[change.hotel_id].append(change)
+        kept_per_room: list[PriceChange] = []
+        for a_hotel, its_changes in by_hotel.items():
+            kept_per_room.extend(
+                room_moves.one_per_room(
+                    (
+                        ((a_hotel, rooms.get(c.offer_key, (None, None))[0]),
+                         rooms.get(c.offer_key, (None, None))[1], c)
+                        for c in its_changes
+                    ),
+                    board=boards.get(owners.get(a_hotel)),
+                )
+            )
+        # MARKED, NOT DROPPED. A change left pending comes back in every later
+        # dispatch for ever -- the same trap the no-recipients branch below is
+        # written around -- so the boards that did not carry the alert record
+        # why here and are done with.
+        surviving = {c.id for c in kept_per_room}
+        other_boards = [c for c in changes if c.id not in surviving]
+        for change in other_boards:
+            change.notified = True
+            change.suppressed_reason = SUPPRESSED_SAME_ROOM_OTHER_BOARD
+        if other_boards:
+            log.info("same_room_other_board_suppressed", count=len(other_boards))
+        changes = kept_per_room
+
         hotel_ids = {c.hotel_id for c in changes}
         assignments = _assignments_for(session, hotel_ids)
         if not assignments:
@@ -214,6 +277,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
                 delta=c.delta,
                 delta_pct=c.delta_pct,
                 direction=str(c.direction),
+                room_type_id=rooms.get(c.offer_key, (None, None))[0],
             )
             for c in changes
         ]
@@ -255,7 +319,7 @@ def dispatch_changes(change_ids: list[int]) -> dict[str, int]:
         evaluated: set[int] = set()
         reached: set[int] = set()
 
-        for (recipient_id, hotel_id), batch_ids in batches.items():
+        for (recipient_id, hotel_id, _room_type_id), batch_ids in batches.items():
             recipient = recipients.get(recipient_id)
             link = links.get((hotel_id, recipient_id))
             if recipient is None or link is None or not link.is_active:
@@ -428,7 +492,7 @@ def market_summary() -> dict[str, int]:
         channels: dict[int, list[str]] = {}
 
         batches = group_for_digest(list(facts_by_id.values()), assignments)
-        for (recipient_id, hotel_id), batch_ids in batches.items():
+        for (recipient_id, hotel_id, _room_type_id), batch_ids in batches.items():
             recipient = recipients.get(recipient_id)
             link = links.get((hotel_id, recipient_id))
             if recipient is None or link is None or not link.is_active:

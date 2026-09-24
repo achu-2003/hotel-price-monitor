@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import Select, or_, select
 
 from app.db.models import Hotel, PriceSeries, RepricingAction, RoomType
+from app.db.models.repricing import RepricingSettings
 from app.services.meal_plan import ROOM_ONLY
 from app.services.repricing import HISTORY_NIGHTS, Benchmark
 
@@ -41,6 +42,22 @@ def history_stmt(owner_user_id: int, night: date, adults: int = 2) -> Select:
 
 def one_night(rows) -> list:
     return [r for r in rows if r[0].check_out == r[0].check_in + timedelta(days=1)]
+
+
+def pinned_board_stmt(owner_user_id: int) -> Select:
+    """The meal plan this owner's comparison is pinned to, if any.
+
+    Here beside the other two for the same reason they are: the Changes page
+    reads it on an async session and the dispatcher on a sync one, and a
+    screen that collapsed a room's boards differently from the alert about
+    that room would be two answers to "how many rooms moved tonight".
+
+    ``None`` -- no repricing row, or no board pinned -- means room-only wins,
+    which is what :func:`app.services.room_moves.one_per_room` does with it.
+    """
+    return select(RepricingSettings.benchmark_meal_plan).where(
+        RepricingSettings.owner_user_id == owner_user_id
+    )
 
 
 def benchmark_stmt(owner_user_id: int, hotel_id: int | None) -> Select:

@@ -222,11 +222,26 @@ SUPPRESSED_BELOW_THRESHOLD = "below_threshold"   # too small for everyone assign
 #: quiet is never mistaken for one nobody was assigned to.
 SUPPRESSED_NOT_A_PRICE_MOVE = "not_a_price_move"  # sold out, or back on sale
 
+#: The room was alerted on, on a different board.
+#:
+#: A reprice moves a room's room-only, breakfast and half-board rates at once,
+#: and each is its own change. One alert goes out per ROOM -- see
+#: services/room_moves.py -- so the boards that did not carry it are marked
+#: with this rather than left pending, which would bring them back in every
+#: later dispatch for ever.
+#:
+#: Emphatically not a failure: the reader was told this room moved, and the
+#: price they were told is the one the comparison is pinned to. The row stays
+#: on the dashboard with its own figures, which is where a per-board history
+#: belongs.
+SUPPRESSED_SAME_ROOM_OTHER_BOARD = "same_room_other_board"
+
 SUPPRESSION_LABELS = {
     SUPPRESSED_NO_RECIPIENTS: "nobody is assigned to this hotel",
     SUPPRESSED_RECIPIENT_INACTIVE: "everyone assigned is deactivated",
     SUPPRESSED_BELOW_THRESHOLD: "below everyone's alert threshold",
     SUPPRESSED_NOT_A_PRICE_MOVE: "an availability change, not a rate move",
+    SUPPRESSED_SAME_ROOM_OTHER_BOARD: "this room was alerted on another board",
 }
 
 

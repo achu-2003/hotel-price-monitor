@@ -51,7 +51,7 @@
     <tr><th>When</th><th>Hotel</th><th>Room</th><th>Stay</th><th>Compared</th><th class="num">Was</th><th class="num">Now</th><th class="num">Change</th><th>Alert</th></tr>
   </thead>
   <tbody>
-    {% for change, hotel_name, room_name, check_in, check_out in changes %}
+    {% for change, hotel_name, room_name, check_in, check_out, meal_plan, room_type_id in changes %}
     <tr>
       {# WHEN THE PRICE MOVED, not when the debounce finished.
 
@@ -79,7 +79,13 @@
         {% endif %}
       </td>
       <td><a href="/hotels/{{ change.hotel_id }}">{{ hotel_name }}</a></td>
-      <td>{{ room_name or '—' }}</td>
+      {# The board, under the name. One room sells on three of them at the
+         same time and this column showed none, so the same room arriving on
+         breakfast and on room-only was two identical-looking rows -- read,
+         reasonably, as the detector repeating itself. Only one board per room
+         reaches this table now (services/room_moves.py), and saying which one
+         is what stops the surviving row from looking arbitrary. #}
+      <td>{{ room_name or '—' }}{% if meal_plan %}<br><span class="muted">{{ meal_plan }}</span>{% endif %}</td>
       <td class="nowrap muted">{{ check_in }} → {{ check_out }}</td>
       {# Which two prices this row compared. "Was 1,023.75" means one thing
          when both prices are the same night and quite another when they are

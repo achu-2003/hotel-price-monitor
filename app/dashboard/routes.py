@@ -78,6 +78,7 @@ from app.services import monitoring as monitoring_service
 from app.services import rate_gap
 from app.services import repricing as repricing_rule
 from app.services import repricing_data
+from app.services import room_moves
 from app.services import retention
 from app.services.dates import local_today, next_weekend
 from app.services.ownership import owned_hotel_ids, owns, scope_hotels
@@ -1521,7 +1522,7 @@ async def changes_page(
 
     statement = scope_hotels(
         select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
-               PriceSeries.check_out)
+               PriceSeries.check_out, PriceSeries.meal_plan, PriceSeries.room_type_id)
         .join(Hotel, PriceChange.hotel_id == Hotel.id)
         .outerjoin(PriceSeries, PriceChange.offer_key == PriceSeries.offer_key)
         .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id),
@@ -1552,6 +1553,21 @@ async def changes_page(
             statement.order_by(PriceChange.changed_at.desc()).limit(300)
         )
     ).all()
+    # ONE ROW PER ROOM, NOT PER RATE PLAN.
+    #
+    # A reprice moves a room's three boards together and writes three changes,
+    # which is right -- they are three prices. Printed as three rows under a
+    # column that names no board, they read as the detector having repeated
+    # itself, and were reported as exactly that. See services/room_moves.py
+    # for the board that survives and why a room is never dropped.
+    #
+    # Collapsed after the query, not in it: the limit is on the changes, so
+    # narrowing it to one board in SQL would silently shorten the window a
+    # busy hotel can look back over.
+    rows = room_moves.one_per_room(
+        (((row[0].hotel_id, row[6]), row[5], row) for row in rows),
+        board=await session.scalar(repricing_data.pinned_board_stmt(user.id)),
+    )
     hotels = (
         await session.scalars(
             select(Hotel)
