@@ -289,11 +289,11 @@ class Benchmark:
     #: breakfast left that room with no comparison at all -- and a room the
     #: owner competes with every night is not a room to leave unpriced.
     #:
-    #: APPLIED TO BOTH SIDES TOGETHER. The fallback is not "use our room-only
-    #: rate against their breakfast one": that is the cross-board mistake the
-    #: board setting exists to prevent, and it would report us over a
-    #: thousand rupees cheaper than we are. The room drops to this board and
-    #: their room drops with it, so the pair stays like for like.
+    #: OUR SIDE ONLY. The benchmark's room is still read on ``meal_plan``:
+    #: the owner prices against Sterling's breakfast rate whatever board our
+    #: room happens to be sold on. It used to drop both sides together, which
+    #: compared ASG's Standard Double against Sterling's Mountain View
+    #: room-only rate -- not the figure the owner prices against.
     fallback_board: str | None = None
     #: WHICH room of theirs each room of ours competes with:
     #: ``{our room_type_id: their room name}``. Empty keeps the tier
@@ -734,9 +734,8 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     board = benchmark.meal_plan if benchmark else None
     spare_board = benchmark.fallback_board if benchmark else None
 
-    # ONE READING PER BOARD, and each room takes the first that sells it.
-    # Both sides move together: a room that drops to the fallback is compared
-    # against their room on the fallback too, never across the two.
+    # ONE READING PER BOARD, and each of our rooms takes the first that sells
+    # it. The benchmark's side does not move: it is always read on ``board``.
     nights = {board: _night(rows, own_hotel_id, with_tax=with_tax, meal_plan=board)}
     if board and spare_board and spare_board != board:
         nights[spare_board] = _night(rows, own_hotel_id, with_tax=with_tax,
@@ -791,21 +790,26 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                     ))
                     continue
 
+            # THEIR SIDE IS ALWAYS READ ON THE PINNED BOARD, even for a room
+            # of ours that dropped to the fallback. The owner's rule is "a
+            # hundred under Sterling's breakfast rate", and Sterling selling
+            # breakfast does not stop because we do not.
+            their_rates = nights[board][1]
             entry = (
-                _benchmark_room(theirs, benchmark.hotel_id, our_source, their_room)
+                _benchmark_room(their_rates, benchmark.hotel_id, our_source, their_room)
                 if their_room is not None
-                else _benchmark_entry(theirs.get(tier, {}), benchmark.hotel_id, our_source)
+                else _benchmark_entry(their_rates.get(tier, {}), benchmark.hotel_id, our_source)
             )
             if entry is None:
                 # Deliberately one reason and not two. "No room of that tier"
                 # and "no room of that tier on the site we are priced on" are
                 # different facts, but the answer to both is the same and the
                 # owner reads the sentence, not the branch.
-                board = f" on {used_board.lower()}" if used_board else ""
+                on_board = f" on {board.lower()}" if board else ""
                 what = f'"{their_room}"' if their_room else label_for(tier)
                 proposals.append(Proposal(
                     **base, market=None, target=None, benchmark=benchmark.hotel,
-                    held=f"{benchmark.hotel} has no {what} on sale tonight{board} "
+                    held=f"{benchmark.hotel} has no {what} on sale tonight{on_board} "
                          f"on the site our own price comes from",
                 ))
                 continue

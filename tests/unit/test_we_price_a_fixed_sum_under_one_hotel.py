@@ -644,9 +644,9 @@ class TestARoomWithoutBreakfastDropsToRoomOnly:
     Pinning breakfast left it unpriced -- and a room the owner competes with
     every night is not a room to leave unpriced.
 
-    BOTH SIDES DROP TOGETHER. Our room-only rate against their breakfast one
-    is the cross-board mistake the board setting exists to prevent; on 24 Sep
-    it would have reported us 1,350 cheaper than we were.
+    ONLY OUR SIDE DROPS. The owner prices against Sterling's breakfast rate,
+    so their Mountain View Classic is still read on breakfast even though
+    our Standard Double is sold room-only.
     """
 
     BENCH = rule.Benchmark(
@@ -680,14 +680,25 @@ class TestARoomWithoutBreakfastDropsToRoomOnly:
     def test_the_room_without_breakfast_is_priced_after_all(self):
         p = self._all()["Standard Double Room"]
         assert p.board == "Room Only"
-        assert p.target == Decimal("4873")
+        assert p.our_price == Decimal("6358")
+        assert p.target == Decimal("6223")
 
-    def test_it_is_compared_against_their_room_only_rate_not_their_breakfast_one(self):
-        """4,973 is their Mountain View room-only. Their breakfast rate for
-        the same room is 6,323, and using it would put us 1,350 too high."""
+    def test_it_is_compared_against_their_breakfast_rate_not_their_room_only_one(self):
+        """6,323 is their Mountain View breakfast rate; 4,973 is the same
+        room room-only, which is not what the owner prices against."""
         p = self._all()["Standard Double Room"]
-        assert p.market == Decimal("4973")
+        assert p.market == Decimal("6323")
         assert p.benchmark_entry.room == "Mountain View Classic Room"
+
+    def test_their_room_with_no_breakfast_tonight_holds_rather_than_dropping(self):
+        """Their breakfast rate gone, room-only still on sale: we hold, we do
+        not quietly slide back to their room-only rate."""
+        rows = [r for r in self._rows()
+                if not (r[2] == "Mountain View Classic Room" and r[0].meal_plan == "Breakfast")]
+        p = {p.room_name: p for p in
+             rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=self.BENCH)}["Standard Double Room"]
+        assert p.target is None
+        assert "on breakfast" in p.held
 
     def test_a_room_that_has_breakfast_still_uses_breakfast(self):
         p = self._all()["Deluxe Double Room"]

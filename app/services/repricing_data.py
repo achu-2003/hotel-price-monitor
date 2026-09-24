@@ -86,8 +86,8 @@ def benchmark_for(row, settings) -> Benchmark | None:
                      undercut=Decimal(settings.benchmark_undercut),
                      with_tax=bool(settings.benchmark_with_tax),
                      meal_plan=settings.benchmark_meal_plan or None,
-                     # A room the chosen board does not sell drops to
-                     # room-only, and its rival drops with it. Implicit
+                     # A room of ours the chosen board does not sell drops
+                     # to room-only; its rival stays on the chosen board. Implicit
                      # rather than another switch: an owner who pins a board
                      # wants the rooms that have it compared on it, not the
                      # rooms that do not left unpriced.
