@@ -40,6 +40,7 @@ from app.schemas.hotels import (
     HotelSourceCreate,
     HotelSourceOut,
     HotelSourceUpdate,
+    LinkDeal,
     AttachFromUrl,
     HotelUpdate,
     RoomTypeCreate,
@@ -632,6 +633,70 @@ def _may_carry_no_dates(detection: Detection, was_standing_rate: bool) -> bool:
     with a staleness warning that does not describe it.
     """
     return detection.is_complete or was_standing_rate
+
+
+@router.post("/hotel-sources/{hotel_source_id}/link-deal", response_model=HotelSourceOut)
+async def set_link_deal(
+    hotel_source_id: int,
+    payload: LinkDeal,
+    request: Request,
+    session: DbSession,
+    admin: AdminUser,
+):
+    """Read this site at the price its saved link shows, or at the public rate.
+
+    A link pasted from Google Hotels carries the campaign that found it, and
+    Booking.com gives that campaign its own deal: Peters Park read 5,000 on
+    the public page and 4,400 on the link the owner pasted. The public rate is
+    the default, so every hotel is compared on the price an ordinary guest
+    sees. This is the per-site exception, for a competitor the owner wants
+    read exactly as their link shows it.
+
+    REFUSED ON YOUR OWN PROPERTY. The repricing rule divides a target by our
+    own price to reach an RMS rate, so our price read at a deal writes the
+    rate that much too high -- on 22 Sep it put us 500 over the competitor we
+    meant to sit 100 under.
+
+    One key set or removed, never the whole config: a PATCH of adapter_config
+    replaces it, and a page holding a copy would undo a repair made since.
+    """
+    from app.adapters.playwright_direct_site import KEEP_LINK_DEAL
+
+    hotel_source = await get_object_or_404(session, HotelSource, hotel_source_id, "Hotel source")
+    hotel = await owned_hotel_or_404(session, hotel_source.hotel_id, admin)
+    if payload.enabled and hotel.is_own_property:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Your own property is always read at the public price: the "
+                "repricing rule sets your RMS rate from it, and a deal price "
+                "would set that rate too high."
+            ),
+        )
+    before = dict(hotel_source.adapter_config or {})
+    config = dict(before)
+    if payload.enabled:
+        config[KEEP_LINK_DEAL] = True
+    else:
+        config.pop(KEEP_LINK_DEAL, None)
+    hotel_source.adapter_config = config
+
+    source = await session.get(Source, hotel_source.source_id)
+    await record_audit(
+        session, user=admin, action="update", entity="hotel_source",
+        entity_id=hotel_source_id, before={KEEP_LINK_DEAL: bool(before.get(KEEP_LINK_DEAL))},
+        after={KEEP_LINK_DEAL: payload.enabled}, request=request,
+    )
+    await session.commit()
+    log.info("link_deal_set", hotel_source_id=hotel_source_id, enabled=payload.enabled)
+
+    return HotelSourceOut(
+        **{k: getattr(hotel_source, k) for k in
+           ("id", "hotel_id", "source_id", "url", "external_id", "currency",
+            "adapter_config", "is_active", "last_verified_at")},
+        source_code=source.code if source else None,
+        adapter_key=source.adapter_key if source else None,
+    )
 
 
 @router.post("/hotel-sources/{hotel_source_id}/replace-url", response_model=ReplaceUrlResult)

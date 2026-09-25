@@ -184,6 +184,12 @@ class AttachFromUrl(ORMModel):
         return cleaned
 
 
+class LinkDeal(ORMModel):
+    """Read this site at the price its saved link shows, deal included."""
+
+    enabled: bool
+
+
 class HotelSourceUpdate(ORMModel):
     url: str | None = None
     external_id: str | None = None

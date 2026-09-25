@@ -186,12 +186,14 @@
     {# Which side of the tax these numbers sit on, said in the header. The
        column used to be labelled "Price" alone, and a pre-tax rate under that
        heading reads as the bill -- the gap between the two is a fifth of the
-       number on a card that charges 18%. #}
+       number on a card that charges 18%.
+       The basis the numbers are SHOWN on -- the Settings switch -- not the one
+       the site published: Booking.com publishes pre-tax, and with the switch
+       on this column read "excl. tax" over 5,000 + 250 shown as 5,250. A cell
+       that could only be shown on the other basis says so itself. #}
     <thead><tr><th>Room</th><th class="num">Guests</th>
       <th class="num">Price
-        {% if prices[0][0].last_price_basis.value == 'exclusive' %}
-        <span class="muted">excl. tax</span>
-        {% endif %}
+        <span class="muted">{{ 'incl. tax' if show_with_tax else 'excl. tax' }}</span>
       </th>
       <th>Last checked</th></tr></thead>
     <tbody>
@@ -517,6 +519,21 @@
         </label>
         <p class="form-status" hidden></p>
       </form>
+      {#
+        WHICH PRICE: THE PUBLIC ONE, OR THE ONE THIS LINK SHOWS. A link found
+        on Google Hotels carries a campaign, and Booking.com shows that
+        campaign its own deal -- Peters Park 4,400 on the pasted link, 5,000
+        to anyone else. Public is the default; this is the exception, per
+        site. Not offered on your own property: see set_link_deal.
+      #}
+      {% if not hotel.is_own_property %}
+      <label class="inline link-deal" data-hotel-source-id="{{ hotel_source.id }}">
+        <input type="checkbox" {{ 'checked' if (hotel_source.adapter_config or {}).get('keep_link_deal') else '' }}>
+        Use the price this link shows{% if sources|length > 1 %} <span class="muted">— {{ source.display_name }}</span>{% endif %}
+        <span class="muted">(keeps a Google Hotels or partner deal in the link; off = the public price)</span>
+        <span class="form-status" hidden></span>
+      </label>
+      {% endif %}
       {% endfor %}
       <p class="muted source-forms-note">
         Paste the corrected page while it is showing rates for specific dates.

@@ -144,7 +144,7 @@ class PlaywrightDirectSiteAdapter:
                 "playwright_direct_site needs a url on the hotel_source row or "
                 "a url_template in adapter_config."
             )
-        return _public_rate_url(render_template(
+        url = render_template(
             template,
             check_in=context.check_in,
             check_out=context.check_out,
@@ -154,7 +154,15 @@ class PlaywrightDirectSiteAdapter:
             rooms=context.rooms,
             currency=context.currency,
             external_id=context.external_id or "",
-        ))
+        )
+        # UNLESS SOMEBODY ASKED FOR THE LINK'S OWN PRICE. ``keep_link_deal`` is
+        # set from the hotel page, per site, for a competitor whose price the
+        # owner wants read exactly as the link they pasted shows it -- a
+        # Google Hotels deal included. Never on your own property: the API
+        # refuses it there, because the repricing rule turns our price into
+        # an RMS rate and a deal price writes that rate high.
+        # See KEEP_LINK_DEAL and _public_rate_url.
+        return url if config.get(KEEP_LINK_DEAL) else _public_rate_url(url)
 
     def _wait_for_rooms(self, fetch: BrowserFetch, config: dict) -> None:
         """Wait for whatever this source actually delivers the prices in.
@@ -734,6 +742,12 @@ _IS_STRUCK_JS = """el => {
   return false;
 }"""
 
+
+
+#: adapter_config key: read this site at the price its saved link shows,
+#: campaign and all, instead of the public rate. A person's choice, so
+#: rediscovery's merge_config carries it through a repair untouched.
+KEEP_LINK_DEAL = "keep_link_deal"
 
 
 #: Query parameters that tell a booking site WHERE A VISITOR CAME FROM, which

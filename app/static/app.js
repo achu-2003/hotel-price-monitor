@@ -1217,6 +1217,32 @@
     });
   });
 
+  // -- read a site at its link's price, or the public one --------------
+  document.querySelectorAll("label.link-deal").forEach(function (label) {
+    const box = label.querySelector('input[type="checkbox"]');
+    const status = label.querySelector(".form-status");
+    box.addEventListener("change", async function () {
+      box.disabled = true;
+      const result = await api(
+        "/api/v1/hotel-sources/" + label.dataset.hotelSourceId + "/link-deal",
+        "POST",
+        { enabled: box.checked }
+      );
+      box.disabled = false;
+      status.hidden = false;
+      if (!result.ok) {
+        box.checked = !box.checked;
+        status.textContent = problemText(result);
+        status.className = "form-status error";
+        return;
+      }
+      status.className = "form-status ok";
+      status.textContent = box.checked
+        ? "Saved. The next check reads the price this link shows — press Run now to see it."
+        : "Saved. The next check reads the public price — press Run now to see it.";
+    });
+  });
+
   // -- deep link to a collapsed panel ---------------------------------
   /*
    * "Edit" in a page head points at a <details> further down. Following the
