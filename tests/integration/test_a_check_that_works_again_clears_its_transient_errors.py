@@ -34,9 +34,34 @@ def test_a_transient_error_is_resolved_by_the_next_success(session, hotel_fixtur
 
 
 def test_an_error_that_needs_a_person_stays_open(session, hotel_fixture):
+    """A block says the site is refusing us; one good read does not undo that."""
+    target = hotel_fixture["target"]
+    error = _error(session, target, transient=False, error_class=ErrorClass.BLOCKED)
+    monitoring.record_success(session, [target.id])
+    session.refresh(error)
+    assert error.resolved_at is None
+
+
+def test_schema_drift_is_resolved_by_a_later_read_of_the_same_site(session, hotel_fixture):
+    """The selectors just read rooms: whatever the drift was, it is not now."""
     target = hotel_fixture["target"]
     error = _error(session, target, transient=False, error_class=ErrorClass.PARSE_SCHEMA_DRIFT)
     monitoring.record_success(session, [target.id])
+    session.refresh(error)
+    assert error.resolved_at is not None
+
+
+def test_drift_raised_by_the_success_itself_survives_it(session, hotel_fixture):
+    """The collapsed-offers alert is recorded by a successful ingest, at the
+    success's own timestamp, about that success."""
+    target = hotel_fixture["target"]
+    now = datetime.now(UTC)
+    error = MonitoringError(monitor_target_id=target.id, occurred_at=now,
+                            error_class=ErrorClass.PARSE_SCHEMA_DRIFT, is_transient=False,
+                            message="offers collapsed")
+    session.add(error)
+    session.flush()
+    monitoring.record_success(session, [target.id], now)
     session.refresh(error)
     assert error.resolved_at is None
 

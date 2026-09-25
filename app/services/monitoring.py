@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
@@ -289,15 +289,23 @@ def record_success(
     session: Session, target_ids: list[int], now: datetime | None = None
 ) -> None:
     """Clear the failure state, close any half-open circuit, and resolve the
-    transient errors this success has answered.
+    errors this success has answered.
 
     A transient error -- a timeout, a 502 page from the site itself -- is
     marked "retries by itself", and it did: this check is the retry. Left
     open, it sat on Attention until somebody pressed Resolve, and a page
     full of problems that had already gone away is how the one that has
-    not gets missed. Only transient errors of THESE targets, and only ones
-    from before this success; a selector fault or a block still needs a
+    not gets missed.
+
+    Schema drift too. It says "the selectors no longer match this site",
+    and a check that has just read rooms off the same site says they do --
+    whether because the drift was a slow page all along, or because a repair
+    fixed it. A block, a robots refusal or a config fault still needs a
     person, and stays.
+
+    STRICTLY BEFORE ``now``. The collapsed-offers alert is recorded by a
+    SUCCESSFUL ingest at this same timestamp, and it is about that very
+    success; it must survive the success that raised it.
     """
     now = now or datetime.now(UTC)
     targets = session.execute(
@@ -314,9 +322,12 @@ def record_success(
         update(MonitoringError)
         .where(
             MonitoringError.monitor_target_id.in_(target_ids),
-            MonitoringError.is_transient.is_(True),
+            or_(
+                MonitoringError.is_transient.is_(True),
+                MonitoringError.error_class == ErrorClass.PARSE_SCHEMA_DRIFT,
+            ),
             MonitoringError.resolved_at.is_(None),
-            MonitoringError.occurred_at <= now,
+            MonitoringError.occurred_at < now,
         )
         .values(resolved_at=now)
         .execution_options(synchronize_session=False)

@@ -58,6 +58,12 @@ _LOCK_TTL_SECONDS = 600
 #: just failed is not helped by three requests in thirty seconds.
 _BACKOFF = (30, 120, 480)
 
+#: How long before a schema-drift reading is checked on a fresh page load. Long
+#: enough that a slow booking engine has finished whatever held it up, short
+#: enough that a real redesign still reaches Attention (and repair) within
+#: two minutes of the first sighting. See _handle_failure.
+_DRIFT_CONFIRM_SECONDS = 60
+
 #: How long a queued check stays worth running. Half an hour, matching the
 #: shortest interval anyone schedules; past that the answer it would collect is
 #: about a moment that has gone.
@@ -682,6 +688,33 @@ def _handle_failure(
     """
     now = datetime.now(UTC)
     attempt = task.request.retries
+
+    # SCHEMA DRIFT IS BELIEVED ONLY WHEN IT REPRODUCES.
+    #
+    # "No room matched" is also what a page looks like when it was read before
+    # its rooms arrived. On 24 Sep a Treebo page was captured with "Available
+    # Rooms for Your Stay" still showing its spinner, and ASG's Booking.com
+    # page came back with no text at all -- both filed as a redesign, both
+    # read perfectly by the very next check. Eleven such rows sat on
+    # Attention in an afternoon, each one a red alert and a repair attempt
+    # spent on a site that had not changed.
+    #
+    # Nothing on those pages says "still loading" in a way every site shares
+    # (Treebo's spinner is an unlabelled styled div), so this does not try to
+    # read one. It looks again: a fresh page load a minute later. A real
+    # redesign fails the second look too and is reported exactly as before,
+    # one minute later; a slow page does not, and leaves no trace but a log
+    # line and a failed check run.
+    if error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT and attempt == 0:
+        with sync_session() as session:
+            _update_check_run(
+                session, check_run_id,
+                status=CheckRunStatus.FAILED, finished_at=now,
+                duration_ms=int((now - started).total_seconds() * 1000),
+                error_summary=f"[unconfirmed {error.error_class}, looking again] {str(error)[:760]}",
+            )
+        logger.warning("schema_drift_unconfirmed_retrying", message=str(error)[:300])
+        raise task.retry(exc=error, countdown=_DRIFT_CONFIRM_SECONDS + random.uniform(0, 30))
 
     if error.error_class == ErrorClass.RATE_LIMITED:
         penalise_source(payload["source_id"])
