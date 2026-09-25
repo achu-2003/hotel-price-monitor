@@ -68,20 +68,50 @@
   </div>
 </section>
 
-<section class="repricing-section">
+<section class="repricing-section" id="repricer-log">
   <h2>What the repricer did</h2>
+  {% set changes_only = changes_only if changes_only is defined else true %}
+  {% set log_day = log_day if log_day is defined else none %}
+  {% set day_q = log_day.isoformat() if log_day else '' %}
   <p class="muted">
-    Every decision, including the ones that changed nothing. Newest first.
+    {% if changes_only %}
+      Only the rates that were actually changed in RMS, newest first.
+    {% else %}
+      Every decision, including the ones that changed nothing. Newest first.
+    {% endif %}
     The rule that makes them, and tonight's proposals, are on
     <a href="/repricing">Repricing</a>.
   </p>
+  {# Changes first: the log is every 30-minute decision, and the few that
+     moved a rate -- the ones anybody opens this for -- were lost among the
+     "unchanged" and "held" rows around them. #}
+  <form class="filters" method="get" action="/notifications#repricer-log">
+    <div class="chips chips-filter">
+      <span class="chips-label">Show</span>
+      <a class="chip {{ 'is-on' if changes_only else '' }}"
+         href="/notifications?hours={{ hours }}&log=changes{% if day_q %}&day={{ day_q }}{% endif %}#repricer-log">Changes only</a>
+      <a class="chip {{ '' if changes_only else 'is-on' }}"
+         href="/notifications?hours={{ hours }}&log=all{% if day_q %}&day={{ day_q }}{% endif %}#repricer-log">All decisions</a>
+    </div>
+    <input type="hidden" name="hours" value="{{ hours }}">
+    <input type="hidden" name="log" value="{{ 'changes' if changes_only else 'all' }}">
+    <label>Day
+      <input type="date" name="day" value="{{ log_day.isoformat() if log_day else '' }}">
+    </label>
+    <button type="submit">Show</button>
+    {% if log_day %}
+      <a href="/notifications?hours={{ hours }}&log={{ 'changes' if changes_only else 'all' }}#repricer-log">Any day</a>
+    {% endif %}
+  </form>
   {% if not actions %}
-    <p class="muted">Nothing yet.</p>
+    <p class="muted">
+      {% if changes_only %}No rate was changed{% else %}Nothing was decided{% endif %}{% if log_day %} on {{ log_day.strftime('%d %b %Y') }}{% else %} yet{% endif %}.
+    </p>
   {% else %}
   <div class="grid-wrap">
   <table class="grid">
     <thead>
-      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num">Market</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
+      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num">{{ benchmark_name if benchmark_name is defined and benchmark_name else 'Market' }}</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
     </thead>
     <tbody>
     {% for a in actions %}

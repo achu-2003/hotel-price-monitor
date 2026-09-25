@@ -1865,7 +1865,8 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
 # -- notifications ---------------------------------------------------
 @router.get("/notifications", response_class=HTMLResponse)
 async def notifications_page(
-    request: Request, user: DashUser, session: DbSession, hours: int = 168
+    request: Request, user: DashUser, session: DbSession, hours: int = 168,
+    log: str = "changes", day: str | None = None,
 ):
     """What was actually sent.
 
@@ -1897,19 +1898,34 @@ async def notifications_page(
     # sit at the bottom of /repricing, under the rule and the mapping forms
     # somebody reading it is not touching.
     #
-    # Every decision, but not the plain readings a Preview takes of every
-    # channel: those are figures, not decisions, and would bury them.
+    # CHANGES ONLY, BY DEFAULT. Every 30 minutes the rule decides about every
+    # room, and nearly every decision is "unchanged" or "held"; the few that
+    # moved a rate -- the ones somebody opens this to find -- were buried. The
+    # full log is one click away. A day narrows either view to that local
+    # date; a blank or malformed one is simply no filter.
+    changes_only = log != "all"
+    try:
+        log_day = date.fromisoformat(day) if day else None
+    except ValueError:
+        log_day = None
     actions = (
-        await session.scalars(
-            select(RepricingAction).where(RepricingAction.owner_user_id == user.id,
-                                          RepricingAction.status != "read")
-            .order_by(RepricingAction.created_at.desc()).limit(60)
-        )
+        await session.scalars(repricing_data.log_stmt(
+            user.id, changes_only=changes_only, day=log_day,
+            tz=get_settings().timezone, limit=500 if log_day else 60,
+        ))
     ).all()
+    # The market column is the benchmark's price whenever one is set, so it
+    # is headed with that hotel's name, as on /repricing.
+    benchmark_name = await session.scalar(
+        select(Hotel.name)
+        .join(RepricingSettings, RepricingSettings.benchmark_hotel_id == Hotel.id)
+        .where(RepricingSettings.owner_user_id == user.id)
+    )
 
     return await _render(
         request, user, session, "notifications.html",
         notifications=rows, hours=hours, actions=actions,
+        changes_only=changes_only, log_day=log_day, benchmark_name=benchmark_name,
     )
 
 
@@ -2220,6 +2236,13 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     app_row = await session.scalar(
         select(RateApplication).where(RateApplication.owner_user_id == user.id)
     )
+    # Whether the automatic mode is doing anything, answered at the top of the
+    # page rather than by reading the log on /notifications.
+    last_auto_change = await session.scalar(repricing_data.last_auto_change_stmt(user.id))
+    today = local_today(get_settings().timezone)
+    auto_changes_today = await session.scalar(
+        repricing_data.auto_changes_on_stmt(user.id, today, get_settings().timezone)
+    ) or 0
     return await _render(
         request, user, session, "repricing.html",
         settings=settings, own=own, rooms=rooms, mappings=mappings, proposals=proposals,
@@ -2228,6 +2251,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms, other_channels=other_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
+        last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
     )
 
 

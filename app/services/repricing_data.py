@@ -6,11 +6,12 @@ gap" or "already moved tonight" means. Both callers go through here.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
 from dataclasses import replace
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, func, or_, select
 
@@ -168,3 +169,58 @@ def moved_stmt(owner_user_id: int, night: date, channel: str) -> Select:
         RepricingAction.room_type_id.isnot(None),
         or_(RepricingAction.channel == channel, RepricingAction.channel.is_(None)),
     ).distinct()
+
+
+# -- the repricer's log, as the pages read it -------------------------
+#: A rate written to RMS and read back. The one status that moved anything.
+APPLIED = "applied"
+
+
+def _local_day(day: date, tz: str) -> tuple[datetime, datetime]:
+    """``day`` in the deployment's zone, as the UTC range it covers.
+
+    The log is stored in UTC and read in Tamil Nadu: a change at 00:58 IST
+    belongs to the 25th although it is 19:28 on the 24th in UTC.
+    """
+    start = datetime.combine(day, time.min, tzinfo=ZoneInfo(tz))
+    return start.astimezone(UTC), (start + timedelta(days=1)).astimezone(UTC)
+
+
+def log_stmt(owner_user_id: int, *, changes_only: bool, day: date | None = None,
+             tz: str = "Asia/Kolkata", limit: int = 60) -> Select:
+    """The "What the repricer did" rows, newest first.
+
+    ``changes_only`` keeps the rows that moved a rate. The full log is every
+    30-minute decision, and the handful that wrote something were lost among
+    the "unchanged" and "held" rows around them. Plain readings are never
+    shown either way: they are figures a Preview took, not decisions.
+    """
+    stmt = select(RepricingAction).where(
+        RepricingAction.owner_user_id == owner_user_id,
+        (RepricingAction.status == APPLIED) if changes_only else (RepricingAction.status != "read"),
+    )
+    if day is not None:
+        start, end = _local_day(day, tz)
+        stmt = stmt.where(RepricingAction.created_at >= start, RepricingAction.created_at < end)
+    return stmt.order_by(RepricingAction.created_at.desc(), RepricingAction.id.desc()).limit(limit)
+
+
+def last_auto_change_stmt(owner_user_id: int) -> Select:
+    """The newest rate the automatic mode wrote. A manual Apply is not one."""
+    return (
+        select(RepricingAction)
+        .where(RepricingAction.owner_user_id == owner_user_id,
+               RepricingAction.mode == "auto", RepricingAction.status == APPLIED)
+        .order_by(RepricingAction.created_at.desc(), RepricingAction.id.desc())
+        .limit(1)
+    )
+
+
+def auto_changes_on_stmt(owner_user_id: int, day: date, tz: str = "Asia/Kolkata") -> Select:
+    """How many rates the automatic mode wrote on ``day``, local time."""
+    start, end = _local_day(day, tz)
+    return select(func.count()).select_from(RepricingAction).where(
+        RepricingAction.owner_user_id == owner_user_id,
+        RepricingAction.mode == "auto", RepricingAction.status == APPLIED,
+        RepricingAction.created_at >= start, RepricingAction.created_at < end,
+    )

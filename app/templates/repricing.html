@@ -23,6 +23,23 @@
       market, and the rate the rule proposes. <strong>Nothing is written unless you
       press Apply or switch the automatic mode on.</strong>
     </p>
+    {# Is the automatic mode doing anything? Answered here, in one line,
+       rather than by reading the whole log. #}
+    {% if last_auto_change is defined %}
+    <p class="last-auto-change">
+      {% if last_auto_change %}
+        {% set c = last_auto_change %}
+        Last automatic change:
+        <strong>{{ c.created_at | localtime('%d %b %H:%M') }}</strong> —
+        {{ c.room_name or c.rms_room or 'a room' }}{% if c.plan %} {{ c.plan }}{% endif %}
+        {% if c.current_rms is not none %}{{ money(c.current_rms) }} → {% endif %}{{ money(c.applied_rms) if c.applied_rms is not none else '—' }}
+      {% else %}
+        No automatic change yet.
+      {% endif %}
+      <span class="muted">· Today: {{ auto_changes_today }} rate{{ '' if auto_changes_today == 1 else 's' }} changed</span>
+      · <a href="/notifications?log=changes&day={{ today.isoformat() }}#repricer-log">see the changes</a>
+    </p>
+    {% endif %}
   </div>
 </div>
 
