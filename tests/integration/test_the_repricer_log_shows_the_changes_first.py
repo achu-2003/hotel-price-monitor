@@ -43,13 +43,15 @@ def _log(session, owner, **kw):
     return session.scalars(repricing_data.log_stmt(owner.id, tz=TZ, **kw)).all()
 
 
-def test_changes_only_shows_only_the_rates_that_were_written(session, owner):
+def test_changes_only_shows_the_writes_and_the_refused_writes(session, owner):
+    """A write RMS refused is the change an owner most needs to see."""
     at = datetime(2026, 9, 25, 5, 0, tzinfo=UTC)
     applied = _action(session, owner, at)
-    for status in ("unchanged", "held", "failed", "proposed", "read"):
+    for status in ("unchanged", "held", "proposed", "read"):
         _action(session, owner, at, status=status)
+    refused = _action(session, owner, at, status="failed")
 
-    assert _log(session, owner, changes_only=True) == [applied]
+    assert _log(session, owner, changes_only=True) == [refused, applied]
 
 
 def test_all_decisions_is_everything_but_the_plain_readings(session, owner):

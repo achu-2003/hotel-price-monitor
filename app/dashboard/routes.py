@@ -767,9 +767,16 @@ async def _repricing_boards(session, owner_user_id: int) -> dict[int, str]:
     )
     if settings is None or not settings.benchmark_meal_plan or not settings.benchmark_hotel_id:
         return {}
+    # RE-CHECKED, as the worker and /repricing do: a benchmark since
+    # deactivated or marked as your own is not being followed, and the grids
+    # must not keep showing a board nothing is priced on.
+    if (await session.execute(
+        repricing_data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)
+    )).first() is None:
+        return {}
     ids = set(await session.scalars(
         select(Hotel.id).where(Hotel.owner_user_id == owner_user_id,
-                               Hotel.is_own_property.is_(True))
+                               Hotel.is_own_property.is_(True), Hotel.is_active.is_(True))
     ))
     ids.add(settings.benchmark_hotel_id)
     return dict.fromkeys(ids, settings.benchmark_meal_plan)
@@ -1937,7 +1944,11 @@ async def notifications_page(
     changes_only = log != "all"
     try:
         log_day = date.fromisoformat(day) if day else None
-    except ValueError:
+        if log_day is not None:
+            repricing_data.local_day_bounds(log_day, get_settings().timezone)
+    except (ValueError, OverflowError):
+        # 0001-01-01 and 9999-12-31 are valid dates whose day has no edge
+        # in UTC to convert to.
         log_day = None
     actions = (
         await session.scalars(repricing_data.log_stmt(
@@ -1945,18 +1956,11 @@ async def notifications_page(
             tz=get_settings().timezone, limit=500 if log_day else 60,
         ))
     ).all()
-    # The market column is the benchmark's price whenever one is set, so it
-    # is headed with that hotel's name, as on /repricing.
-    benchmark_name = await session.scalar(
-        select(Hotel.name)
-        .join(RepricingSettings, RepricingSettings.benchmark_hotel_id == Hotel.id)
-        .where(RepricingSettings.owner_user_id == user.id)
-    )
 
     return await _render(
         request, user, session, "notifications.html",
         notifications=rows, hours=hours, actions=actions,
-        changes_only=changes_only, log_day=log_day, benchmark_name=benchmark_name,
+        changes_only=changes_only, log_day=log_day,
     )
 
 

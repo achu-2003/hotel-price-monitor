@@ -8,7 +8,7 @@ only a second sighting is recorded.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -18,8 +18,10 @@ from app.workers import tasks_fetch
 
 
 class _Retry(Exception):
-    def __init__(self, countdown):
+    def __init__(self, countdown, args=None, kwargs=None):
         self.countdown = countdown
+        self.args_ = args
+        self.kwargs_ = kwargs
 
 
 class _Session:
@@ -44,11 +46,18 @@ def handled(monkeypatch):
     monkeypatch.setattr(tasks_fetch, "_request_repair",
                         lambda payload, stay, **kw: seen.repairs.append(kw["reason"]))
 
-    def run(error, attempt):
-        def retry(exc=None, countdown=None, **_):
-            raise _Retry(countdown)
-        task = SimpleNamespace(request=SimpleNamespace(retries=attempt), retry=retry)
+    def run(error, attempt=0, *, drift_seen=False, expires=None, kwargs=None):
         payload = {"hotel_id": 1, "source_id": 2, "hotel_source_id": 3}
+        if drift_seen:
+            payload["drift_seen"] = True
+
+        def retry(exc=None, countdown=None, args=None, kwargs=None, **_):
+            raise _Retry(countdown, args, kwargs)
+        task = SimpleNamespace(
+            request=SimpleNamespace(retries=attempt, args=[payload], kwargs=kwargs or {},
+                                    expires=expires),
+            retry=retry,
+        )
         return tasks_fetch._handle_failure(
             task, error, payload, stay=None, target_ids=[9], check_run_id="run",
             started=datetime.now(UTC), triggered_by="scheduler",
@@ -65,20 +74,53 @@ def _drift():
 
 def test_the_first_sighting_looks_again_instead_of_reporting(handled):
     with pytest.raises(_Retry) as retried:
-        handled.run(_drift(), attempt=0)
+        handled.run(_drift())
     assert retried.value.countdown >= tasks_fetch._DRIFT_CONFIRM_SECONDS
     assert handled.errors == [] and handled.failures == [] and handled.repairs == []
 
 
+def test_the_second_look_is_marked_on_the_payload(handled):
+    """The retry carries the flag; the count of retries is not the signal."""
+    with pytest.raises(_Retry) as retried:
+        handled.run(_drift(), kwargs={"triggered_by": "scheduler"})
+    assert retried.value.args_[0]["drift_seen"] is True
+    assert retried.value.kwargs_ == {"triggered_by": "scheduler"}
+
+
+def test_a_fetch_deferred_by_the_rate_limit_still_gets_its_second_look(handled):
+    """Deferred twice by the politeness budget, then read too early: that is a
+    first sighting, not a confirmed one."""
+    with pytest.raises(_Retry):
+        handled.run(_drift(), attempt=2)
+    assert handled.errors == [] and handled.repairs == []
+
+
+def test_too_close_to_the_deadline_it_is_reported_now(handled):
+    """A retry past the message's expiry would be dropped unrun, and a real
+    redesign reported nowhere."""
+    soon = (datetime.now(UTC) + timedelta(seconds=45)).isoformat()
+    result = handled.run(_drift(), expires=soon)
+    assert result["status"] == "failed"
+    assert len(handled.errors) == 1 and handled.repairs == ["schema_drift"]
+
+
+def test_a_manual_check_stays_running_while_it_looks_again(handled):
+    """Check now polls this row; FAILED would stop the poll a minute early."""
+    with pytest.raises(_Retry):
+        handled.run(_drift(), kwargs={"check_run_id": "run"})
+    (run,) = handled.runs
+    assert "status" not in run and "unconfirmed" in run["error_summary"]
+
+
 def test_the_check_run_still_records_that_it_failed(handled):
     with pytest.raises(_Retry):
-        handled.run(_drift(), attempt=0)
+        handled.run(_drift())
     (run,) = handled.runs
     assert "unconfirmed" in run["error_summary"]
 
 
 def test_a_second_sighting_is_reported_and_repaired_as_before(handled):
-    result = handled.run(_drift(), attempt=1)
+    result = handled.run(_drift(), attempt=1, drift_seen=True)
     assert result["status"] == "failed"
     assert len(handled.errors) == 1 and len(handled.failures) == 1
     assert handled.repairs == ["schema_drift"]

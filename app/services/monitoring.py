@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
@@ -303,9 +303,15 @@ def record_success(
     fixed it. A block, a robots refusal or a config fault still needs a
     person, and stays.
 
-    STRICTLY BEFORE ``now``. The collapsed-offers alert is recorded by a
-    SUCCESSFUL ingest at this same timestamp, and it is about that very
-    success; it must survive the success that raised it.
+    EXCEPT THE COLLAPSED-OFFERS ALERT. It is filed as schema drift too, but a
+    successful ingest is exactly when it is raised: the page read fine and
+    the name selector folded six rooms into one. The next success says
+    nothing about whether that is fixed, so it stays until a repair or a
+    person resolves it -- rather than closing and reopening every half hour.
+    It is the drift row whose context names the collapsed offers.
+
+    STRICTLY BEFORE ``now`` as well, which kept that alert alive through the
+    ingest that raised it before it was excluded outright.
     """
     now = now or datetime.now(UTC)
     targets = session.execute(
@@ -324,7 +330,10 @@ def record_success(
             MonitoringError.monitor_target_id.in_(target_ids),
             or_(
                 MonitoringError.is_transient.is_(True),
-                MonitoringError.error_class == ErrorClass.PARSE_SCHEMA_DRIFT,
+                and_(
+                    MonitoringError.error_class == ErrorClass.PARSE_SCHEMA_DRIFT,
+                    ~func.coalesce(MonitoringError.context.has_key("names_seen"), False),
+                ),
             ),
             MonitoringError.resolved_at.is_(None),
             MonitoringError.occurred_at < now,

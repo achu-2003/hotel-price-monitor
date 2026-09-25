@@ -271,24 +271,8 @@ def _against(cell: Cell, base: Cell, slug: str) -> Cell:
     )
 
 
-def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
-          boards: dict[int, str] | None = None) -> Grid:
-    """Build the comparison grid from the matrix's own price rows.
-
-    Args:
-        rows: ``(series, hotel, room_name)`` for one night and occupancy.
-        baseline_hotel_id: your property. ``None`` — nothing marked as yours —
-            still builds the grid, with prices and no gaps, because the rates
-            are worth reading while somebody goes and ticks the box.
-        show_with_tax: the deployment-wide display basis.
-        boards: ``{hotel_id: meal plan}`` for the hotels shown on the repricing
-            board rather than their entry price. See price_display.entry_offers.
-
-    Columns are the categories that anybody prices tonight, in the sheet's
-    order. A category only your property sells is a column too: "nobody else
-    on this hill sells a pool suite" is the answer to a pricing question, and
-    a column that disappeared would have hidden it.
-    """
+def _priced_by_hotel(rows, show_with_tax: bool, boards: dict[int, str] | None):
+    """``({hotel_id: hotel}, {hotel_id: {slug: [_Priced]}})`` -- one entry per room."""
     hotels: dict[int, object] = {}
     priced: dict[int, dict[str, list[_Priced]]] = {}
 
@@ -310,6 +294,35 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
                 is_available=bool(series.is_available),
             )
         )
+    return hotels, priced
+
+
+def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
+          boards: dict[int, str] | None = None) -> Grid:
+    """Build the comparison grid from the matrix's own price rows.
+
+    Args:
+        rows: ``(series, hotel, room_name)`` for one night and occupancy.
+        baseline_hotel_id: your property. ``None`` — nothing marked as yours —
+            still builds the grid, with prices and no gaps, because the rates
+            are worth reading while somebody goes and ticks the box.
+        show_with_tax: the deployment-wide display basis.
+        boards: ``{hotel_id: meal plan}`` for the hotels shown on the repricing
+            board rather than their entry price. See price_display.entry_offers.
+
+    Columns are the categories that anybody prices tonight, in the sheet's
+    order. A category only your property sells is a column too: "nobody else
+    on this hill sells a pool suite" is the answer to a pricing question, and
+    a column that disappeared would have hidden it.
+    """
+    hotels, priced = _priced_by_hotel(rows, show_with_tax, boards)
+    # THE GAP IS TAKEN ON ONE BOARD. Your property is SHOWN on the repricing
+    # board (breakfast) so it reads as it does on /repricing, but most rivals
+    # are on their entry price -- usually room-only -- and a gap between the
+    # two is mostly the breakfast supplement. So against a rival on the same
+    # board (the benchmark) the gap uses the board price; against every other
+    # rival it uses your entry price, as it did before the board existed.
+    _, entry_priced = _priced_by_hotel(rows, show_with_tax, None) if boards else (hotels, priced)
 
     sold_anywhere = {slug for tiers in priced.values() for slug in tiers}
     columns = tuple(
@@ -324,6 +337,10 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
     }
 
     base_cells = cells.get(baseline_hotel_id)
+    entry_base_cells = (
+        tuple(_cell_for(entry_priced[baseline_hotel_id].get(c.slug, [])) for c in columns)
+        if base_cells is not None and baseline_hotel_id in entry_priced else base_cells
+    )
     baseline = (
         Row(hotel=hotels[baseline_hotel_id], cells=base_cells, is_baseline=True)
         if base_cells is not None
@@ -335,8 +352,9 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
         if hotel_id == baseline_hotel_id:
             continue
         if base_cells is not None:
+            base = base_cells if boards and hotel_id in boards else entry_base_cells
             row_cells = tuple(
-                _against(cell, base_cells[i], columns[i].slug)
+                _against(cell, base[i], columns[i].slug)
                 for i, cell in enumerate(row_cells)
             )
         rivals.append(Row(hotel=hotels[hotel_id], cells=row_cells))

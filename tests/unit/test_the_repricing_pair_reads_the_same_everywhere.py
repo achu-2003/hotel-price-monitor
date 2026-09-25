@@ -76,8 +76,33 @@ def test_a_bookable_room_beats_a_sold_out_breakfast_rate():
     assert _prices(rows, BOARDS)[("Sterling", "Classic Room")] == Decimal("4901")
 
 
-def test_the_comparison_grid_follows_the_same_rule():
+def test_a_paired_room_off_the_board_falls_back_to_room_only_first():
+    """As the rule does: room-only before an offer whose plan is unknown."""
+    rows = [
+        _row(OWN, "Standard Double Room", "Room Only", "5000"),
+        _row(OWN, "Standard Double Room", None, "4800"),
+    ]
+    assert _prices(rows, BOARDS)[("ASG", "Standard Double Room")] == Decimal("5000")
+
+
+def _gap_row(grid, name):
+    row = next(r for r in grid.rivals if r.hotel.name == name)
+    return next(c for c in row.cells if c.price is not None)
+
+
+def test_the_comparison_grid_shows_the_pair_on_the_board():
     grid = rate_gap.build(_rows(), baseline_hotel_id=OWN, show_with_tax=True, boards=BOARDS)
-    text = repr(grid)
-    assert "8982" in text and "8882" in text
-    assert "5638" not in text
+    assert next(c for c in grid.baseline.cells if c.price is not None).price == Decimal("8882")
+    assert _gap_row(grid, "Sterling").price == Decimal("8982")
+
+
+def test_the_gap_to_the_benchmark_is_breakfast_against_breakfast():
+    grid = rate_gap.build(_rows(), baseline_hotel_id=OWN, show_with_tax=True, boards=BOARDS)
+    assert _gap_row(grid, "Sterling").gap == Decimal("8982") - Decimal("8882")
+
+
+def test_the_gap_to_everyone_else_is_entry_against_entry():
+    """MGM is shown room-only. Measured against our breakfast rate its gap
+    would be mostly the breakfast supplement."""
+    grid = rate_gap.build(_rows(), baseline_hotel_id=OWN, show_with_tax=True, boards=BOARDS)
+    assert _gap_row(grid, "MGM").gap == Decimal("4000") - Decimal("7000")

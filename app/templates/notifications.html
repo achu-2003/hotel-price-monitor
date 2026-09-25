@@ -75,7 +75,7 @@
   {% set day_q = log_day.isoformat() if log_day else '' %}
   <p class="muted">
     {% if changes_only %}
-      Only the rates that were actually changed in RMS, newest first.
+      Only the rates that were changed in RMS, and any change RMS refused. Newest first.
     {% else %}
       Every decision, including the ones that changed nothing. Newest first.
     {% endif %}
@@ -111,7 +111,7 @@
   <div class="grid-wrap">
   <table class="grid">
     <thead>
-      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num">{{ benchmark_name if benchmark_name is defined and benchmark_name else 'Market' }}</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
+      <tr><th>When</th><th>Mode</th><th>Room</th><th>Plan</th><th class="num" title="The benchmark's price when the row was priced against one; otherwise the market median">Market</th><th class="num">Target</th><th class="num">RMS was</th><th class="num">RMS set</th><th>Status</th></tr>
     </thead>
     <tbody>
     {% for a in actions %}

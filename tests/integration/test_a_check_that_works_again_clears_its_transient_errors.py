@@ -88,3 +88,17 @@ def test_an_error_after_the_success_is_not_resolved_by_it(session, hotel_fixture
     monitoring.record_success(session, [target.id])
     session.refresh(error)
     assert error.resolved_at is None
+
+
+def test_the_collapsed_offers_alert_survives_later_successes(session, hotel_fixture):
+    """Raised BY a success -- the page read fine and six rooms folded into one
+    -- so the next success says nothing about whether it is fixed. It stays
+    until a repair or a person resolves it, rather than closing and reopening
+    every half hour."""
+    target = hotel_fixture["target"]
+    error = _error(session, target, transient=False, error_class=ErrorClass.PARSE_SCHEMA_DRIFT)
+    error.context = {"names_seen": ["King Size Bed"]}
+    session.flush()
+    monitoring.record_success(session, [target.id])
+    session.refresh(error)
+    assert error.resolved_at is None

@@ -174,9 +174,13 @@ def moved_stmt(owner_user_id: int, night: date, channel: str) -> Select:
 # -- the repricer's log, as the pages read it -------------------------
 #: A rate written to RMS and read back. The one status that moved anything.
 APPLIED = "applied"
+#: What "changes only" shows: the writes, and the writes RMS refused. A
+#: refused write is the one change an owner most needs to see, and hiding it
+#: behind "All decisions" would make a failing repricer look like a quiet one.
+WRITES = (APPLIED, "failed")
 
 
-def _local_day(day: date, tz: str) -> tuple[datetime, datetime]:
+def local_day_bounds(day: date, tz: str) -> tuple[datetime, datetime]:
     """``day`` in the deployment's zone, as the UTC range it covers.
 
     The log is stored in UTC and read in Tamil Nadu: a change at 00:58 IST
@@ -190,17 +194,18 @@ def log_stmt(owner_user_id: int, *, changes_only: bool, day: date | None = None,
              tz: str = "Asia/Kolkata", limit: int = 60) -> Select:
     """The "What the repricer did" rows, newest first.
 
-    ``changes_only`` keeps the rows that moved a rate. The full log is every
+    ``changes_only`` keeps the rows that wrote a rate, or tried to and were
+    refused (:data:`WRITES`). The full log is every
     30-minute decision, and the handful that wrote something were lost among
     the "unchanged" and "held" rows around them. Plain readings are never
     shown either way: they are figures a Preview took, not decisions.
     """
     stmt = select(RepricingAction).where(
         RepricingAction.owner_user_id == owner_user_id,
-        (RepricingAction.status == APPLIED) if changes_only else (RepricingAction.status != "read"),
+        RepricingAction.status.in_(WRITES) if changes_only else (RepricingAction.status != "read"),
     )
     if day is not None:
-        start, end = _local_day(day, tz)
+        start, end = local_day_bounds(day, tz)
         stmt = stmt.where(RepricingAction.created_at >= start, RepricingAction.created_at < end)
     return stmt.order_by(RepricingAction.created_at.desc(), RepricingAction.id.desc()).limit(limit)
 
@@ -218,7 +223,7 @@ def last_auto_change_stmt(owner_user_id: int) -> Select:
 
 def auto_changes_on_stmt(owner_user_id: int, day: date, tz: str = "Asia/Kolkata") -> Select:
     """How many rates the automatic mode wrote on ``day``, local time."""
-    start, end = _local_day(day, tz)
+    start, end = local_day_bounds(day, tz)
     return select(func.count()).select_from(RepricingAction).where(
         RepricingAction.owner_user_id == owner_user_id,
         RepricingAction.mode == "auto", RepricingAction.status == APPLIED,

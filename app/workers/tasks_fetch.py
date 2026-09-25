@@ -548,6 +548,9 @@ def _ingest(
             status=CheckRunStatus.SUCCESS,
             finished_at=now,
             duration_ms=int((now - started).total_seconds() * 1000),
+            # A run the retry reused (a manual Check now) may carry an earlier
+            # attempt's "looking again" note; it succeeded, so it has none.
+            error_summary=None,
             offers_found=offers_found,
             offers_unmatched=offers_unmatched,
             changes_detected=len(change_ids),
@@ -705,16 +708,39 @@ def _handle_failure(
     # redesign fails the second look too and is reported exactly as before,
     # one minute later; a slow page does not, and leaves no trace but a log
     # line and a failed check run.
-    if error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT and attempt == 0:
+    #
+    # FIRST SIGHTING MEANS THE PAYLOAD'S FLAG, NOT ``retries == 0``. A fetch
+    # the politeness budget deferred, or one that timed out once, arrives here
+    # with retries already counted, and a slow page on that attempt was
+    # reported with no second look at all.
+    #
+    # ONLY WHEN THE SECOND LOOK CAN HAPPEN. A retry keeps the message's
+    # deadline, and one scheduled past it is dropped by the worker unrun --
+    # leaving a real redesign reported nowhere. Too close to the deadline,
+    # this sighting is reported as it always was.
+    countdown = _DRIFT_CONFIRM_SECONDS + random.uniform(0, 30)
+    left = _seconds_until_expiry(task)
+    if (error.error_class == ErrorClass.PARSE_SCHEMA_DRIFT
+            and not payload.get("drift_seen")
+            and (left is None or left > countdown + _DRIFT_CONFIRM_SECONDS)):
+        note = f"[unconfirmed {error.error_class}, looking again] {str(error)[:760]}"
         with sync_session() as session:
-            _update_check_run(
-                session, check_run_id,
-                status=CheckRunStatus.FAILED, finished_at=now,
-                duration_ms=int((now - started).total_seconds() * 1000),
-                error_summary=f"[unconfirmed {error.error_class}, looking again] {str(error)[:760]}",
-            )
+            if (task.request.kwargs or {}).get("check_run_id"):
+                # The retry reuses this row (a manual Check now, which the
+                # page is polling): it is still going, not failed.
+                _update_check_run(session, check_run_id, error_summary=note)
+            else:
+                _update_check_run(
+                    session, check_run_id,
+                    status=CheckRunStatus.FAILED, finished_at=now,
+                    duration_ms=int((now - started).total_seconds() * 1000),
+                    error_summary=note,
+                )
         logger.warning("schema_drift_unconfirmed_retrying", message=str(error)[:300])
-        raise task.retry(exc=error, countdown=_DRIFT_CONFIRM_SECONDS + random.uniform(0, 30))
+        raise task.retry(
+            args=[{**payload, "drift_seen": True}, *list(task.request.args or [])[1:]],
+            kwargs=task.request.kwargs, exc=error, countdown=countdown,
+        )
 
     if error.error_class == ErrorClass.RATE_LIMITED:
         penalise_source(payload["source_id"])
@@ -788,6 +814,23 @@ def _handle_failure(
     # this cycle, and nothing else should be affected by it.
     return {"status": "failed", "check_run_id": check_run_id,
             "error_class": str(error.error_class)}
+
+
+def _seconds_until_expiry(task) -> float | None:
+    """How long this message has before the worker would drop it, or None."""
+    expires = getattr(task.request, "expires", None)
+    if not expires:
+        return None
+    if isinstance(expires, str):
+        try:
+            expires = datetime.fromisoformat(expires)
+        except ValueError:
+            return None
+    if not isinstance(expires, datetime):
+        return None
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return (expires - datetime.now(UTC)).total_seconds()
 
 
 def _retry_delay(error: FetchError, attempt: int) -> float:

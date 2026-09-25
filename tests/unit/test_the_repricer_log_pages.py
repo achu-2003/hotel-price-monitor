@@ -30,7 +30,7 @@ def _notifications(**over) -> str:
         request=SimpleNamespace(url=SimpleNamespace(path="/notifications")),
         user=SimpleNamespace(username="owner", full_name="Owner"),
         is_admin=False, attention={"total": 0}, notifications=[], hours=168,
-        actions=[_change()], changes_only=True, log_day=None, benchmark_name=None,
+        actions=[_change()], changes_only=True, log_day=None,
     )
     ctx.update(over)
     return templates.get_template("notifications.html").render(**ctx)
@@ -55,9 +55,15 @@ class TestTheLog:
         assert "25 Sep 00:58" in html
         assert "9,952" in html and "8,855" in html
 
-    def test_the_market_column_names_the_benchmark(self):
-        assert ">Sterling</th>" in _notifications(benchmark_name="Sterling")
+    def test_the_market_column_is_not_renamed_after_todays_benchmark(self):
+        """Older rows were priced on the median; heading them with the hotel
+        benchmarked today would misname every one of them."""
         assert ">Market</th>" in _notifications()
+
+    def test_a_refused_write_is_shown_as_failed(self):
+        html = _notifications(actions=[_change(status="failed", applied_rms=None,
+                                               reason="grid did not take it")])
+        assert 'class="tag failed"' in html and "grid did not take it" in html
 
     def test_an_empty_day_says_nothing_was_changed_that_day(self):
         html = _notifications(actions=[], log_day=date(2026, 9, 25))
@@ -90,3 +96,12 @@ class TestTheRepricingPage:
 
     def test_before_any_automatic_change(self):
         assert "No automatic change yet." in _repricing(last_auto_change=None, auto_changes_today=0)
+
+
+def test_a_day_at_the_edge_of_the_calendar_is_refused_not_a_crash():
+    """The route treats OverflowError as "no filter"; this is where it comes from."""
+    import pytest
+
+    from app.services.repricing_data import local_day_bounds
+    with pytest.raises(OverflowError):
+        local_day_bounds(date(9999, 12, 31), "Asia/Kolkata")

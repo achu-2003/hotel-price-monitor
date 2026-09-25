@@ -56,6 +56,8 @@ from typing import Protocol
 
 from sqlalchemy import func
 
+from app.services.meal_plan import ROOM_ONLY
+
 
 class _HasPriceComponents(Protocol):
     """What this module needs off a series row, and nothing more."""
@@ -357,7 +359,8 @@ def entry_offers(rows, show_with_tax: bool, *, key, series_of, board_of=None) ->
     /repricing and 5,638 on the matrix: one hotel, one night, two numbers.
     So for the hotels the rule compares, an offer on that board beats a
     cheaper one on another. A room not sold on it still shows its entry price;
-    a sold-out board still loses to one that can be booked.
+    a sold-out board still loses to one that can be booked. Off the board,
+    room-only comes next, as it does in the rule (``Benchmark.fallback_board``).
     """
     best: dict[object, tuple] = {}
     first_seen: dict[object, int] = {}
@@ -367,14 +370,20 @@ def entry_offers(rows, show_with_tax: bool, *, key, series_of, board_of=None) ->
         amount = displayed_price(series, show_with_tax).amount
         # Available beats sold out; then cheapest. A missing price sorts last
         # so a row that could not be read never wins over one that could.
-        board = board_of(row) if board_of else None
         rank = (0 if series.is_available else 1,
-                0 if board is None or getattr(series, "meal_plan", None) == board else 1,
+                _board_rank(board_of(row) if board_of else None, getattr(series, "meal_plan", None)),
                 amount if amount is not None else Decimal("Infinity"))
         if k not in best or rank < best[k][0]:
             best[k] = (rank, row)
         first_seen.setdefault(k, position)
     return [best[k][1] for k in sorted(best, key=lambda x: first_seen[x])]
+
+
+def _board_rank(board: str | None, meal_plan: str | None) -> int:
+    """0 on the pinned board, 1 room-only, 2 anything else; 0 with no board."""
+    if board is None or meal_plan == board:
+        return 0
+    return 1 if meal_plan == ROOM_ONLY else 2
 
 
 def cheapest(shown: list[Shown]) -> Decimal | None:
