@@ -112,11 +112,21 @@ class TestGrouping:
         batches = group_for_digest(facts, {10: [1, 2], 20: [1]})
 
         # Recipient 1 covers both hotels and gets TWO messages, not one mixed
-        # digest: each hotel is a separate decision they might act on.
-        assert batches[(1, 10)] == [1, 2]
-        assert batches[(1, 20)] == [3]
-        assert batches[(2, 10)] == [1, 2]
-        assert (2, 20) not in batches
+        # digest: each hotel is a separate decision they might act on. (No
+        # room given, so each hotel's changes share the room slot None.)
+        assert batches[(1, 10, None)] == [1, 2]
+        assert batches[(1, 20, None)] == [3]
+        assert batches[(2, 10, None)] == [1, 2]
+        assert (2, 20, None) not in batches
+
+    def test_two_rooms_of_one_hotel_are_two_messages(self):
+        """The template names one room; a second room batched in went unnamed."""
+        facts = [
+            ChangeFacts(1, 10, Decimal("-100"), Decimal("-5"), "decrease", room_type_id=7),
+            ChangeFacts(2, 10, Decimal("-200"), Decimal("-8"), "decrease", room_type_id=8),
+        ]
+        batches = group_for_digest(facts, {10: [1]})
+        assert batches == {(1, 10, 7): [1], (1, 10, 8): [2]}
 
     def test_changes_for_unassigned_hotels_are_dropped(self):
         facts = [ChangeFacts(1, 99, Decimal("-100"), Decimal("-5"), "decrease")]
