@@ -1,5 +1,29 @@
 {
   "owner": "ags@123",
+  "sources": {
+    "www-booking-com": {
+      "display_name": "www.booking.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "www.booking.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "agoda": {
+      "display_name": "Agoda (OTA listing)",
+      "adapter_key": "playwright_ota",
+      "base_domain": "agoda.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-25",
+      "tos_reviewed_by": "ags",
+      "tos_notes": null
+    }
+  },
   "hotels": [
     {
       "name": "Peters Park",

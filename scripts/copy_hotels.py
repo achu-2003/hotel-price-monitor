@@ -81,6 +81,7 @@ _NOT_COPIED = {
     "id", "hotel_id", "source_id", "hotel_source_id", "room_type_id", "owner_user_id",
     "created_at", "updated_at", "last_verified_at",
     "next_run_at", "last_success_at", "last_failure_at",
+    "robots_checked_at", "robots_allows",
     "consecutive_failures", "circuit_state", "circuit_opened_at",
 }
 
@@ -186,52 +187,110 @@ def export(path: Path, wanted: list[str], username: str | None) -> int:
             print(f"  {hotel.name.strip()}: {len(rooms)} rooms, "
                   + ", ".join(f"{s['source_code']} ({len(s['targets'])} watched)" for s in sites))
 
-    path.write_text(json.dumps({"owner": owner.username, "hotels": out}, indent=2, ensure_ascii=False),
+        # The booking sites these hotels are read from, so a deployment that has
+        # never used one can be given it -- with its Terms review -- rather than
+        # receiving hotels it has no way to check.
+        codes = {site["source_code"] for hotel in out for site in hotel["sites"]}
+        exported_sources = {
+            src.code: {k: v for k, v in _out(src).items() if k != "code"}
+            for src in session.scalars(select(Source).where(Source.code.in_(codes)))
+        }
+
+    path.write_text(json.dumps({"owner": owner.username, "sources": exported_sources, "hotels": out},
+                               indent=2, ensure_ascii=False),
                     encoding="utf-8")
     print(f"Wrote {len(out)} hotel(s) to {path}.")
     return 0
 
 
+def _source_for(session, code: str, exported: dict | None, sources: dict, notes: list) -> Source | None:
+    """The booking site ``code`` here, created from the export if it is missing.
+
+    Created WITH the Terms review recorded on the machine it came from: that is
+    a decision somebody already made and put their name to, and without it
+    nothing on the site is fetched. Printed, so it is not made silently twice.
+    """
+    if code in sources:
+        return sources[code]
+    if not exported:
+        return None
+    source = Source(**_in(Source, exported), code=code)
+    session.add(source)
+    session.flush()
+    sources[code] = source
+    reviewed = (f"Terms reviewed by {source.tos_reviewed_by} on {source.tos_reviewed_at}"
+                if source.tos_reviewed_at else "NO Terms review recorded: nothing is fetched until one is")
+    notes.append(f"  + booking site {code} ({source.display_name}) -- {reviewed}")
+    return source
+
+
 def import_(path: Path, username: str | None, write: bool) -> int:
     data = json.loads(path.read_text(encoding="utf-8"))
+    exported_sources = data.get("sources", {})
     with sync_session() as session:
         owner = _owner(session, username)
-        existing = {_key(h.name) for h in session.scalars(
+        existing = {_key(h.name): h for h in session.scalars(
             select(Hotel).where(Hotel.owner_user_id == owner.id))}
         slugs = set(session.scalars(select(Hotel.slug)))
         sources = {s.code: s for s in session.scalars(select(Source))}
         now = datetime.now(UTC)
-        created = 0
+        changed = 0
 
         for item in data["hotels"]:
             name = item["name"].strip()
-            if _key(name) in existing:
-                print(f"SKIP {name}: already here for {owner.username}.")
-                continue
-            hotel_values = _in(Hotel, {k: v for k, v in item.items() if k not in ("rooms", "sites")})
-            hotel_values["name"] = name
-            slug = hotel_values["slug"]
-            if slug in slugs:
-                print(f"SKIP {name}: another hotel here already uses the slug {slug!r}.")
-                continue
-            hotel = Hotel(**hotel_values, owner_user_id=owner.id)
-            session.add(hotel)
-            session.flush()
-            slugs.add(slug)
-
-            rooms = {}
-            for room in item["rooms"]:
-                row = RoomType(**_in(RoomType, room), hotel_id=hotel.id)
-                session.add(row)
-                rooms[room["canonical_name"]] = row
-            session.flush()
-
-            lines = []
+            notes: list[str] = []
+            # Resolve every site first: a hotel with nothing to read is a row
+            # that looks set up and never gets a price.
+            usable = []
             for site in item["sites"]:
-                source = sources.get(site["source_code"])
+                source = _source_for(session, site["source_code"],
+                                     exported_sources.get(site["source_code"]), sources, notes)
                 if source is None:
-                    lines.append(f"    - {site['source_code']}: SKIPPED, no such booking site here")
+                    notes.append(f"    - {site['source_code']}: SKIPPED, no such booking site here "
+                                 f"and none in the file")
+                else:
+                    usable.append((site, source))
+
+            hotel = existing.get(_key(name))
+            if hotel is not None:
+                # ALREADY HERE: only what it is missing is added. A site it
+                # already has is left exactly as it is -- never merged.
+                have = set(session.scalars(select(HotelSource.source_id)
+                                           .where(HotelSource.hotel_id == hotel.id)))
+                usable = [(site, source) for site, source in usable if source.id not in have]
+                if not usable:
+                    print(f"SKIP {name}: already here with all its booking sites.")
                     continue
+                verb = "ADD TO" if write else "WOULD ADD TO"
+            else:
+                if not usable:
+                    print(f"SKIP {name}: none of its booking sites exist here, so it would never "
+                          f"be checked.")
+                    print("\n".join(notes))
+                    continue
+                hotel_values = _in(Hotel, {k: v for k, v in item.items() if k not in ("rooms", "sites")})
+                hotel_values["name"] = name
+                if hotel_values["slug"] in slugs:
+                    print(f"SKIP {name}: another hotel here already uses the slug "
+                          f"{hotel_values['slug']!r}.")
+                    continue
+                hotel = Hotel(**hotel_values, owner_user_id=owner.id)
+                session.add(hotel)
+                session.flush()
+                slugs.add(hotel.slug)
+                existing[_key(name)] = hotel
+                verb = "CREATE" if write else "WOULD CREATE"
+
+            rooms = {r.canonical_name: r for r in session.scalars(
+                select(RoomType).where(RoomType.hotel_id == hotel.id))}
+            for room in item["rooms"]:
+                if room["canonical_name"] not in rooms:
+                    row = RoomType(**_in(RoomType, room), hotel_id=hotel.id)
+                    session.add(row)
+                    rooms[room["canonical_name"]] = row
+            session.flush()
+
+            for site, source in usable:
                 values = _in(HotelSource, {k: v for k, v in site.items()
                                            if k not in ("source_code", "aliases", "targets")})
                 hs = HotelSource(**values, hotel_id=hotel.id, source_id=source.id)
@@ -248,21 +307,20 @@ def import_(path: Path, username: str | None, write: bool) -> int:
                     session.add(MonitorTarget(**_in(MonitorTarget, target),
                                               hotel_source_id=hs.id, next_run_at=now))
                 flags = " + uses the price its link shows" if (hs.adapter_config or {}).get("keep_link_deal") else ""
-                lines.append(f"    - {source.code}: {len(site['targets'])} watched, "
+                notes.append(f"    - {source.code}: {len(site['targets'])} watched, "
                              f"{len(site['aliases'])} room matches{flags}")
-                if not source.tos_reviewed_at:
-                    lines.append(f"      NOTE: {source.code} has no Terms review recorded here, "
-                                 f"so nothing on it is fetched until one is.")
-            print(f"{'CREATE' if write else 'WOULD CREATE'} {name}: {len(rooms)} rooms")
-            print("\n".join(lines))
-            created += 1
+            session.flush()
+            print(f"{verb} {name}: {len(rooms)} rooms")
+            print("\n".join(notes))
+            changed += 1
 
         if write:
             session.commit()
-            print(f"Created {created} hotel(s). Their first checks are due now.")
+            print(f"Done: {changed} hotel(s) created or completed. Their first checks are due now.")
         else:
             session.rollback()
-            print(f"Nothing written. {created} hotel(s) would be created; run again with --yes.")
+            print(f"Nothing written. {changed} hotel(s) would be created or completed; "
+                  f"run again with --yes.")
     return 0
 
 
