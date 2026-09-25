@@ -271,7 +271,8 @@ def _against(cell: Cell, base: Cell, slug: str) -> Cell:
     )
 
 
-def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False) -> Grid:
+def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False,
+          boards: dict[int, str] | None = None) -> Grid:
     """Build the comparison grid from the matrix's own price rows.
 
     Args:
@@ -280,6 +281,8 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False) -
             still builds the grid, with prices and no gaps, because the rates
             are worth reading while somebody goes and ticks the box.
         show_with_tax: the deployment-wide display basis.
+        boards: ``{hotel_id: meal plan}`` for the hotels shown on the repricing
+            board rather than their entry price. See price_display.entry_offers.
 
     Columns are the categories that anybody prices tonight, in the sheet's
     order. A category only your property sells is a column too: "nobody else
@@ -294,7 +297,7 @@ def build(rows, *, baseline_hotel_id: int | None, show_with_tax: bool = False) -
     # repeating the room's name at a different price. The grid compares
     # properties on their entry price, so that is the row each room brings.
     # See price_display.entry_rows.
-    for series, hotel, room_name in entry_rows(rows, show_with_tax):
+    for series, hotel, room_name in entry_rows(rows, show_with_tax, boards):
         slug = classify(room_name)
         shown = displayed_price(series, show_with_tax)
         hotels.setdefault(hotel.id, hotel)

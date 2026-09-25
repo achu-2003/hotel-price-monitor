@@ -293,7 +293,7 @@ def _percent(old: Decimal, new: Decimal) -> Decimal:
     return ((new - old) / old * 100).quantize(_PCT, rounding=ROUND_HALF_UP)
 
 
-def entry_rows(rows, show_with_tax: bool) -> list:
+def entry_rows(rows, show_with_tax: bool, boards: dict[int, str] | None = None) -> list:
     """One row per ROOM: the cheapest offer that room is on sale at.
 
     ONE ROOM, ONE CELL. ``price_series`` holds an offer, not a room, and a
@@ -336,10 +336,11 @@ def entry_rows(rows, show_with_tax: bool) -> list:
         key=lambda row: (row[1].id, getattr(row[0], "room_type_id", None)
                          or " ".join(str(row[2] or "").split()).casefold()),
         series_of=lambda row: row[0],
+        board_of=(lambda row: boards.get(row[1].id)) if boards else None,
     )
 
 
-def entry_offers(rows, show_with_tax: bool, *, key, series_of) -> list:
+def entry_offers(rows, show_with_tax: bool, *, key, series_of, board_of=None) -> list:
     """:func:`entry_rows` for rows of any shape: ``key`` says what makes two
     of them the same room, ``series_of`` finds the price on one.
 
@@ -347,6 +348,16 @@ def entry_offers(rows, show_with_tax: bool, *, key, series_of) -> list:
     carry ``(series, hotel, room_name)`` and a hotel's own page, being about
     one hotel, carries ``(series, room_name)`` -- and the rule for which
     offer survives must not be written twice and drift.
+
+    ``board_of`` names the meal plan a row's hotel is compared on, or None.
+    THE REPRICING PAIR IS SHOWN ON THE REPRICING BOARD. The rule prices our
+    rooms against the benchmark's on the board pinned in Settings --
+    breakfast -- and /repricing shows those figures. Here the entry price won,
+    which is room-only, and on 25 Sep one Sterling room read 8,982 on
+    /repricing and 5,638 on the matrix: one hotel, one night, two numbers.
+    So for the hotels the rule compares, an offer on that board beats a
+    cheaper one on another. A room not sold on it still shows its entry price;
+    a sold-out board still loses to one that can be booked.
     """
     best: dict[object, tuple] = {}
     first_seen: dict[object, int] = {}
@@ -356,7 +367,9 @@ def entry_offers(rows, show_with_tax: bool, *, key, series_of) -> list:
         amount = displayed_price(series, show_with_tax).amount
         # Available beats sold out; then cheapest. A missing price sorts last
         # so a row that could not be read never wins over one that could.
+        board = board_of(row) if board_of else None
         rank = (0 if series.is_available else 1,
+                0 if board is None or getattr(series, "meal_plan", None) == board else 1,
                 amount if amount is not None else Decimal("Infinity"))
         if k not in best or rank < best[k][0]:
             best[k] = (rank, row)

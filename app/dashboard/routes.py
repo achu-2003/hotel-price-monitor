@@ -753,8 +753,31 @@ async def _priced_rows(session, user, check_in: date, check_out: date, adults: i
     ).all()
 
 
+async def _repricing_boards(session, owner_user_id: int) -> dict[int, str]:
+    """``{hotel_id: meal plan}`` for the hotels the repricing rule compares.
+
+    Your own property and the benchmark are priced against each other on the
+    board pinned in Settings, and /repricing shows them on it. The grids show
+    them on it too, so one hotel does not read 8,982 there and 5,638 here.
+    Every other hotel keeps its entry price. Nothing pinned, or no benchmark:
+    nothing to agree with, and every hotel keeps its entry price.
+    """
+    settings = await session.scalar(
+        select(RepricingSettings).where(RepricingSettings.owner_user_id == owner_user_id)
+    )
+    if settings is None or not settings.benchmark_meal_plan or not settings.benchmark_hotel_id:
+        return {}
+    ids = set(await session.scalars(
+        select(Hotel.id).where(Hotel.owner_user_id == owner_user_id,
+                               Hotel.is_own_property.is_(True))
+    ))
+    ids.add(settings.benchmark_hotel_id)
+    return dict.fromkeys(ids, settings.benchmark_meal_plan)
+
+
 def _matrix_groups(
-    rows, recent_cutoff: datetime, category: str | None, show_with_tax: bool = False
+    rows, recent_cutoff: datetime, category: str | None, show_with_tax: bool = False,
+    boards: dict[int, str] | None = None,
 ):
     """Hotels with their room cells, plus how many rooms each category has.
 
@@ -782,7 +805,7 @@ def _matrix_groups(
     # and was three cells, all carrying the same room's name. The counts are
     # taken from the same list, so a chip says how many ROOMS a category has
     # rather than how many ways they are sold.
-    for series, hotel, room_name in entry_rows(rows, show_with_tax):
+    for series, hotel, room_name in entry_rows(rows, show_with_tax, boards):
         slug = classify(room_name)
         counts[slug] = counts.get(slug, 0) + 1
         if category is not None and slug != category:
@@ -1028,7 +1051,8 @@ async def matrix(
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
     show_with_tax = await _show_prices_with_tax(session)
-    grouped, counts = _matrix_groups(rows, recent_cutoff, category, show_with_tax)
+    grouped, counts = _matrix_groups(rows, recent_cutoff, category, show_with_tax,
+                                     await _repricing_boards(session, user.id))
 
     # Hotels whose engine reports a full night by listing nothing. They have no
     # room to put in a category, so they join the unfiltered view only: under a
@@ -1157,6 +1181,7 @@ async def comparison(
         rows,
         baseline_hotel_id=chosen.id if chosen else None,
         show_with_tax=show_with_tax,
+        boards=await _repricing_boards(session, user.id),
     )
 
     # Properties whose engine files nothing when they are full. They have no
@@ -1250,6 +1275,7 @@ async def shared_comparison(request: Request, token: str, session: DbSession):
         rows,
         baseline_hotel_id=chosen.id if chosen else None,
         show_with_tax=show_with_tax,
+        boards=await _repricing_boards(session, owner.id),
     )
 
     seen = {grid.baseline.hotel.id} if grid.baseline else set()
@@ -1379,11 +1405,16 @@ async def hotel_detail(
     # which reads as three Classic Rooms. The entry price is the figure the
     # rest of the system compares on, so it is the one this page shows too.
     # See price_display.entry_offers; the same rule decides all three screens.
+    # On the repricing board when this is your property or the benchmark, so
+    # the room reads here what it reads on /repricing.
+    board = (await _repricing_boards(session, hotel.owner_user_id)).get(hotel.id) \
+        if hotel.owner_user_id else None
     prices = entry_offers(
         prices, show_with_tax,
         key=lambda row: getattr(row[0], "room_type_id", None)
         or " ".join(str(row[1] or "").split()).casefold(),
         series_of=lambda row: row[0],
+        board_of=(lambda row: board) if board else None,
     )
 
     unlisted_keys = unlisted_offer_keys([row[0] for row in prices])
