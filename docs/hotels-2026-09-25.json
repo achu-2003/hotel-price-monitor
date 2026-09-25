@@ -1,0 +1,464 @@
+{
+  "owner": "ags@123",
+  "hotels": [
+    {
+      "name": "Peters Park",
+      "slug": "peters-park",
+      "location": "3-510, Manjankollai Pudur, Yelagiri Hills, Next to Govt Boys Hostel, Nagalathu Extension R F, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Double Room",
+          "canonical_name": "double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Bungalow",
+          "canonical_name": "bungalow deluxe",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Superior Bungalow",
+          "canonical_name": "bungalow superior",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Cottage",
+          "canonical_name": "cottage",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Three-Bedroom Cottage",
+          "canonical_name": "bedroom cottage three",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/peters-park.en-gb.html?aid=1288252&label=metagha-link-MRIN-hotel-11633671_dev-desktop_los-1_bw-0_dow-Friday_defdate-1_room-0_gstadt-2_rateid-public_aud-0_gacid-21411129971_mcid-50_bc-ALGEBw_ppa-0_clrid-0_ad-1_gstkid-0_checkin-20260925_ppt-B_lp-2356_r-12884149742180631472&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=1163367102_441141636_2_42_0&checkin={check_in}&checkout={check_out}&dest_id=11633671&dest_type=hotel&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=1163367102_441141636_2_42_0&hpos=1&matching_block_id=1163367102_441141636_2_42_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=1163367102_441141636_2_42_0__440000&srepoch=1790315790&srpvid=0cfd64110410a3c258cae1bde6aaa421&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 1,
+              "last_outcome": "no_change",
+              "last_attempt_at": "2026-09-25T06:40:50.919646+00:00"
+            },
+            "discovery_note": "Auto-discovered: 5 rooms from /in/peters-park.en-gb.html, 5/5 prices confirmed against the page.",
+            "keep_link_deal": true,
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "double",
+              "raw_name": "Double Room",
+              "normalized_name": "double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bungalow deluxe",
+              "raw_name": "Deluxe Bungalow",
+              "normalized_name": "bungalow deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bungalow superior",
+              "raw_name": "Superior Bungalow",
+              "normalized_name": "bungalow superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "cottage",
+              "raw_name": "Cottage",
+              "normalized_name": "cottage",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bedroom cottage three",
+              "raw_name": "Three-Bedroom Cottage",
+              "normalized_name": "bedroom cottage three",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MSB Silver Spring Resort  ",
+      "slug": "msb-silver-spring-resort-4-stars-out-of-5",
+      "location": "No. 257/2c, Pallakaniyur Athanavur, Yelagiri Hills, Tirupattur, Athanavoor, Yelagiri, India, 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Bungalow Triple",
+          "canonical_name": "bungalow triple",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Honeymoon Cottage",
+          "canonical_name": "cottage honeymoon",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Honeymoon Suite",
+          "canonical_name": "honeymoon suite",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Triple Suite",
+          "canonical_name": "suite triple",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Execuitve Suite",
+          "canonical_name": "execuitve suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Executive Room",
+          "canonical_name": "deluxe executive",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "VIP Suite",
+          "canonical_name": "suite vip",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "msb-silver-spring-resort",
+          "url": "https://www.agoda.com/msb-silver-spring-resort/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1833981&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1&searchrequestid=ddb206a9-68d6-409c-bd14-a8f27805cdf4&ds=HHMbX5DfZ1Q6lRAO",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "bungalow triple",
+              "raw_name": "Bungalow Triple",
+              "normalized_name": "bungalow triple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "cottage honeymoon",
+              "raw_name": "Honeymoon Cottage",
+              "normalized_name": "cottage honeymoon",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "honeymoon suite",
+              "raw_name": "Honeymoon Suite",
+              "normalized_name": "honeymoon suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite triple",
+              "raw_name": "Triple Suite",
+              "normalized_name": "suite triple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "execuitve suite",
+              "raw_name": "Execuitve Suite",
+              "normalized_name": "execuitve suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe executive",
+              "raw_name": "Deluxe Executive Room",
+              "normalized_name": "deluxe executive",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite vip",
+              "raw_name": "VIP Suite",
+              "normalized_name": "suite vip",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hotel Hills",
+      "slug": "hotel-hills",
+      "location": "Boat House Road, Athanovoor Village, Yelagiri Hills, Vellore District., Athanavoor, Yelagiri, India, 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Standard Room",
+          "canonical_name": "standard",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "hotel-hills_2",
+          "url": "https://www.agoda.com/hotel-hills_2/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1&searchrequestid=2b9015d6-353b-4318-a0fd-d7e673ba4d75&ds=VZ9Csc5%2BVAzW3Yv6",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "standard",
+              "raw_name": "Standard Room",
+              "normalized_name": "standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": " Hotel Kumararraja Palace",
+      "slug": "hotel-kumararraja-palace",
+      "location": "Athanavoor, Kottur Road,, Athanavoor, Yelagiri,   ",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Standard Room Non-Air Conditioning",
+          "canonical_name": "air conditioning non standard",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe - Air Conditioning",
+          "canonical_name": "air conditioning deluxe",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Suite",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "hotel-kumararraja-palace",
+          "url": "https://www.agoda.com/hotel-kumararraja-palace/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&tspTypes=4&los=1&searchrequestid=5356d062-72cc-411f-98ba-66ee5f14b9b0&ds=xtsuFhOPmtC30BtL",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "air conditioning non standard",
+              "raw_name": "Standard Room Non-Air Conditioning",
+              "normalized_name": "air conditioning non standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "air conditioning deluxe",
+              "raw_name": "Deluxe - Air Conditioning",
+              "normalized_name": "air conditioning deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
