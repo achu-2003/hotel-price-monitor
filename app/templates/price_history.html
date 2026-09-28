@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Price history · Hotel Price Monitor{% endblock %}
+
+{% block content %}
+<h1>Price history</h1>
+
+<form class="filters" method="get" action="/price-history">
+  <label>Check in  <input type="date" name="check_in"  value="{{ check_in }}"></label>
+  <label>Check out <input type="date" name="check_out" value="{{ check_out }}"></label>
+  <label>Adults    <input type="number" name="adults" min="1" max="20" value="{{ adults }}"></label>
+  <label>Hotel
+    <select name="hotel_id">
+      <option value="">All hotels</option>
+      {% for h in all_hotels %}
+      <option value="{{ h.id }}" {{ 'selected' if hotel_id == h.id else '' }}>{{ h.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Show</button>
+  {% if default_note %}<span class="muted">{{ default_note }}</span>{% endif %}
+</form>
+
+{% if hotels_data %}
+<div class="hist-actions">
+  <a class="btn btn-export"
+     href="/price-history/export?check_in={{ check_in }}&check_out={{ check_out }}&adults={{ adults }}{% if hotel_id %}&hotel_id={{ hotel_id }}{% endif %}">
+    ↓ Download last 50 readings (Excel)
+  </a>
+</div>
+
+{#
+  Hotel name  │  Room   │  Plan  │  Latest      │  2nd         │ … │  10th
+              │         │        │  ₹5,000      │  ₹4,800      │ … │  ₹4,800
+              │         │        │  28 Sep 14:00│  28 Sep 11:00│ … │  26 Sep
+  Each column is one individual check run — all of which may be on the same
+  day if monitoring runs multiple times a day. This is intentional: a date
+  pivot would collapse ten intraday checks into one and hide nine of them.
+#}
+<div class="scroll-x">
+<table class="grid hist-table">
+  <thead>
+    <tr>
+      <th class="hist-hotel-hd">Hotel</th>
+      <th>Room</th>
+      <th class="hist-plan-hd">Plan</th>
+      <th class="num hist-date-hd">Latest</th>
+      {% for n in range(2, 11) %}
+      <th class="num hist-date-hd">{{ n }}nd</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for hotel in hotels_data %}
+    {% for room in hotel.rooms %}
+    <tr class="{{ 'own-property' if hotel.is_own else '' }}">
+      {% if loop.first %}
+      <td class="hist-hotel" rowspan="{{ hotel.rooms|length }}">
+        <span class="hist-hotel-name">{{ hotel.hotel_name }}</span>
+        {% if hotel.is_own %}<span class="pill pill-own">yours</span>{% endif %}
+      </td>
+      {% endif %}
+      <td class="hist-room">{{ room.room_name }}</td>
+      <td class="hist-plan muted">{{ room.meal_plan or '—' }}</td>
+      {% for obs in room.observations %}
+      <td class="hist-cell {{ 'hist-soldout' if not obs.is_available else '' }}">
+        {% if obs.is_available and obs.price %}
+          <span class="hist-price">{{ money(obs.price, obs.currency) }}</span>
+          {% if obs.price_note %}<span class="hist-note">{{ obs.price_note }}</span>{% endif %}
+        {% else %}
+          <span class="hist-price hist-price-out">sold out</span>
+          {% if obs.price %}
+          <span class="hist-note">was {{ money(obs.price, obs.currency) }}</span>
+          {% endif %}
+        {% endif %}
+        <span class="hist-time">{{ obs.checked_at|localtime('%d %b %H:%M') }}</span>
+      </td>
+      {% endfor %}
+      {% for _ in range(10 - room.observations|length) %}
+      <td class="hist-cell hist-empty"><span class="hist-dash">—</span></td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="legend">
+  <span class="legend-item">
+    {% if show_with_tax %}prices <strong>include tax</strong>{% else %}prices are <strong>before tax</strong>{% endif %}
+    — change it on Settings
+  </span>
+  <span class="legend-item"><span class="legend-swatch legend-soldout"></span>sold out</span>
+  <span class="legend-item"><span class="legend-own"></span>your property</span>
+  <span class="legend-note">
+    Each column is one check run, most recent first. Date and time shown below
+    each price. "Download last 50 readings" exports every individual reading.
+  </span>
+</div>
+
+{% else %}
+<p class="muted">No price readings found for this night and occupancy.</p>
+<p class="muted">Prices appear once a monitor target covering this stay window has run at least once.</p>
+{% endif %}
+{% endblock %}

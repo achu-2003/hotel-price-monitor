@@ -32,6 +32,9 @@ argon2-cffi==23.1.0            # argon2id password hashing
 pyjwt[crypto]==2.10.1
 cryptography==44.0.0           # Fernet envelope encryption for credentials
 
+# ─── exports ─────────────────────────────────────────────────────────
+openpyxl==3.1.5                # Excel export
+
 # ─── matching / parsing ──────────────────────────────────────────────
 rapidfuzz==3.11.0              # room-name fuzzy matching
 pyyaml==6.0.2                  # per-hotel selector configs

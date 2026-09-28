@@ -22,7 +22,22 @@
   {# Carried through the date/occupancy form so changing the night does not
      silently drop the category someone is looking at. #}
   {% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}
+  {% if view == 'bands' %}<input type="hidden" name="view" value="bands">{% endif %}
 </form>
+
+{#
+  VIEW. The room cards are what the page has always opened on; "Price
+  comparison" lays the same rooms out in columns of 500 (see _price_bands).
+  Links, like the category chips, so either view can be bookmarked.
+#}
+{% set qs = "check_in=%s&check_out=%s&adults=%s"|format(check_in, check_out, adults) %}
+{% set cat_qs = '&category=' ~ category if category else '' %}
+{% set view_qs = '&view=bands' if view == 'bands' else '' %}
+<div class="chips chips-filter">
+  <span class="chips-label">View</span>
+  <a class="chip {{ 'is-on' if view != 'bands' }}" href="/matrix?{{ qs }}{{ cat_qs }}">Rooms</a>
+  <a class="chip {{ 'is-on' if view == 'bands' }}" href="/matrix?{{ qs }}{{ cat_qs }}&view=bands">Price comparison</a>
+</div>
 
 {#
   ROOM CATEGORY FILTER
@@ -38,21 +53,103 @@
   chosen and there is always a way back.
 #}
 {% if chips %}
-{% set qs = "check_in=%s&check_out=%s&adults=%s"|format(check_in, check_out, adults) %}
 <div class="chips chips-filter">
   <span class="chips-label">Room category</span>
-  <a class="chip {{ 'is-on' if not category }}" href="/matrix?{{ qs }}">All</a>
+  <a class="chip {{ 'is-on' if not category }}" href="/matrix?{{ qs }}{{ view_qs }}">All</a>
   {% for chip in chips %}
   <a class="chip {{ 'is-on' if category == chip.slug }}"
-     href="/matrix?{{ qs }}&category={{ chip.slug }}">
+     href="/matrix?{{ qs }}&category={{ chip.slug }}{{ view_qs }}">
     {{ chip.label }}<span class="chip-count">{{ chip.count }}</span>
   </a>
   {% endfor %}
 </div>
 {% endif %}
 
+{% if rows and view == 'bands' %}
+<div class="matrix-actions">
+  <a class="btn btn-export"
+     href="/matrix/export?check_in={{ check_in }}&check_out={{ check_out }}&adults={{ adults }}{% if category %}&category={{ category }}{% endif %}">
+    ↓ Download Excel
+  </a>
+</div>
+{% endif %}
+
 {% if rows %}
 <div class="scroll-x">
+{% if view == 'bands' %}
+{#
+  BY PRICE BAND. One column per {{ band_step }} of price, so reading across a
+  row walks up the price ladder and reading down a column shows who sells in
+  that range tonight. A column heading is where its band starts: "₹1,500"
+  holds 1,500 up to 1,999. Only bands with a room in them tonight are
+  columns (see _price_bands).
+#}
+<table class="grid matrix matrix-bands">
+  <thead>
+    <tr>
+      <th class="band-hotel">Hotel</th>
+      {% for start in bands %}
+      <th class="num band-head" title="{{ money(start, 'INR') }} – {{ money(start + band_step - 1, 'INR') }}">{{ money(start, 'INR') }}</th>
+      {% endfor %}
+      <th class="band-head">Sold out</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="{{ 'own-property' if row.hotel.is_own_property else '' }}">
+      <td class="band-hotel">
+        <a href="/hotels/{{ row.hotel.id }}">{{ row.hotel.name }}</a>
+        {% if row.hotel.is_own_property %}<span class="pill pill-own">yours</span>{% endif %}
+      </td>
+      {% for start in bands %}
+      <td class="band-cell">
+        {% for cell in row.bands.get(start, []) %}
+        <span class="band-room {{ 'cell-changed' if cell.changed_recently else '' }}"
+              title="{{ cell.category_label }} · last checked {{ cell.last_checked_at|localtime('%d %b %H:%M') }}">
+          <span class="cell-room">{{ cell.room_name }}</span>
+          <span class="cell-price">{{ money(cell.price, cell.currency) }}</span>
+          {% if cell.price_note %}<span class="cell-basis">{{ cell.price_note }}</span>{% endif %}
+        </span>
+        {% endfor %}
+      </td>
+      {% endfor %}
+      {#
+        Sold-out rooms keep their last rate, muted and prefixed, and never in
+        a price column: that figure is not a rate anyone can book tonight.
+      #}
+      <td class="band-cell">
+        {% if row.sold_out and not row.cells %}
+        <span class="band-room cell-soldout"
+              title="Checked {{ row.checked_at|localtime('%d %b %H:%M') }} · this source lists no rooms on a full night">
+          <span class="cell-room">no rooms listed</span>
+        </span>
+        {% endif %}
+        {% for cell in row.sold_out_cells %}
+        <span class="band-room cell-soldout">
+          <span class="cell-room">{{ cell.room_name }}</span>
+          {% if cell.price %}
+          <span class="cell-was">
+            {%- if cell.for_night -%}
+              {{ cell.for_night.strftime('%d %b') }} {{ money(cell.price, cell.currency) }}
+            {%- else -%}
+              was {{ money(cell.price, cell.currency) }}
+            {%- endif -%}
+          </span>
+          {% endif %}
+        </span>
+        {% endfor %}
+        {% if row.sold_out and row.next_priced %}
+        <a class="onward"
+           href="/matrix?check_in={{ row.next_priced[0] }}&check_out={{ row.next_priced[1] }}&adults={{ adults }}&view=bands">
+          see {{ row.next_priced[0].strftime('%d %b') }} →
+        </a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
 <table class="grid matrix">
   <thead>
     {# The cheapest column means the cheapest of what is SHOWN, so under a
@@ -177,6 +274,7 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
 </div>
 {#
   A highlighted cell used to mean "changed in the last 24 hours" only to

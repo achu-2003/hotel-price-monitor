@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -31,7 +32,7 @@ from types import SimpleNamespace
 
 import jwt
 from fastapi import APIRouter, Cookie, Depends, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from annotated_types import Ge, Le
 from pydantic import BeforeValidator
@@ -57,6 +58,7 @@ from app.db.models import (
     MonitorTarget,
     Notification,
     PriceChange,
+    PriceObservation,
     PriceSeries,
     RateApplication,
     Recipient,
@@ -857,6 +859,45 @@ def _matrix_groups(
     return grouped, counts
 
 
+#: Width of one price column on the matrix, in the currency's units.
+MATRIX_BAND = 500
+
+
+def _price_bands(entries: list[dict], step: int = MATRIX_BAND) -> list[int]:
+    """Lay the matrix out by price: one column per ``step`` of price.
+
+    Returns the band starts (1000, 1500, 2000, ...) and files each hotel's
+    bookable rooms under ``entry["bands"][start]``, cheapest first. A band
+    holds prices from its start up to, not including, the next one's.
+
+    ONLY BANDS SOMEBODY SELLS IN ARE COLUMNS. A band no hotel has a room in
+    tonight is left out, so the table fits the screen instead of spending
+    most of its width on empty columns. The headings still say where each
+    column starts, so a jump from 7,500 to 9,500 reads as the gap it is.
+
+    SOLD-OUT ROOMS ARE NOT PUT IN A BAND. Their figure is the last rate seen,
+    not one a guest can book tonight, and a price column is a claim that it
+    can. They go to ``entry["sold_out_cells"]`` and a column of their own.
+    """
+    def band_of(price) -> int:
+        return int(price // step) * step
+
+    starts: set[int] = set()
+    for entry in entries:
+        entry["bands"] = {}
+        entry["sold_out_cells"] = []
+        for cell in entry["cells"]:
+            if cell["is_available"] and cell["price"]:
+                start = band_of(cell["price"])
+                entry["bands"].setdefault(start, []).append(cell)
+                starts.add(start)
+            else:
+                entry["sold_out_cells"].append(cell)
+        for cells in entry["bands"].values():
+            cells.sort(key=lambda c: c["price"])
+    return sorted(starts)
+
+
 async def _sold_out_hotels(session, user, check_in: date, check_out: date, adults: int):
     """``(hotel, last_checked_at)`` for properties a good fetch found full.
 
@@ -1018,6 +1059,7 @@ async def matrix(
     check_out: BlankableDate = None,
     adults: BlankableAdults = None,
     category: str | None = None,
+    view: str | None = None,
 ):
     """All hotels x rooms for one night. The comparison screen.
 
@@ -1075,6 +1117,10 @@ async def matrix(
     listed = sorted(
         list(grouped.values()) + sold_out, key=lambda e: e["hotel"].name
     )
+    # "bands" is the Price comparison view; anything else is the room cards
+    # the page has always opened on.
+    view = "bands" if view == "bands" else "rooms"
+    bands = _price_bands(listed) if view == "bands" else []
 
     # One chip per category that has a room on this night, in the order of the
     # sheet this page replaced. A category nothing is sold under is left out
@@ -1123,11 +1169,540 @@ async def matrix(
         adults=adults,
         category=category,
         category_label=label_for(category) if category else None,
+        view=view,
+        bands=bands,
+        band_step=MATRIX_BAND,
         chips=chips,
         filtered_out=filtered_out,
         default_note=default_note,
         collected=collected,
         show_with_tax=show_with_tax,
+    )
+
+
+# -- matrix Excel export --------------------------------------------
+@router.get("/matrix/export")
+async def matrix_export(
+    request: Request,
+    user: DashUser,
+    session: DbSession,
+    check_in: BlankableDate = None,
+    check_out: BlankableDate = None,
+    adults: BlankableAdults = None,
+    category: str | None = None,
+):
+    """Download the Price comparison table as an Excel file."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    if user is None:
+        return _redirect_to_login(request)
+
+    if adults is None:
+        adults = 2
+    if not is_category(category):
+        category = None
+    if check_in is None or check_out is None:
+        check_in, check_out, _ = await _default_night(session, user, adults)
+
+    rows = await _priced_rows(session, user, check_in, check_out, adults)
+    recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
+    show_with_tax = await _show_prices_with_tax(session)
+    grouped, _ = _matrix_groups(
+        rows, recent_cutoff, category, show_with_tax,
+        await _repricing_boards(session, user.id),
+    )
+    sold_out = (
+        await _sold_out_rows(
+            session, user, check_in, check_out, adults, set(grouped), show_with_tax
+        )
+        if category is None
+        else []
+    )
+    listed = sorted(
+        list(grouped.values()) + sold_out, key=lambda e: e["hotel"].name
+    )
+    bands = _price_bands(listed)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Price Comparison"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F3864")
+    own_fill = PatternFill("solid", fgColor="E8F4E8")
+    changed_fill = PatternFill("solid", fgColor="FFF3CD")
+    soldout_fill = PatternFill("solid", fgColor="F8D7DA")
+    center = Alignment(horizontal="center", vertical="top", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="top")
+
+    # Title row
+    night = f"{check_in.strftime('%d %b')} – {check_out.strftime('%d %b %Y')}, {adults} adult{'s' if adults != 1 else ''}"
+    ws.cell(row=1, column=1, value=f"Price Comparison · {night}")
+    ws.cell(row=1, column=1).font = Font(bold=True, size=13)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(bands) + 2)
+
+    # Header row
+    hrow = 2
+    ws.cell(row=hrow, column=1, value="Hotel").font = header_font
+    ws.cell(row=hrow, column=1).fill = header_fill
+    ws.cell(row=hrow, column=1).alignment = left
+    for i, start in enumerate(bands, start=2):
+        cell = ws.cell(row=hrow, column=i,
+                       value=f"₹{start:,} – {start + MATRIX_BAND - 1:,}")
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+    sold_col = len(bands) + 2
+    ws.cell(row=hrow, column=sold_col, value="Sold out").font = header_font
+    ws.cell(row=hrow, column=sold_col).fill = header_fill
+    ws.cell(row=hrow, column=sold_col).alignment = center
+
+    # Data rows
+    for entry in listed:
+        r = ws.max_row + 1
+        hotel_cell = ws.cell(row=r, column=1, value=entry["hotel"].name)
+        hotel_cell.alignment = left
+        if entry["hotel"].is_own_property:
+            hotel_cell.fill = own_fill
+            hotel_cell.font = Font(bold=True)
+
+        for i, start in enumerate(bands, start=2):
+            cells = entry.get("bands", {}).get(start, [])
+            if cells:
+                lines = []
+                for c in cells:
+                    price_str = money(c["price"], c["currency"]) if c["price"] else "–"
+                    lines.append(f"{c['room_name']}\n{price_str}")
+                    if c.get("price_note"):
+                        lines[-1] += f"\n({c['price_note']})"
+                cell = ws.cell(row=r, column=i, value="\n\n".join(lines))
+                cell.alignment = center
+                if any(c.get("changed_recently") for c in cells):
+                    cell.fill = changed_fill
+
+        sold_cells = entry.get("sold_out_cells", [])
+        if entry.get("sold_out") and not sold_cells:
+            ws.cell(row=r, column=sold_col, value="no rooms listed").fill = soldout_fill
+        elif sold_cells:
+            lines = []
+            for c in sold_cells:
+                line = c["room_name"]
+                if c.get("price"):
+                    if c.get("for_night"):
+                        line += f"\n{c['for_night'].strftime('%d %b')} {money(c['price'], c['currency'])}"
+                    else:
+                        line += f"\nwas {money(c['price'], c['currency'])}"
+                lines.append(line)
+            cell = ws.cell(row=r, column=sold_col, value="\n\n".join(lines))
+            cell.fill = soldout_fill
+            cell.alignment = center
+
+    # Column widths
+    ws.column_dimensions["A"].width = 28
+    for i in range(2, len(bands) + 3):
+        ws.column_dimensions[get_column_letter(i)].width = 22
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"price-comparison-{check_in}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# -- price history ---------------------------------------------------
+@router.get("/price-history", response_class=HTMLResponse)
+async def price_history_page(
+    request: Request,
+    user: DashUser,
+    session: DbSession,
+    hotel_id: BlankableInt = None,
+    check_in: BlankableDate = None,
+    check_out: BlankableDate = None,
+    adults: BlankableAdults = None,
+):
+    """Price history: one column per calendar day, one row per room.
+
+    Columns are the last 10 local dates (newest → oldest). Each cell shows
+    the last observed price on that day. A dash means the room was not
+    checked that day.
+    """
+    if user is None:
+        return _redirect_to_login(request)
+
+    if adults is None:
+        adults = 2
+
+    default_note = None
+    if check_in is None or check_out is None:
+        check_in, check_out, default_note = await _default_night(session, user, adults)
+
+    owned = owned_hotel_ids(user)
+    if hotel_id and hotel_id not in owned:
+        hotel_id = None
+
+    all_hotels = (
+        await session.scalars(
+            select(Hotel)
+            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
+            .order_by(Hotel.name)
+        )
+    ).all()
+
+    # Last 10 individual readings per room, most recent first.
+    # A date-based pivot would show only one cell per day and collapse all
+    # intraday checks into one — so if monitoring runs every 30 minutes, nine
+    # out of ten readings disappear. Row_number over the raw observations keeps
+    # every check visible.
+    rn_expr = func.row_number().over(
+        partition_by=PriceObservation.offer_key,
+        order_by=PriceObservation.checked_at.desc(),
+    ).label("rn")
+
+    obs_sub = select(
+        PriceObservation.offer_key,
+        PriceObservation.checked_at,
+        PriceObservation.price_exclusive,
+        PriceObservation.price_inclusive,
+        PriceObservation.taxes_fees,
+        PriceObservation.is_available,
+        PriceObservation.currency,
+        rn_expr,
+    ).subquery("obs_rn")
+
+    where_clauses = [
+        obs_sub.c.rn <= 10,
+        PriceSeries.check_in == check_in,
+        PriceSeries.check_out == check_out,
+        PriceSeries.adults == adults,
+        Hotel.is_active.is_(True),
+        RoomType.is_active.is_(True),
+        Hotel.owner_user_id == user.id,
+    ]
+    if hotel_id:
+        where_clauses.append(Hotel.id == hotel_id)
+
+    raw_rows = (
+        await session.execute(
+            select(
+                Hotel.id.label("hid"),
+                Hotel.name.label("hotel_name"),
+                Hotel.is_own_property,
+                RoomType.sort_order,
+                RoomType.name.label("room_name"),
+                PriceSeries.meal_plan,
+                PriceSeries.offer_key,
+                obs_sub.c.currency,
+                obs_sub.c.checked_at,
+                obs_sub.c.price_exclusive,
+                obs_sub.c.price_inclusive,
+                obs_sub.c.taxes_fees,
+                obs_sub.c.is_available,
+                obs_sub.c.rn,
+            )
+            .select_from(obs_sub)
+            .join(PriceSeries, PriceSeries.offer_key == obs_sub.c.offer_key)
+            .join(Hotel, Hotel.id == PriceSeries.hotel_id)
+            .join(RoomType, RoomType.id == PriceSeries.room_type_id)
+            .where(*where_clauses)
+            .order_by(Hotel.name, RoomType.sort_order, PriceSeries.offer_key, obs_sub.c.rn)
+        )
+    ).all()
+
+    show_with_tax = await _show_prices_with_tax(session)
+
+    history: dict[int, dict] = {}
+    for row in raw_rows:
+        if row.hid not in history:
+            history[row.hid] = {
+                "hotel_name": row.hotel_name,
+                "is_own": row.is_own_property,
+                "rooms": {},
+            }
+        h = history[row.hid]
+        if row.offer_key not in h["rooms"]:
+            h["rooms"][row.offer_key] = {
+                "room_name": row.room_name,
+                "meal_plan": row.meal_plan,
+                "currency": row.currency,
+                "observations": [],
+            }
+
+        if show_with_tax:
+            price = row.price_inclusive if row.price_inclusive is not None else row.price_exclusive
+            note = "excl. tax" if row.price_inclusive is None and row.price_exclusive is not None else None
+        else:
+            price = row.price_exclusive if row.price_exclusive is not None else row.price_inclusive
+            note = "incl. tax" if row.price_exclusive is None and row.price_inclusive is not None else None
+
+        h["rooms"][row.offer_key]["observations"].append({
+            "price": price,
+            "price_note": note,
+            "currency": row.currency,
+            "checked_at": row.checked_at,
+            "is_available": row.is_available,
+        })
+
+    hotels_data = [
+        {**v, "rooms": list(v["rooms"].values())}
+        for v in history.values()
+    ]
+
+    return await _render(
+        request, user, session, "price_history.html",
+        hotels_data=hotels_data,
+        all_hotels=all_hotels,
+        hotel_id=hotel_id,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        default_note=default_note,
+        show_with_tax=show_with_tax,
+    )
+
+
+@router.get("/price-history/export")
+async def price_history_export(
+    request: Request,
+    user: DashUser,
+    session: DbSession,
+    hotel_id: BlankableInt = None,
+    check_in: BlankableDate = None,
+    check_out: BlankableDate = None,
+    adults: BlankableAdults = None,
+):
+    """Download 1 month of price history as a pivoted Excel file.
+
+    Layout matches the web page: Hotel | Room | Plan | 28 Sep | 27 Sep | …
+    Each date column holds the last observed price on that day.
+    Sold-out cells say "sold out". Empty cells mean no check ran that day.
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    if user is None:
+        return _redirect_to_login(request)
+
+    if adults is None:
+        adults = 2
+
+    owned = owned_hotel_ids(user)
+    if hotel_id and hotel_id not in owned:
+        hotel_id = None
+
+    if check_in is None or check_out is None:
+        check_in, check_out, _ = await _default_night(session, user, adults)
+
+    if check_in is None or check_out is None:
+        check_in, check_out, _ = await _default_night(session, user, adults)
+
+    tz_name = get_settings().timezone
+
+    # Last 50 individual readings per room, most recent first.
+    rn_expr = func.row_number().over(
+        partition_by=PriceObservation.offer_key,
+        order_by=PriceObservation.checked_at.desc(),
+    ).label("rn")
+
+    obs_sub = select(
+        PriceObservation.offer_key,
+        PriceObservation.checked_at,
+        PriceObservation.price_exclusive,
+        PriceObservation.price_inclusive,
+        PriceObservation.is_available,
+        PriceObservation.currency,
+        rn_expr,
+    ).subquery("obs_50")
+
+    where_clauses = [
+        obs_sub.c.rn <= 50,
+        PriceSeries.check_in == check_in,
+        PriceSeries.check_out == check_out,
+        PriceSeries.adults == adults,
+        Hotel.is_active.is_(True),
+        RoomType.is_active.is_(True),
+        Hotel.owner_user_id == user.id,
+    ]
+    if hotel_id:
+        where_clauses.append(Hotel.id == hotel_id)
+
+    raw_rows = (
+        await session.execute(
+            select(
+                Hotel.id.label("hid"),
+                Hotel.name.label("hotel_name"),
+                Hotel.is_own_property,
+                RoomType.sort_order,
+                RoomType.name.label("room_name"),
+                PriceSeries.meal_plan,
+                PriceSeries.offer_key,
+                obs_sub.c.currency,
+                obs_sub.c.checked_at,
+                obs_sub.c.price_exclusive,
+                obs_sub.c.price_inclusive,
+                obs_sub.c.is_available,
+                obs_sub.c.rn,
+            )
+            .select_from(obs_sub)
+            .join(PriceSeries, PriceSeries.offer_key == obs_sub.c.offer_key)
+            .join(Hotel, Hotel.id == PriceSeries.hotel_id)
+            .join(RoomType, RoomType.id == PriceSeries.room_type_id)
+            .where(*where_clauses)
+            .order_by(Hotel.name, RoomType.sort_order, PriceSeries.offer_key, obs_sub.c.rn)
+        )
+    ).all()
+
+    show_with_tax = await _show_prices_with_tax(session)
+    tz = ZoneInfo(tz_name)
+
+    # Group into hotels → rooms → observations list (same as web page).
+    history: dict[int, dict] = {}
+    for row in raw_rows:
+        if row.hid not in history:
+            history[row.hid] = {
+                "hotel_name": row.hotel_name,
+                "is_own": row.is_own_property,
+                "rooms": {},
+            }
+        h = history[row.hid]
+        if row.offer_key not in h["rooms"]:
+            h["rooms"][row.offer_key] = {
+                "room_name": row.room_name,
+                "meal_plan": row.meal_plan,
+                "currency": row.currency,
+                "observations": [],
+            }
+        if show_with_tax:
+            price = row.price_inclusive if row.price_inclusive is not None else row.price_exclusive
+        else:
+            price = row.price_exclusive if row.price_exclusive is not None else row.price_inclusive
+
+        h["rooms"][row.offer_key]["observations"].append({
+            "price": price,
+            "is_available": row.is_available,
+            "checked_at": row.checked_at,
+        })
+
+    hotels_list = [
+        {**v, "rooms": list(v["rooms"].values())}
+        for v in history.values()
+    ]
+
+    # How many reading columns we need (up to 50).
+    max_obs = max(
+        (len(room["observations"]) for h in hotels_list for room in h["rooms"]),
+        default=0,
+    )
+
+    # ── Build the workbook ──────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Price History"
+    ws.freeze_panes = "D2"  # freeze hotel/room/plan, scroll price columns
+
+    hdr_font  = Font(bold=True, color="FFFFFF")
+    hdr_fill  = PatternFill("solid", fgColor="1F3864")
+    own_fill  = PatternFill("solid", fgColor="EAF4EA")
+    sold_fill = PatternFill("solid", fgColor="FDE8E8")
+    left      = Alignment(horizontal="left",   vertical="top")
+    center    = Alignment(horizontal="center", vertical="top", wrap_text=True)
+
+    # ── Row 1: fixed headers + reading number headers ──────────────────
+    for col, label in enumerate(["Hotel", "Room", "Meal Plan"], start=1):
+        c = ws.cell(row=1, column=col, value=label)
+        c.font = hdr_font
+        c.fill = hdr_fill
+        c.alignment = left
+
+    for n in range(1, max_obs + 1):
+        c = ws.cell(row=1, column=3 + n, value=f"{'Latest' if n == 1 else str(n)}")
+        c.font = hdr_font
+        c.fill = hdr_fill
+        c.alignment = center
+
+    # ── Data rows: one row per room, merged hotel name ─────────────────
+    data_row = 2
+    for hotel in hotels_list:
+        hotel_start = data_row
+        room_fill = own_fill if hotel["is_own"] else None
+
+        for room in hotel["rooms"]:
+            # Hotel name written on first room of this hotel; merged below.
+            c = ws.cell(row=data_row, column=1, value=hotel["hotel_name"])
+            c.alignment = left
+            c.font = Font(bold=True)
+            if room_fill:
+                c.fill = room_fill
+
+            ws.cell(row=data_row, column=2, value=room["room_name"]).alignment = left
+            ws.cell(row=data_row, column=3, value=room["meal_plan"] or "").alignment = left
+
+            for i, obs in enumerate(room["observations"], start=1):
+                col = 3 + i
+                local_dt = obs["checked_at"].astimezone(tz) if obs["checked_at"] else None
+                time_str = local_dt.strftime("%d %b %H:%M") if local_dt else ""
+
+                if not obs["is_available"]:
+                    c = ws.cell(row=data_row, column=col,
+                                value=f"sold out\n{time_str}")
+                    c.fill = sold_fill
+                    c.alignment = center
+                elif obs["price"] is not None:
+                    c = ws.cell(row=data_row, column=col,
+                                value=f"₹{obs['price']:,.0f}\n{time_str}")
+                    c.alignment = center
+                    if room_fill:
+                        c.fill = room_fill
+                else:
+                    ws.cell(row=data_row, column=col, value="").alignment = center
+
+            # Pad empty slots up to max_obs
+            for i in range(len(room["observations"]) + 1, max_obs + 1):
+                ws.cell(row=data_row, column=3 + i, value="—").alignment = center
+
+            data_row += 1
+
+        # Merge hotel name across all its room rows.
+        if data_row - hotel_start > 1:
+            ws.merge_cells(
+                start_row=hotel_start, start_column=1,
+                end_row=data_row - 1, end_column=1,
+            )
+            merged = ws.cell(row=hotel_start, column=1)
+            merged.alignment = Alignment(horizontal="left", vertical="top")
+            merged.font = Font(bold=True)
+            if room_fill:
+                merged.fill = room_fill
+
+    # ── Column widths ──────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 28
+    ws.column_dimensions["C"].width = 14
+    for i in range(4, 4 + max_obs):
+        ws.column_dimensions[get_column_letter(i)].width = 14
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    fname = f"price-history-{check_in}.xlsx"
+    if hotel_id:
+        hotel_obj = await session.get(Hotel, hotel_id)
+        if hotel_obj:
+            slug = hotel_obj.name.lower().replace(" ", "-")
+            fname = f"price-history-{slug}-{check_in}.xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 
