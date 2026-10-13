@@ -222,11 +222,40 @@ class PlaywrightDirectSiteAdapter:
         Never raises. A page that shows neither is left to the extraction step,
         which is better placed to tell "sold out" from "redesigned" and already
         does.
+
+        A PRICE INSIDE A CARD, BESIDE ITS NAME
+        ======================================
+        This used to ask the whole page for a price, and Treebo answered it
+        early: the booking panel beside the room list paints "₹1,636" before
+        the card under #t-roomTypes has painted "Deluxe Room (Maple)". The read
+        that followed found the card, found no name in it, and raised "the
+        room_name selector is stale" -- on a selector that read the same page
+        correctly on the next three loads.
+
+        That false alarm is worse than a slow check, because it is what sends
+        a working config to rediscovery: on 3 Sep it swapped Treebo
+        Midvalley's stable engine profile for hashed styled-components
+        classes, which Treebo's next deploy renamed. So the wait now asks the
+        question extraction will ask -- is there a card carrying both a name
+        and a price -- and asks it of the cards, not the page.
         """
         selectors = config.get("selectors") or {}
         price_selector = selectors.get("price")
         if not price_selector:
             return
+        name_selector = selectors.get("room_name")
+        card_selector = config.get("room_card")
+
+        def ready() -> bool:
+            if not card_selector:
+                return fetch.page.query_selector(price_selector) is not None
+            for card in fetch.page.query_selector_all(card_selector):
+                if card.query_selector(price_selector) is None:
+                    continue
+                if name_selector and card.query_selector(name_selector) is None:
+                    continue
+                return True
+            return False
 
         budget_ms = int(config.get("price_wait_ms", _PRICE_WAIT_MS))
         markers = [m.lower() for m in (config.get("sold_out_markers") or [])]
@@ -235,7 +264,7 @@ class PlaywrightDirectSiteAdapter:
 
         while time.monotonic() < deadline:
             try:
-                if fetch.page.query_selector(price_selector) is not None:
+                if ready():
                     return
             except PlaywrightError:
                 # A selector the page cannot evaluate is drift, not a timing

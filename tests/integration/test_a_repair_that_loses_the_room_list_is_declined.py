@@ -219,6 +219,81 @@ class TestARepairThatIsNotARegression:
         assert outcome["status"] != "regressed"
 
 
+class TestASiteThatShowsOneRoomANight:
+    """Treebo Midvalley, Oct 2026: one room per page, a different one some nights.
+
+    Deluxe (Maple) most nights, Premium (Mahogany) when Maple sold out. Counted
+    across history that was two rooms, and every one-room repair was declined
+    as losing half the list -- so the hotel could not be repaired at all.
+    """
+
+    @pytest.fixture
+    def source_reading_one_room_a_night(self, session, hotel_fixture):
+        hotel = hotel_fixture["hotel"]
+        source = hotel_fixture["source"]
+        hotel_source = hotel_fixture["hotel_source"]
+        hotel_source.adapter_config = dict(WORKING)
+        now = datetime.now(UTC)
+        # The 28 Sep shape: Maple sold out, Mahogany shown in its place, and
+        # Maple's series left on that same stay marked unavailable.
+        for n, (name, night, on_sale) in enumerate(
+            [("Maple", 20, True), ("Maple", 22, False), ("Mahogany", 22, True)]
+        ):
+            existing = session.scalars(
+                select_rooms(hotel.id).where(RoomType.name == f"Room ({name})")
+            ).first()
+            if existing is not None:
+                session.add(
+                    PriceSeries(
+                        offer_key=f"night-{n}",
+                        hotel_id=hotel.id,
+                        room_type_id=existing.id,
+                        source_id=source.id,
+                        check_in=date(2026, 12, night),
+                        check_out=date(2026, 12, night + 1),
+                        adults=2,
+                        currency="INR",
+                        is_available=on_sale,
+                        first_seen_at=now,
+                        last_checked_at=now,
+                    )
+                )
+                continue
+            room = RoomType(
+                hotel_id=hotel.id,
+                name=f"Room ({name})",
+                canonical_name=f"room-{name.lower()}",
+                capacity=2,
+            )
+            session.add(room)
+            session.flush()
+            session.add(
+                PriceSeries(
+                    offer_key=f"night-{n}",
+                    hotel_id=hotel.id,
+                    room_type_id=room.id,
+                    source_id=source.id,
+                    check_in=date(2026, 12, night),
+                    check_out=date(2026, 12, night + 1),
+                    adults=2,
+                    currency="INR",
+                    is_available=on_sale,
+                    first_seen_at=now,
+                    last_checked_at=now,
+                )
+            )
+        session.flush()
+        return hotel_source
+
+    def test_a_one_room_repair_is_not_a_regression(
+        self, source_reading_one_room_a_night, repair_against
+    ):
+        outcome = repair_against(
+            source_reading_one_room_a_night.id, _candidate(1, ["Room (Maple)"])
+        )
+        assert outcome["status"] != "regressed"
+
+
 def select_rooms(hotel_id):
     from sqlalchemy import select
 

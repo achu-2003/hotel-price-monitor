@@ -31,7 +31,14 @@ from app.adapters.discovery import json_fragment
 from app.adapters.mapping import render_template
 from app.config import get_settings
 from app.core.logging import get_logger
-from app.db.models import AuditLog, Hotel, HotelSource, MonitoringError, PriceSeries
+from app.db.models import (
+    AuditLog,
+    Hotel,
+    HotelSource,
+    MonitoringError,
+    PriceSeries,
+    Source,
+)
 from app.db.session import sync_session
 from app.services.dates import local_today
 from app.services.rediscovery import (
@@ -119,6 +126,10 @@ def rediscover_source(
         template = source_row.url
         hotel_id = source_row.hotel_id
         currency = source_row.currency
+        external_id = source_row.external_id
+        adapter_key = session.scalar(
+            select(Source.adapter_key).where(Source.id == source_row.source_id)
+        )
         # Read here rather than at the decision, so the whole comparison is
         # made from one transaction. See rediscovery.names_echo_the_property.
         hotel_name = session.scalar(
@@ -130,16 +141,36 @@ def rediscover_source(
         # improve on. Distinct room types rather than series: the same room
         # across four stay dates is one room, and counting series would set a
         # floor no candidate could clear. See rediscovery.is_a_regression.
-        established_rooms = (
-            session.scalar(
-                select(func.count(distinct(PriceSeries.room_type_id))).where(
-                    PriceSeries.hotel_id == source_row.hotel_id,
-                    PriceSeries.source_id == source_row.source_id,
-                    PriceSeries.room_type_id.is_not(None),
-                )
+        #
+        # Counted per stay and the largest taken -- the most rooms one page
+        # has ever shown -- not across all of history. A scan reads one page,
+        # so that is what it has to measure up to. Treebo shows ONE room per
+        # check, whichever is cheapest that night: Midvalley's history holds
+        # Deluxe (Maple) and, on the nights Maple sold out, Premium (Mahogany).
+        # Counted across history that was "two rooms", every one-room repair
+        # was declined as losing half the list, and the hotel stayed broken
+        # from Treebo's 3 Sep deploy onwards with nothing able to fix it.
+        #
+        # On sale, too: the night Maple sold out, Treebo showed Mahogany in
+        # its place, and Maple's series stayed on that stay marked sold out --
+        # two rooms on one stay that no page ever showed together.
+        per_stay = (
+            select(func.count(distinct(PriceSeries.room_type_id)).label("rooms"))
+            .where(
+                PriceSeries.hotel_id == source_row.hotel_id,
+                PriceSeries.source_id == source_row.source_id,
+                PriceSeries.room_type_id.is_not(None),
+                PriceSeries.is_available.is_(True),
             )
-            or 0
+            .group_by(
+                PriceSeries.check_in,
+                PriceSeries.check_out,
+                PriceSeries.adults,
+                PriceSeries.children,
+            )
+            .subquery()
         )
+        established_rooms = session.scalar(select(func.max(per_stay.c.rooms))) or 0
 
         # The claim itself. The outcome is overwritten below; recording it as
         # "started" means a task killed mid-flight still leaves a truthful
@@ -166,7 +197,54 @@ def rediscover_source(
         currency=currency,
     )
 
-    # ── 2. inspect the live page ─────────────────────────────────────
+    # ── 2a. the engine's own profile, before any scan ────────────────
+    # A hotel on a known engine has a hand-written config in engines.py that
+    # is anchored on what the site keeps stable -- Treebo's #t-roomTypes id and
+    # the card's own wording -- where a scan can only offer what it finds,
+    # which on Treebo is styled-components hashes renamed on every deploy. A
+    # scan that replaces the profile has therefore not repaired the hotel, only
+    # scheduled its next break. So the profile is asked first:
+    #
+    # * it reads the page, and is not what is stored: restore it. This is how
+    #   a hotel that a scan once moved onto hashed classes finds its way back.
+    # * it reads the page, and IS what is stored: whatever went wrong was not
+    #   the config -- a slow page, a read that came too early -- and a scan
+    #   would only swap a working config for a brittle one.
+    profiled = _engine_profile_reads_the_page(
+        url,
+        adapter_key=adapter_key,
+        hotel_source_id=hotel_source_id,
+        hotel_name=hotel_name,
+        template=template,
+        external_id=external_id,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        children=children,
+        currency=currency,
+        logger=logger,
+    )
+    if profiled is not None:
+        profile_config, profile_names = profiled
+        if not is_a_real_change(config, profile_config):
+            _finish(hotel_source_id, outcome="no_change", now=now)
+            logger.info("rediscovery_no_change",
+                        note="the engine profile still reads the page")
+            return {"status": "no_change"}
+        if not is_a_regression(established_rooms, len(profile_names)):
+            return _store_repair(
+                hotel_source_id,
+                profile_config,
+                hotel_id=hotel_id,
+                room_count=len(profile_names),
+                room_names=profile_names,
+                cross_sold_names=None,
+                collapsed_names=collapsed_names,
+                now=now,
+                logger=logger,
+            )
+
+    # ── 2b. inspect the live page ────────────────────────────────────
     # Imported here rather than at module scope: it pulls in Playwright, and a
     # web process importing this module for the task name should not pay for a
     # browser stack it will never start.
@@ -260,7 +338,38 @@ def rediscover_source(
         f"against the page, {best.corroborated_marked} of them printed with a "
         f"currency."
     )
+    return _store_repair(
+        hotel_source_id,
+        discovered,
+        hotel_id=hotel_id,
+        room_count=best.room_count,
+        room_names=list(best.sample_names),
+        cross_sold_names=result.cross_sold_names,
+        collapsed_names=collapsed_names,
+        now=now,
+        logger=logger,
+    )
 
+
+def _store_repair(
+    hotel_source_id: int,
+    discovered: dict[str, Any],
+    *,
+    hotel_id: int,
+    room_count: int,
+    room_names: list[str],
+    cross_sold_names: list[str] | None,
+    collapsed_names: list[str] | None,
+    now: datetime,
+    logger,
+) -> dict[str, Any]:
+    """Write a config the repair has already decided to keep.
+
+    Shared by the two ways a repair arrives at one: a fresh discovery scan,
+    and the engine profile re-read and found working (see
+    _engine_profile_reads_the_page).
+    """
+    settings = get_settings()
     with sync_session() as session:
         source_row = session.execute(
             select(HotelSource)
@@ -334,8 +443,8 @@ def rediscover_source(
             # hotel's room list. Nothing in a fetch can report this -- the
             # prices are real and every check succeeds -- so the scan is the
             # only place the evidence exists.
-            cross_sold_names=result.cross_sold_names,
-            discovered_names=best.sample_names,
+            cross_sold_names=cross_sold_names,
+            discovered_names=room_names,
             logger=logger,
         )
 
@@ -363,7 +472,7 @@ def rediscover_source(
                     **{k: v for k, v in repaired.items() if k != "auto_repair"},
                     "rooms_retired": retired,
                     "series_superseded": superseded,
-                    "rooms_discovered": list(best.sample_names[:12]),
+                    "rooms_discovered": room_names[:12],
                 },
                 # No Python-side default on this column, and the audit write
                 # shares the transaction with the repair -- omitting it fails
@@ -376,20 +485,86 @@ def rediscover_source(
 
     logger.info(
         "rediscovery_repaired",
-        rooms=best.room_count,
-        names=best.sample_names[:6],
+        rooms=room_count,
+        names=room_names[:6],
         errors_resolved=resolved,
         rooms_retired=retired,
         series_superseded=superseded,
     )
     return {
         "status": "repaired",
-        "rooms": best.room_count,
+        "rooms": room_count,
         "errors_resolved": resolved,
         "rooms_retired": retired,
         "series_superseded": superseded,
         "config": discovered,
     }
+
+
+def _engine_profile_reads_the_page(
+    url: str,
+    *,
+    adapter_key: str | None,
+    hotel_source_id: int,
+    hotel_name: str,
+    template: str,
+    external_id: str | None,
+    check_in: str | None,
+    check_out: str | None,
+    adults: int,
+    children: int,
+    currency: str | None,
+    logger,
+) -> tuple[dict[str, Any], list[str]] | None:
+    """The engine profile's config and the priced rooms it read, if it reads.
+
+    None when the URL is on no known engine, the profile is for a different
+    adapter, it carries no selectors to try, or it could not price a room on
+    this page tonight -- every case in which the scan should run as before.
+    """
+    if not check_in or not check_out or not adapter_key:
+        return None
+
+    from app.adapters.base import FetchContext
+    from app.adapters.engines import detect
+    from app.adapters.registry import get_adapter
+    from app.services.dates import StayWindow
+
+    detection = detect(url)
+    if detection is None or detection.profile.adapter_key != adapter_key:
+        return None
+    profile_config = dict(detection.profile.adapter_config)
+    if not (profile_config.get("selectors") or profile_config.get("fields")):
+        return None
+
+    context = FetchContext(
+        hotel_source_id=hotel_source_id,
+        hotel_name=hotel_name,
+        url=template,
+        external_id=external_id,
+        stay=StayWindow(
+            check_in=date.fromisoformat(check_in),
+            check_out=date.fromisoformat(check_out),
+        ),
+        adults=adults,
+        children=children,
+        currency=currency or "INR",
+        config=profile_config,
+    )
+    try:
+        result = get_adapter(adapter_key).fetch(context)
+    except Exception as exc:  # noqa: BLE001 - falls back to the scan
+        logger.info("engine_profile_did_not_read", error=str(exc)[:200])
+        return None
+
+    names = list(dict.fromkeys(
+        offer.raw_room_name
+        for offer in result.offers
+        if offer.price_inclusive is not None or offer.price_exclusive is not None
+    ))
+    if not names:
+        return None
+    return profile_config, names
 
 
 def _retire_invented_rooms(

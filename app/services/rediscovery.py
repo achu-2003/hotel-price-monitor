@@ -496,8 +496,11 @@ def is_a_regression(established_rooms: int, discovered_rooms: int) -> bool:
 
     WHAT "ESTABLISHED" MEANS
     ========================
-    How many rooms this source was already reading, which is a fact about
-    history rather than about the page -- a candidate cannot argue with it.
+    How many rooms this source was already reading on ONE page -- the most
+    any single stay has shown -- which is a fact about history rather than
+    about the page, so a candidate cannot argue with it. Per stay, because a
+    site that shows one room a night (Treebo) shows different rooms on
+    different nights, and those added up are a list no page ever carried.
     Zero or one means there is no history worth defending: a source still
     being onboarded, or one that has only ever found a single room, gets no
     protection here, because the guard would then be asserting a floor it has
