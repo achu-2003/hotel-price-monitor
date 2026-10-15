@@ -26,7 +26,7 @@ WHAT EACH VERDICT MEANS
     LATE      no successful check within twice its own interval
     BREAKER   the circuit is open; nothing is being fetched at all
     COLLAPSED less than half the rooms this hotel showed over the past fortnight
-    FROZEN    prices have not moved in days while checks kept succeeding
+    FROZEN    every room one price, across every date and check, for days
     NAMES     a room name that does not read like a room name
     OK        none of the above
 """
@@ -97,9 +97,26 @@ def main() -> int:
             group by 1
         """)).all()}
 
-        moved = {r[0]: r[1] for r in session.execute(text("""
-            select hotel_id, max(last_changed_at) from price_series group by 1
-        """)).all()}
+        # NOT price_series.last_changed_at. A series is one stay date, and a
+        # hotel watched only for the next night checks each date once, so
+        # last_changed_at stays empty while the rate swings 2550 -> 4400 from
+        # one night to the next -- it called two such hotels frozen for 17
+        # days. A stuck reading looks different: every room at one price
+        # across every date and every check in the window.
+        variety = {r[0]: (r[1], r[2]) for r in session.execute(text("""
+            select hotel_id, max(prices), min(first_seen)
+            from (
+                select ps.hotel_id, ps.room_type_id,
+                       count(distinct coalesce(o.price_inclusive, o.price_exclusive)) as prices,
+                       min(o.checked_at) as first_seen
+                from price_observations o
+                join price_series ps on ps.offer_key = o.offer_key
+                where o.checked_at > now() - make_interval(days => :days)
+                  and o.is_available
+                group by 1, 2
+            ) per_room
+            group by 1
+        """), {"days": FROZEN_DAYS}).all()}
 
         readings = {r[0]: r[1] for r in session.execute(text("""
             select ps.hotel_id, count(*)
@@ -149,12 +166,15 @@ def main() -> int:
                     f"only {today} room(s) today against {fortnight} over the "
                     f"past fortnight")
 
-            last_move = moved.get(hid)
-            if last_move and age_min is not None:
-                days = (now - last_move).days
-                if days >= FROZEN_DAYS:
-                    flags.append("FROZEN")
-                    detail.append(f"no price has moved in {days} days")
+            # A hotel added yesterday has had no chance to vary yet; only call
+            # it frozen once the window is (nearly) full of readings.
+            most_prices, first_seen = variety.get(hid, (0, None))
+            if (most_prices == 1 and first_seen
+                    and (now - first_seen).days >= FROZEN_DAYS - 1):
+                flags.append("FROZEN")
+                detail.append(
+                    f"every room read at a single price across every date "
+                    f"for {FROZEN_DAYS} days")
 
             if hid in names:
                 flags.append("NAMES")
