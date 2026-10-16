@@ -745,7 +745,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                                 found=str(current[anchor]), mode=mode)
                 try:
                     new_anchor = rule.to_rms(p.target, p.our_price, rms_for_ratio,
-                                             round_to=round_to, exact=p.exact)
+                                             round_to=round_to, exact=p.exact, with_tax=p.with_tax)
                 except ValueError as exc:
                     _record(session, owner_user_id, p, m, channel=channel, check_in=check_in, mode=mode, status="held",
                             plan=anchor, rate_type=anchor_row, current_rms=current[anchor], reason=str(exc))

@@ -162,7 +162,7 @@
           {% set ns.base = ratio_base.get((m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))), ns.cur) if ratio_base is defined else ns.cur %}
         {% endif %}
         {% if ns.base is not none and p.target is not none and p.our_price %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact) %}
+          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact, with_tax=p.with_tax) %}
           {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
           {#
             NOTHING TO SAY WHEN THE FOLLOW HAS CAUGHT UP. Sitting a hundred
@@ -193,6 +193,7 @@
                        script converts it to RMS the way to_rms() does. A price
                        the owner types is always one, exact row or not. -#}
                    data-exact="{{ '1' if p.exact else '' }}"
+                   data-with-tax="{{ '1' if p.with_tax else '' }}"
                    value="{{ '' if ns.settled else (p.target|int if p.target is not none else '') }}"
                    placeholder="type a price" aria-label="Proposed price for {{ p.room_name }}">
             <br><span class="muted change">{% if ns.settled %}{% elif p.change_pct is not none %}{{ '%+.1f'|format(p.change_pct) }}%{% endif %}</span>
@@ -291,7 +292,7 @@
             {#- Back through the SAME divisor the rate was computed with. Using
                 the remembered cell here instead put the rule's own target back
                 as "guest will see 7,586" -- the price we are trying to leave. -#}
-            <strong class="site-new">{{ money((ns.rms_new * p.our_price / ns.base)|round|int) }}</strong>
+            <strong class="site-new">{{ money(rule.guest_sees(ns.rms_new, p.our_price, ns.base, with_tax=p.with_tax)|round|int) }}</strong>
             <br><span class="muted">on Booking.com{% if settings.benchmark_with_tax %}, tax in{% endif %}</span>
             {% if p.benchmark_entry %}
               <br><span class="muted site-gap">vs {{ p.benchmark }} {{ money(p.market) }}</span>

@@ -183,6 +183,9 @@ class Proposal:
     #: instruction, an error: see :func:`to_rms`, which is the last place
     #: the number can be lost.
     exact: bool = False
+    #: ``our_price`` and ``target`` include tax, so the RMS rate is worked
+    #: out on the pre-tax figures (see :func:`to_rms`).
+    with_tax: bool = False
 
     @property
     def change_pct(self) -> float | None:
@@ -783,7 +786,7 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
         base = dict(
             room_type_id=room_type_id, room_name=room_name, tier=tier,
             tier_label=label_for(tier), our_price=our_price, our_note=our_note,
-            competitors=competitors, sold_out=gone, board=used_board,
+            competitors=competitors, sold_out=gone, board=used_board, with_tax=with_tax,
         )
         if tier == OTHER:
             proposals.append(Proposal(**base, market=None, target=None,
@@ -941,7 +944,7 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                 room_type_id=room_type_id, room_name=room_name, tier=tier,
                 tier_label=label_for(tier),
                 our_price=fallback[0], our_note=fallback[1], board=fallback[2],
-                competitors=(), sold_out=(), market=None, target=None,
+                competitors=(), sold_out=(), market=None, target=None, with_tax=with_tax,
                 benchmark=benchmark.hotel if paired else None,
                 held=f"we sell this room on neither {board.lower()} nor "
                      f"{(spare_board or '').lower() or 'any other board'} tonight"
@@ -977,13 +980,21 @@ def override(proposal: Proposal, price: Decimal) -> Proposal:
 
 
 def to_rms(target_guest: Decimal, our_guest: Decimal, current_rms: Decimal, *,
-           round_to: int, exact: bool = False) -> Decimal:
+           round_to: int, exact: bool = False, with_tax: bool = False) -> Decimal:
     """The RMS rate that would make the channel show ``target_guest``.
 
     By the ratio the channel is applying today: RMS shows 7,500 where the
     site shows 5,610, so a target of 6,000 on the site is 6,000 × 7,500/5,610
     in RMS. Read both on the same morning, so the deal in force is the deal
     in the ratio.
+
+    ``with_tax``: both guest prices include GST, and the ratio is taken on
+    them BEFORE it. The tax is not proportional -- 5% up to a 7,500 tariff,
+    18% above (see :func:`before_gst`) -- so scaling with-tax prices is right
+    only while both stay in one slab. On 16 Oct they would not have: our
+    5,623 (5%) was to follow Sterling's 9,511 (18%), and the with-tax ratio
+    wrote 14,226 into RMS, which Booking.com shows at 10,576 -- a thousand
+    over Sterling, not a hundred under. Before tax it is 12,659, shown 9,411.
 
     ``round_to`` IS COSMETIC AND THIS IS THE ONE PLACE IT CANNOT AFFORD TO BE.
     The setting exists because the median rule's aim is approximate anyway and
@@ -1003,10 +1014,63 @@ def to_rms(target_guest: Decimal, our_guest: Decimal, current_rms: Decimal, *,
     """
     if not our_guest:
         raise ValueError("our guest price is zero; no ratio to scale by")
+    if with_tax:
+        # The channel's deal is a ratio between PRE-TAX figures. Taken over
+        # with-tax ones it holds only while both sit in the same GST slab.
+        target_guest, our_guest = before_gst(target_guest), before_gst(our_guest)
     wanted = target_guest * current_rms / our_guest
     if exact:
-        return wanted.quantize(Decimal("1"), rounding=ROUND_FLOOR)
-    return _round_to(wanted, round_to)
+        rate = wanted.quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    else:
+        rate = _round_to(wanted, round_to)
+    if with_tax and target_guest <= GST_SLAB_LIMIT:
+        # Rounding UP must not carry the tariff over the slab: one rupee past
+        # 7,500 is thirteen per cent more on the line the guest reads.
+        most = (GST_SLAB_LIMIT * current_rms / our_guest).quantize(Decimal("1"), rounding=ROUND_FLOOR)
+        if rate > most:
+            rate = most if exact or round_to <= 1 else (most // round_to) * round_to
+    return rate
+
+
+def guest_sees(rms_rate: Decimal, our_guest: Decimal, current_rms: Decimal, *,
+               with_tax: bool = False) -> Decimal:
+    """The guest price ``rms_rate`` comes out at -- :func:`to_rms` run backwards.
+
+    What the page shows under "guest will see", so it has to cross the GST
+    slab the same way the channel does rather than scale a with-tax price.
+    """
+    if not current_rms:
+        raise ValueError("the RMS rate is zero; no ratio to scale by")
+    if not with_tax:
+        return rms_rate * our_guest / current_rms
+    pre_tax = rms_rate * before_gst(our_guest) / current_rms
+    return pre_tax * (1 + gst_rate(pre_tax))
+
+
+#: India's GST on a hotel night, by its pre-tax tariff: 5% up to 7,500 and
+#: 18% above it. Booking.com applies it exactly so -- on 16 Oct our Deluxe
+#: Double read 5,600 + 280 and its MAP 7,700 + 1,386; Sterling's Mountain View
+#: 8,060 + 1,451.
+GST_SLAB_LIMIT = Decimal("7500")
+GST_LOW = Decimal("0.05")
+GST_HIGH = Decimal("0.18")
+
+
+def gst_rate(pre_tax: Decimal) -> Decimal:
+    return GST_LOW if pre_tax <= GST_SLAB_LIMIT else GST_HIGH
+
+
+def before_gst(guest: Decimal) -> Decimal:
+    """The pre-tax tariff behind a with-tax guest price.
+
+    THE SLAB LEAVES A GAP. 7,500 is 7,875 with tax and 7,501 is 8,851, so no
+    tariff shows a guest anything in between. A target in the gap gets the
+    top of the lower slab: the highest price at or under it that a guest can
+    actually be shown, which keeps a follow under the hotel it follows.
+    """
+    if guest <= GST_SLAB_LIMIT * (1 + GST_LOW):
+        return guest / (1 + GST_LOW)
+    return max(guest / (1 + GST_HIGH), GST_SLAB_LIMIT)
 
 
 def same_share(current: Decimal, before: Decimal, after: Decimal, *, round_to: int) -> Decimal:

@@ -355,10 +355,33 @@
     // instead of the tidy multiple of round_to, because ten rupees of
     // tidiness in RMS is six on the line the guest reads and the gap was set
     // in rupees. Everything else keeps the rounding.
+    //
+    // With tax in, the ratio is taken BEFORE GST, which is 5% up to a 7,500
+    // tariff and 18% above it -- the same as repricing.before_gst() and
+    // guest_sees(). Scaling with-tax prices across the slab wrote a rate
+    // a thousand rupees over the hotel being followed.
+    const GST_LIMIT = 7500, GST_LOW = 0.05, GST_HIGH = 0.18;
+    function beforeGst(guest) {
+      if (guest <= GST_LIMIT * (1 + GST_LOW)) return guest / (1 + GST_LOW);
+      return Math.max(guest / (1 + GST_HIGH), GST_LIMIT);
+    }
     function toRms(box, price, cur, our) {
-      const raw = price * cur / our;
-      if (box.dataset.exact === "1" || edited(box)) return Math.floor(raw);
-      return Math.round(raw / roundTo) * roundTo;
+      const withTax = box.dataset.withTax === "1";
+      const target = withTax ? beforeGst(price) : price;
+      const ours = withTax ? beforeGst(our) : our;
+      const raw = target * cur / ours;
+      const exact = box.dataset.exact === "1" || edited(box);
+      let rate = exact ? Math.floor(raw) : Math.round(raw / roundTo) * roundTo;
+      if (withTax && target <= GST_LIMIT) {
+        const most = Math.floor(GST_LIMIT * cur / ours);
+        if (rate > most) rate = exact || roundTo <= 1 ? most : Math.floor(most / roundTo) * roundTo;
+      }
+      return rate;
+    }
+    function guestSees(box, amount, cur, our) {
+      if (box.dataset.withTax !== "1") return amount * our / cur;
+      const preTax = amount * beforeGst(our) / cur;
+      return preTax * (1 + (preTax <= GST_LIMIT ? GST_LOW : GST_HIGH));
     }
     function refresh(box) {
       const row = box.closest("tr");
@@ -396,7 +419,7 @@
         const cur = Number(box.dataset.cur);
         if (cur && valid && our) {
           const amount = toRms(box, price, cur, our);
-          siteNew.textContent = rupees(Math.round(amount * our / cur));
+          siteNew.textContent = rupees(Math.round(guestSees(box, amount, cur, our)));
         } else {
           siteNew.textContent = "—";
         }
