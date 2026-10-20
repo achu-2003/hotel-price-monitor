@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -112,6 +112,10 @@ def main() -> int:
                         help="How far back to look for price changes (default 14).")
     parser.add_argument("--messages", type=int, default=6,
                         help="How many recent WhatsApp messages to look up (default 6).")
+    parser.add_argument("--on", type=date.fromisoformat, metavar="YYYY-MM-DD",
+                        help="Look up that day's WhatsApp messages (IST) instead of the "
+                             "latest ones -- e.g. to see whether another hotel failed "
+                             "the same day.")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -243,18 +247,25 @@ def main() -> int:
                               f"{latest.status.value}, {latest.offers_found} offers, "
                               f"{latest.changes_detected} changes{err}")
 
-            last = session.execute(
+            query = (
                 select(Notification, Recipient)
                 .outerjoin(Recipient, Recipient.id == Notification.recipient_id)
                 .where(Notification.hotel_id == hotel.id,
                        Notification.channel == "whatsapp")
                 .order_by(Notification.created_at.desc())
                 .limit(args.messages)
-            ).all()
+            )
+            if args.on:
+                start = datetime.combine(args.on, time.min, tzinfo=ZoneInfo(settings.timezone))
+                query = query.where(Notification.created_at >= start,
+                                    Notification.created_at < start + timedelta(days=1))
+            last = session.execute(query).all()
             if not last:
-                print("  No WhatsApp notification has ever been written for this hotel")
+                print("  No WhatsApp notification for this hotel"
+                      + (f" on {args.on}" if args.on else " has ever been written"))
             else:
-                print("  Latest WhatsApp messages (ours -> what Sales Daddy says now):")
+                print(f"  WhatsApp messages{f' on {args.on}' if args.on else ''}, "
+                      "newest first (ours -> what Sales Daddy says now):")
             for n, r in last:
                 who = r.name if r else f"recipient {n.recipient_id}"
                 tail = f"...{r.phone_e164[-4:]}" if r and r.phone_e164 else "no phone"
