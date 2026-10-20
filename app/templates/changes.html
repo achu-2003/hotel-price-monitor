@@ -37,6 +37,10 @@
     <input type="date" name="date_to" value="{{ date_to }}">
   </label>
   <button type="submit">Filter</button>
+  <a class="btn btn-export"
+     href="/changes/export?hours={{ hours }}{% if hotel_id %}&hotel_id={{ hotel_id }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}">
+    ↓ Download Excel
+  </a>
   {% if date_from or date_to %}
   <a class="btn-link" href="/changes{{ '?hotel_id=%d'|format(hotel_id) if hotel_id else '' }}">Clear dates</a>
   <span class="muted">Showing exact dates, so the window above is ignored.</span>

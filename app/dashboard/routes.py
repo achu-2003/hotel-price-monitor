@@ -2129,10 +2129,164 @@ async def changes_page(
     if user is None:
         return _redirect_to_login(request)
 
-    tz = ZoneInfo(get_settings().timezone)
     from_date = _parse_date(date_from)
     to_date = _parse_date(date_to)
+    rows = await _changes_rows(session, user, hotel_id, hours, from_date, to_date, limit=300)
+    hotels = (
+        await session.scalars(
+            select(Hotel)
+            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
+            .order_by(Hotel.name)
+        )
+    ).all()
 
+    return await _render(
+        request, user, session, "changes.html",
+        changes=rows, hotels=hotels, hotel_id=hotel_id, hours=hours,
+        date_from=from_date.isoformat() if from_date else "",
+        date_to=to_date.isoformat() if to_date else "",
+        delivery=await _delivery_state(session, [row[0] for row in rows]),
+    )
+
+
+@router.get("/changes/export")
+async def changes_export(
+    request: Request,
+    user: DashUser,
+    session: DbSession,
+    hotel_id: BlankableInt = None,
+    hours: int = Query(default=48, ge=1, le=720),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Download every confirmed change in the page's window as an Excel file.
+
+    Same filters as the page, but with no row limit and every meal plan, one
+    change per row. Prices and deltas are written as numbers, not text, so
+    the sheet can be sorted, filtered and summed.
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    if user is None:
+        return _redirect_to_login(request)
+
+    from_date = _parse_date(date_from)
+    to_date = _parse_date(date_to)
+    rows = await _changes_rows(
+        session, user, hotel_id, hours, from_date, to_date, limit=None, every_board=True
+    )
+    delivery = await _delivery_state(session, [row[0] for row in rows])
+    tz = ZoneInfo(get_settings().timezone)
+
+    def local(moment):
+        # Excel has no timezone; write the wall-clock time the page shows.
+        return moment.astimezone(tz).replace(tzinfo=None) if moment else None
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Price Changes"
+    ws.freeze_panes = "A2"
+
+    headers = [
+        ("Price moved", 17), ("Confirmed", 17), ("Hotel", 28), ("Room", 32),
+        ("Meal plan", 18), ("Check-in", 12), ("Check-out", 12), ("Compared", 14),
+        ("Was", 12), ("Now", 12), ("Change", 12), ("Change %", 10),
+        ("Direction", 16), ("Currency", 9), ("Alert", 16),
+    ]
+    hdr_font = Font(bold=True, color="FFFFFF")
+    hdr_fill = PatternFill("solid", fgColor="1F3864")
+    up_font = Font(color="B42318")
+    down_font = Font(color="067647")
+    for col, (label, width) in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=col, value=label)
+        c.font = hdr_font
+        c.fill = hdr_fill
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    directions = {
+        "increase": "up", "decrease": "down",
+        "became_unavailable": "sold out", "became_available": "back on sale",
+    }
+    for r, (change, hotel_name, room_name, check_in, check_out, meal_plan, _) in enumerate(
+        rows, start=2
+    ):
+        direction = getattr(change.direction, "value", str(change.direction))
+        signed = None
+        if change.delta is not None:
+            signed = -abs(change.delta) if direction == "decrease" else abs(change.delta)
+        pct = None
+        if change.delta_pct is not None:
+            pct = (-abs(change.delta_pct) if direction == "decrease" else abs(change.delta_pct)) / 100
+        values = [
+            local(change.first_seen_at or change.changed_at),
+            local(change.changed_at),
+            hotel_name,
+            room_name or "",
+            meal_plan or "",
+            check_in,
+            check_out,
+            "vs last night" if change.previous_offer_key else "same night",
+            change.old_price,
+            None if direction == "became_unavailable" else change.new_price,
+            signed,
+            pct,
+            directions.get(direction, direction),
+            change.currency,
+            delivery.get(change.id, ("",))[0],
+        ]
+        for col, value in enumerate(values, start=1):
+            ws.cell(row=r, column=col, value=value)
+        for col in (1, 2):
+            ws.cell(row=r, column=col).number_format = "dd mmm yyyy hh:mm"
+        for col in (6, 7):
+            ws.cell(row=r, column=col).number_format = "dd mmm yyyy"
+        for col in (9, 10, 11):
+            ws.cell(row=r, column=col).number_format = "#,##0.00"
+        ws.cell(row=r, column=12).number_format = "0.0%"
+        if direction in ("increase", "decrease"):
+            font = up_font if direction == "increase" else down_font
+            ws.cell(row=r, column=11).font = font
+            ws.cell(row=r, column=12).font = font
+
+    if rows:
+        ws.auto_filter.ref = ws.dimensions
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    if from_date or to_date:
+        span = f"{from_date or 'start'}-to-{to_date or 'today'}"
+    else:
+        span = f"last-{hours}h" if hours < 168 else f"last-{hours // 24}d"
+    fname = f"price-changes-{span}.xlsx"
+    if hotel_id:
+        hotel_obj = await session.get(Hotel, hotel_id)
+        if hotel_obj:
+            slug = "-".join(hotel_obj.name.lower().split())
+            fname = f"price-changes-{slug}-{span}.xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+async def _changes_rows(
+    session, user, hotel_id, hours, from_date, to_date, *, limit, every_board=False
+):
+    """The Changes page's rows, shared with its Excel export so the two never disagree.
+
+    ``limit=None`` returns the whole window -- the export's job is every row,
+    where the page stops at what a screen can usefully show. ``every_board``
+    keeps all of a room's meal plans: the spreadsheet prints the plan in its
+    own column, so three rows there read as three prices, not as a repeat.
+    """
+    tz = ZoneInfo(get_settings().timezone)
     statement = scope_hotels(
         select(PriceChange, Hotel.name, RoomType.name, PriceSeries.check_in,
                PriceSeries.check_out, PriceSeries.meal_plan, PriceSeries.room_type_id)
@@ -2141,7 +2295,6 @@ async def changes_page(
         .outerjoin(RoomType, PriceSeries.room_type_id == RoomType.id),
         user,
     )
-
     if from_date or to_date:
         # Dates are read in the hotel's timezone, not the server's. A person
         # asking for "19 Aug" means their 19 Aug, and the stored timestamps are
@@ -2161,11 +2314,12 @@ async def changes_page(
     if hotel_id is not None:
         statement = statement.where(PriceChange.hotel_id == hotel_id)
 
-    rows = (
-        await session.execute(
-            statement.order_by(PriceChange.changed_at.desc()).limit(300)
-        )
-    ).all()
+    statement = statement.order_by(PriceChange.changed_at.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    rows = (await session.execute(statement)).all()
+    if every_board:
+        return rows
     # ONE ROW PER ROOM, NOT PER RATE PLAN.
     #
     # A reprice moves a room's three boards together and writes three changes,
@@ -2177,24 +2331,9 @@ async def changes_page(
     # Collapsed after the query, not in it: the limit is on the changes, so
     # narrowing it to one board in SQL would silently shorten the window a
     # busy hotel can look back over.
-    rows = room_moves.one_per_room(
+    return room_moves.one_per_room(
         (((row[0].hotel_id, row[6]), row[5], row) for row in rows),
         board=await session.scalar(repricing_data.pinned_board_stmt(user.id)),
-    )
-    hotels = (
-        await session.scalars(
-            select(Hotel)
-            .where(Hotel.is_active.is_(True), Hotel.owner_user_id == user.id)
-            .order_by(Hotel.name)
-        )
-    ).all()
-
-    return await _render(
-        request, user, session, "changes.html",
-        changes=rows, hotels=hotels, hotel_id=hotel_id, hours=hours,
-        date_from=from_date.isoformat() if from_date else "",
-        date_to=to_date.isoformat() if to_date else "",
-        delivery=await _delivery_state(session, [row[0] for row in rows]),
     )
 
 
