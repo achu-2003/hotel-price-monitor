@@ -74,7 +74,10 @@ def world(monkeypatch):
     monkeypatch.setattr(task, "local_today", lambda tz: TONIGHT)
     monkeypatch.setattr(task, "sync_session", lambda: _Session(w.owners))
     monkeypatch.setattr(task, "compute", lambda s, o, ci, co: (w.proposals, None, {DELUXE: object()}))
-    monkeypatch.setattr(task, "_last_market", lambda s, o, night: w.last)
+    monkeypatch.setattr(task, "_last_market", lambda s, o, night, *a, **k: w.last)
+    monkeypatch.setattr(task, "settings_for",
+                        lambda s, o: SimpleNamespace(auto_enabled=True, channel="Booking.com"))
+    monkeypatch.setattr(task, "extra_lanes", lambda s, o: [])
     monkeypatch.setattr(task.run_repricing, "apply_async",
                         lambda args, kwargs=None, queue=None: queued.append((args, kwargs, queue)))
     return w

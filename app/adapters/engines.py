@@ -214,7 +214,9 @@ class EngineProfile:
         if not self.external_id_pattern:
             return None
         match = re.search(self.external_id_pattern, url)
-        return match.group(1) if match else None
+        # A pattern may offer alternatives, one group each, for sites that
+        # hand out the same property under two URL shapes. Whichever matched.
+        return next((g for g in match.groups() if g), None) if match else None
 
 
 #: One entry per engine that has been probed and verified end to end.
@@ -380,7 +382,13 @@ ENGINES: tuple[EngineProfile, ...] = (
         # hand out /en-in/<slug>/hotel/ as readily as /<slug>/hotel/, and a
         # pattern that only matched the bare form silently produced no
         # external_id for half the URLs an operator would paste.
-        external_id_pattern=r"agoda\.com/(?:[a-z]{2}-[a-z]{2}/)?([^/]+)/hotel/",
+        #
+        # So is the /accom/property?propertyId= form, which is what Agoda's
+        # own share and "copy link" hand out (ASG's and Sterling's both came
+        # that way). The slug pattern found nothing in it, and the property
+        # was attached with no id at all.
+        external_id_pattern=(r"agoda\.com/(?:[a-z]{2}-[a-z]{2}/)?"
+                             r"(?:([^/?]+)/hotel/|accom/property\?(?:[^#]*&)?propertyId=(\d+))"),
         notes="OTA fallback, ToS review required. Room names are marketing "
               "copy and meal plans are usually absent, so anything sourced "
               "here is second-class -- prefer the hotel's own engine.",

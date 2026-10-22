@@ -2835,7 +2835,9 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     check_out = check_in + timedelta(days=1)
     proposals = []
     if own:
-        rows = await _priced_rows(session, user, check_in, check_out, 2)
+        # Our side from the main channel's own site, as the worker reads it.
+        rows = repricing_data.lane_rows(await _priced_rows(session, user, check_in, check_out, 2),
+                                        own.id, repricing_data.main_lane(settings))
         enabled = {rt for rt, m in mappings.items() if m.is_enabled}
         own_rule = repricing_rule.Rule.from_row(settings)
         # The same statement the worker runs, so the page cannot show a
@@ -2957,6 +2959,61 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
 
     other_channels = [c for c in (settings.known_channels or []) if c != settings.channel]
 
+    # ── the same follow on other channels (Agoda, Goibibo) ──
+    # Each rule's proposals by the worker's own steps: the lane's rows, the
+    # lane's benchmark, the same propose(). What a section shows is what its
+    # Apply would compute.
+    channel_rules = (await session.scalars(repricing_data.channel_rules_stmt(user.id))).all()
+    lanes = []
+    if own:
+        all_rows = await _priced_rows(session, user, check_in, check_out, 2)
+        bench_row = ((await session.execute(
+            repricing_data.benchmark_stmt(user.id, settings.benchmark_hotel_id)
+        )).first() if settings.benchmark_hotel_id else None)
+        previous_rows = ((await session.execute(
+            repricing_data.previous_readings_stmt(bench_row.id, check_in, check_out)
+        )).all() if bench_row else [])
+        since = check_in - timedelta(days=repricing_rule.HISTORY_NIGHTS)
+        for rule_row in channel_rules:
+            lane = repricing_data.extra_lane(rule_row)
+            lane_benchmark = repricing_data.with_previous(
+                repricing_data.lane_benchmark(bench_row, lane), previous_rows)
+            lane_proposals = repricing_rule.propose(
+                repricing_data.lane_rows(all_rows, own.id, lane), own_hotel_id=own.id,
+                rule=repricing_rule.Rule.from_row(settings),
+                room_type_ids={rt for rt, m in mappings.items() if m.is_enabled} or None,
+                night=check_in, benchmark=lane_benchmark,
+                moved_today=set(await session.scalars(
+                    repricing_data.moved_stmt(user.id, check_in, lane.channel, main=False))),
+            ) if lane_benchmark is not None else []
+            # The names to pair with, as this site writes them: ours and the
+            # benchmark's, from what it has shown over the last fortnight.
+            async def names_on_site(hotel_id: int) -> list[str]:
+                return list((await session.scalars(
+                    select(RoomType.name).join(PriceSeries, PriceSeries.room_type_id == RoomType.id)
+                    .where(RoomType.hotel_id == hotel_id, PriceSeries.source_id == lane.source_id,
+                           PriceSeries.check_in >= since)
+                    .distinct().order_by(RoomType.name)
+                )).all())
+            lane_by_room = {p.room_type_id: p for p in lane_proposals}
+            lane_ratio: dict[tuple, object] = {}
+            for a in readings:
+                if (a.status != "applied" or a.current_rms is None or a.channel != lane.channel
+                        or (a.rms_room, a.rms_rate_type) in lane_ratio):
+                    continue
+                p = lane_by_room.get(a.room_type_id)
+                if p is not None and p.our_price is not None and a.our_price == p.our_price:
+                    lane_ratio[(a.rms_room, a.rms_rate_type)] = a.current_rms
+            lanes.append(SimpleNamespace(
+                rule=rule_row, lane=lane, proposals=lane_proposals, ratio_base=lane_ratio,
+                our_names=await names_on_site(own.id),
+                their_names=await names_on_site(bench_row.id) if bench_row else [],
+            ))
+    lane_sources = (await session.scalars(
+        select(Source).where(Source.is_enabled.is_(True)).order_by(Source.display_name)
+    )).all()
+    unruled_channels = [c for c in other_channels if c not in {r.channel for r in channel_rules}]
+
     # The model's latest opinion per room for tonight. SHOWN, NEVER USED:
     # nothing on this page or in the run reads it back into a proposal.
     advice: dict[int, RepricingAdvice] = {}
@@ -2999,6 +3056,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
         check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms, other_channels=other_channels,
+        lanes=lanes, lane_sources=lane_sources, unruled_channels=unruled_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
         last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
     )

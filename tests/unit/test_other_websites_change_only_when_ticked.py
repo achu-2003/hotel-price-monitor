@@ -106,7 +106,7 @@ def run(monkeypatch):
 
     def go(grid: FakeGrid, mode: str, *, channels=None, skip=None, floor=None,
            preview_channels=None):
-        settings = SimpleNamespace(channel=MAIN, round_to=10, known_channels=[],
+        settings = SimpleNamespace(channel=MAIN, round_to=10, known_channels=[], auto_enabled=True,
                                    benchmark_meal_plan=None)
         app = SimpleNamespace(login_url="x", client_number="1", username="u", encrypted_password="p",
                               encrypted_session_state=None)

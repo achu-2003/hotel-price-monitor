@@ -83,6 +83,16 @@ class GridError(Exception):
     """The grid did not look the way the route expects. The message says where."""
 
 
+class RateTypeMissing(GridError):
+    """The room is under the channel, but this rate type is not.
+
+    Not every channel sells every plan: under Agoda, ASG's CLASSIC has CP
+    and MAP rows and no EP, where Booking.com has all three. That is a fact
+    about the channel, not a broken grid, and the caller can carry on with
+    the plans that are there.
+    """
+
+
 def _settle(page, *, expect_text: str | None = None, seconds: float = _ROUTE_SECONDS) -> bool:
     """Wait for the network to go quiet and, if asked, for words to appear.
 
@@ -267,7 +277,7 @@ def _cell(page, *, channel: str, room: str, rate_type: str, day_index: int):
     rate_row = _row_named(room_row, 3, rate_type)
     if rate_row is None:
         listed = ", ".join(_direct_names(room_row, 3)) or "no rate types"
-        raise GridError(f"under {channel} / {room} the rate types are {listed}, not {rate_type}")
+        raise RateTypeMissing(f"under {channel} / {room} the rate types are {listed}, not {rate_type}")
     cell = rate_row.locator(f".gridCell[index='{day_index}'] .cell-wrapper").first
     if not cell.count():
         raise GridError(f"the {room} / {rate_type} row has no cell for day {day_index + 1}")

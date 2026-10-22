@@ -653,6 +653,83 @@
     });
   });
 
+  // -- another website's rule (Agoda, Goibibo) -------------------------
+  //
+  // Its Preview and Apply start the same job as the buttons above, named
+  // for one channel, and poll the same status. Nothing typed or ticked in
+  // the Booking.com table rides along: the request carries the channel and
+  // the mode, and the worker does that channel alone.
+  document.querySelectorAll("form.lane-run-form").forEach(function (form) {
+    const buttons = Array.from(form.querySelectorAll("button.run"));
+    const status = form.querySelector(".form-status");
+    const endpoint = form.dataset.endpoint;
+    let polling = null;
+    function note(text, cls) {
+      status.hidden = !text;
+      status.className = "form-status " + (cls || "");
+      status.textContent = text || "";
+    }
+    function finish(state) {
+      if (polling) { clearInterval(polling); polling = null; }
+      buttons.forEach(function (b) { b.disabled = false; });
+      if (state && state.status === "done") {
+        note(state.message || "Done.", state.ok ? "ok" : "error");
+        setTimeout(function () { window.location.reload(); }, 2500);
+      }
+    }
+    function apply(state) {
+      if (!state) { finish(null); return; }
+      if (state.status === "running") { note(state.message || "Working…"); return; }
+      finish(state);
+    }
+    async function poll() {
+      const result = await api(endpoint + "/status", "GET");
+      if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
+      apply(result.body);
+    }
+    buttons.forEach(function (button) {
+      button.addEventListener("click", async function () {
+        if (button.dataset.confirm && !window.confirm(button.dataset.confirm)) return;
+        buttons.forEach(function (b) { b.disabled = true; });
+        note("Signing in to the rate application…");
+        const result = await api(endpoint, "POST", { mode: button.dataset.mode, channel: form.dataset.channel });
+        if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
+        apply(result.body);
+        if (!polling) polling = setInterval(poll, 2000);
+      });
+    });
+  });
+
+  // Which room of ours is which on that website, and which of theirs it
+  // competes with. The selects are the interface; the hidden JSON field is
+  // what the form posts, rebuilt on every change so the two cannot drift.
+  document.querySelectorAll("form.lane-form").forEach(function (form) {
+    const field = form.querySelector('input[name="room_pairs"]');
+    const selects = Array.from(form.querySelectorAll("select.lane-pair"));
+    function sync() {
+      const map = {};
+      selects.forEach(function (sel) {
+        if (!sel.value) return;
+        const id = sel.dataset.roomTypeId;
+        (map[id] = map[id] || {})[sel.dataset.side] = sel.value;
+      });
+      field.value = JSON.stringify(map);
+    }
+    selects.forEach(function (sel) { sel.addEventListener("change", sync); });
+    sync();
+  });
+
+  // Adding one: the channel is part of the address, so the form's endpoint
+  // follows the box.
+  document.querySelectorAll("form.lane-add").forEach(function (form) {
+    const box = form.querySelector(".lane-add-channel");
+    const base = form.dataset.endpoint;
+    function aim() { form.dataset.endpoint = base + encodeURIComponent((box.value || "").trim()); }
+    box.addEventListener("change", aim);
+    box.addEventListener("input", aim);
+    aim();
+  });
+
   // -- manual run, with polling --------------------------------------
   document.querySelectorAll("button.run-now").forEach(function (button) {
     button.addEventListener("click", async function () {

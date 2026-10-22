@@ -17,15 +17,16 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DbSession, record_audit
+from app.api.deps import CurrentUser, DbSession, get_object_or_404, record_audit
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import (
-    Hotel, RateApplication, RepricingAction, RepricingSettings, RmsRoomMapping, RoomType,
+    Hotel, RateApplication, RepricingAction, RepricingChannelRule, RepricingSettings,
+    RmsRoomMapping, RoomType, Source,
 )
 from app.schemas.repricing import (
-    AutomaticIn, MappingIn, MappingOut, RepricingSettingsIn, RepricingSettingsOut,
-    RunIn, RunStatus,
+    AutomaticIn, ChannelRuleIn, ChannelRuleOut, MappingIn, MappingOut, RepricingSettingsIn,
+    RepricingSettingsOut, RunIn, RunStatus,
 )
 
 router = APIRouter(prefix="/repricing", tags=["repricing"])
@@ -55,6 +56,7 @@ def _settings_out(row: RepricingSettings) -> RepricingSettingsOut:
         benchmark_with_tax=row.benchmark_with_tax,
         benchmark_meal_plan=row.benchmark_meal_plan,
         benchmark_room_pairs={int(k): v for k, v in (row.benchmark_room_pairs or {}).items()},
+        source_id=row.source_id,
         updated_at=row.updated_at,
     )
 
@@ -98,6 +100,8 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
     """
     if payload.benchmark_hotel_id is not None:
         await _own_competitor(session, user, payload.benchmark_hotel_id)
+    if payload.source_id is not None:
+        await get_object_or_404(session, Source, payload.source_id, "Source")
     for room_type_id in payload.benchmark_room_pairs:
         # Same reason as the benchmark hotel: an id taken on trust would let
         # one account point its rule at another's room.
@@ -106,6 +110,8 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
     before = _settings_out(row).model_dump(mode="json", exclude={"updated_at"})
     for field, value in payload.model_dump().items():
         if field == "auto_enabled" and value is None:
+            continue
+        if field == "source_id" and field not in payload.model_fields_set:
             continue
         # JSONB keys are strings on the way in; the rule coerces on the way out.
         if field == "benchmark_room_pairs":
@@ -154,6 +160,112 @@ async def _own_room(session, user, room_type_id: int) -> RoomType:
     if room is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "That room is not one of your own property's.")
     return room
+
+
+# -- the same follow on another channel (Agoda, Goibibo) ----------------
+def _rule_out(row: RepricingChannelRule) -> ChannelRuleOut:
+    return ChannelRuleOut(
+        channel=row.channel, source_id=row.source_id, auto_enabled=row.auto_enabled,
+        benchmark_undercut=row.benchmark_undercut, benchmark_with_tax=row.benchmark_with_tax,
+        benchmark_meal_plan=row.benchmark_meal_plan,
+        room_pairs={int(k): v for k, v in (row.room_pairs or {}).items() if isinstance(v, dict)},
+        updated_at=row.updated_at,
+    )
+
+
+async def _rule(session, user, channel: str) -> RepricingChannelRule:
+    row = await session.scalar(select(RepricingChannelRule).where(
+        RepricingChannelRule.owner_user_id == user.id, RepricingChannelRule.channel == channel,
+    ))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No rule is saved for {channel}.")
+    return row
+
+
+@router.get("/channels", response_model=list[ChannelRuleOut])
+async def list_channel_rules(session: DbSession, user: CurrentUser):
+    rows = (await session.scalars(
+        select(RepricingChannelRule).where(RepricingChannelRule.owner_user_id == user.id)
+        .order_by(RepricingChannelRule.channel)
+    )).all()
+    return [_rule_out(r) for r in rows]
+
+
+@router.put("/channels/{channel}", response_model=ChannelRuleOut)
+async def put_channel_rule(channel: str, payload: ChannelRuleIn, request: Request,
+                           session: DbSession, user: CurrentUser):
+    """Follow the benchmark on ``channel`` too, priced off ``source_id``. Creates or replaces.
+
+    THE MAIN CHANNEL IS NOT ONE OF THESE. Booking.com's rule lives in the
+    settings row, and a second rule for it here would be two rules writing
+    the same RMS row on two different sums.
+    """
+    channel = " ".join(channel.split())
+    if not channel or len(channel) > 120:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name the RMS channel.")
+    settings = await _settings(session, user)
+    if channel.lower() == (settings.channel or "").lower():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{channel} is the main channel; its rule is the one above, not a channel rule.",
+        )
+    await get_object_or_404(session, Source, payload.source_id, "Source")
+    for room_type_id in payload.room_pairs:
+        await _own_room(session, user, room_type_id)
+
+    row = await session.scalar(select(RepricingChannelRule).where(
+        RepricingChannelRule.owner_user_id == user.id, RepricingChannelRule.channel == channel,
+    ))
+    before = None
+    if row is None:
+        row = RepricingChannelRule(owner_user_id=user.id, channel=channel, source_id=payload.source_id)
+        session.add(row)
+    else:
+        before = _rule_out(row).model_dump(mode="json", exclude={"updated_at"})
+    row.source_id = payload.source_id
+    row.benchmark_undercut = payload.benchmark_undercut
+    row.benchmark_with_tax = payload.benchmark_with_tax
+    row.benchmark_meal_plan = payload.benchmark_meal_plan or None
+    # JSONB keys are strings on the way in; a pair with neither side set
+    # says nothing and is not kept.
+    row.room_pairs = {
+        str(k): v.model_dump() for k, v in payload.room_pairs.items() if v.ours or v.theirs
+    }
+    await record_audit(
+        session, user=user, action="update" if before else "create", entity="repricing_channel_rule",
+        entity_id=user.id, before=before, after={"channel": channel, **payload.model_dump(mode="json")},
+        request=request,
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _rule_out(row)
+
+
+@router.put("/channels/{channel}/automatic", response_model=ChannelRuleOut)
+async def set_channel_automatic(channel: str, payload: AutomaticIn, request: Request,
+                                session: DbSession, user: CurrentUser):
+    """This channel's own automatic switch. See ``set_automatic``: the same
+    deliberate act, sent alone and audited alone."""
+    row = await _rule(session, user, " ".join(channel.split()))
+    row.auto_enabled = payload.enabled
+    await record_audit(
+        session, user=user, action="update", entity="repricing_channel_rule", entity_id=user.id,
+        before=None, after={"channel": row.channel, "auto_enabled": payload.enabled}, request=request,
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _rule_out(row)
+
+
+@router.delete("/channels/{channel}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_channel_rule(channel: str, request: Request, session: DbSession, user: CurrentUser):
+    row = await _rule(session, user, " ".join(channel.split()))
+    await record_audit(
+        session, user=user, action="delete", entity="repricing_channel_rule", entity_id=user.id,
+        before=_rule_out(row).model_dump(mode="json"), request=request,
+    )
+    await session.delete(row)
+    await session.commit()
 
 
 @router.put("/mappings/{room_type_id}", response_model=MappingOut)
@@ -236,6 +348,14 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
                 "That room is not mapped to an RMS row, so there is nothing to write for it.",
             )
 
+    # ANOTHER CHANNEL'S SECTION: that channel's rule, and only it. Checked
+    # here so a stale page names the missing rule instead of the worker
+    # reporting it a minute later.
+    settings = await _settings(session, user)
+    lane = None
+    if payload.channel and payload.channel != settings.channel:
+        lane = (await _rule(session, user, payload.channel)).channel
+
     current = state.read(user.id, KIND)
     if current and current.get("status") == "running":
         return _run_out(current)
@@ -248,6 +368,7 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
             "only_room_type_id": payload.only_room_type_id,
             "channels": {str(k): {c: str(r) for c, r in v.items()} for k, v in payload.channels.items()},
             "skip_primary": payload.skip_primary,
+            "channel": lane,
         },
         request=request,
     )
@@ -256,6 +377,8 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
     # "now do the next room" for a repeat of the room just done. See
     # tasks_repricing.run_repricing.
     scope = f"room:{payload.only_room_type_id}" if payload.only_room_type_id else "all"
+    if lane:
+        scope = f"channel:{lane}|{scope}"
     started = state.write(user.id, "running", KIND, message="Queued…", mode=payload.mode, scope=scope)
     # Celery's JSON turns int keys into strings anyway; send them that way.
     overrides = {str(k): str(v) for k, v in payload.overrides.items()}
@@ -267,8 +390,12 @@ async def start_run(payload: RunIn, request: Request, session: DbSession, user: 
     # ...and on a Preview, the channels to READ beyond the rule's own, which
     # is none unless asked. See RunIn.preview_channels.
     preview = payload.preview_channels if payload.mode == "dry_run" else []
+    if lane:
+        # The main channel's typed prices and ticks are not this section's.
+        overrides, channels, skip, preview = {}, {}, [], []
     run_repricing.apply_async(
         args=[user.id, payload.mode, overrides, payload.only_room_type_id, channels, skip, preview],
+        kwargs={"channel": lane} if lane else {},
         queue="browser",
     )
     return _run_out(started)

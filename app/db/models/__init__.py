@@ -38,6 +38,7 @@ from app.db.models.repricing import (
     PLANS,
     RepricingAction,
     RepricingAdvice,
+    RepricingChannelRule,
     RepricingSettings,
     RmsRoomMapping,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "PLANS",
     "RepricingAction",
     "RepricingAdvice",
+    "RepricingChannelRule",
     "RepricingSettings",
     "RmsRoomMapping",
     "RateApplication",

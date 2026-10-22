@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric,
-    String, Text, func, text,
+    String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -119,6 +119,76 @@ class RepricingSettings(Base, TimestampMixin):
     benchmark_room_pairs: Mapped[dict] = mapped_column(
         JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb")
     )
+    #: The site ``channel``'s prices are read from: our price on it, and the
+    #: benchmark's on the same site. NULL -- rows from before this existed,
+    #: and the migration fills Booking.com's in -- takes our cheapest price on
+    #: any site, which was right only while our hotel was tracked on one.
+    #:
+    #: Once ASG was tracked on Agoda too, "our cheapest price" could be the
+    #: Agoda one, and the Booking.com row in RMS would have been scaled by
+    #: Agoda's discount. A channel's rate is worked out from that channel's
+    #: site and no other.
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class RepricingChannelRule(Base, TimestampMixin):
+    """The same follow on ANOTHER RMS channel, priced off that channel's site.
+
+    The owner's rule on Booking.com is "a hundred under Sterling on
+    Booking.com". On Agoda it is "a hundred under Sterling on Agoda", and the
+    two are not one number: on 21 Oct Sterling's Classic Room was 7,399 on
+    Booking.com and 3,685 on Agoda. So each extra channel has its own row:
+    which site to read, how far under, on which board, and which room of ours
+    competes with which of theirs THERE.
+
+    WHAT IS SHARED WITH :class:`RepricingSettings`, and not repeated here:
+    the hotel being followed, every limit (step, floor, ceiling, rounding)
+    and the RMS room mapping. One owner follows one hotel; the limits are
+    guard rails, not pricing; and RMS names the room rows the same under
+    every channel.
+
+    OFF BY DEFAULT, like the main switch. A new channel's first rates should
+    be ones somebody watched.
+    """
+
+    __tablename__ = "repricing_channel_rules"
+    __table_args__ = (UniqueConstraint("owner_user_id", "channel", name="uq_repricing_channel_rule"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The channel row in RMS's Room Rate Manager ("Agoda", "Goibibo").
+    channel: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: The booking site both prices are read from. A rule without one has
+    #: nothing to read, so deleting the site deletes the rule.
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
+    )
+    auto_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    benchmark_undercut: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("100"), nullable=False, server_default="100"
+    )
+    benchmark_with_tax: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    #: NULL by default, unlike Booking.com's: Agoda does not say which board
+    #: a price includes, so pinning one would leave nothing to compare.
+    benchmark_meal_plan: Mapped[str | None] = mapped_column(String(60))
+    #: ``{our room_type_id: {"ours": name on this site, "theirs": name}}``.
+    #:
+    #: "ours" because the site names OUR room too, and not always the way
+    #: Booking.com does: ASG's "Deluxe Double Room" is "Deluxe Room" on Agoda,
+    #: a different room type here, with no RMS mapping of its own. The key is
+    #: the mapped room -- the RMS rows to write -- and "ours" says which of
+    #: this site's rooms it is. Blank means the same name.
+    room_pairs: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb")
+    )
+
+    source = relationship("Source")
 
 
 class RmsRoomMapping(Base, TimestampMixin):

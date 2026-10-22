@@ -53,6 +53,11 @@ class RepricingSettingsIn(ORMModel):
     #: ``{our room_type_id: their room name}``. Every key is checked against
     #: the caller's own property in the route.
     benchmark_room_pairs: dict[int, str] = Field(default_factory=dict, max_length=50)
+    #: The site the main channel's prices are read from. OMITTED MEANS
+    #: "LEAVE IT ALONE", like ``auto_enabled``: this is a full replace, and
+    #: a caller written before the field existed must not reset it to "any
+    #: site" -- which is how Booking.com's rate would start following Agoda.
+    source_id: int | None = Field(default=None, gt=0)
 
     @field_validator("channel")
     @classmethod
@@ -61,6 +66,44 @@ class RepricingSettingsIn(ORMModel):
 
 
 class RepricingSettingsOut(RepricingSettingsIn):
+    updated_at: datetime | None = None
+
+
+class RoomPair(ORMModel):
+    """One mapped room of ours on another channel's site."""
+
+    #: Our room's name on that site, when it is not the room's own name
+    #: (ASG's "Deluxe Double Room" is "Deluxe Room" on Agoda). Blank: the same.
+    ours: str | None = Field(default=None, max_length=200)
+    #: The benchmark's room it competes with there. Blank: not paired.
+    theirs: str | None = Field(default=None, max_length=200)
+
+    @field_validator("ours", "theirs")
+    @classmethod
+    def _tidy(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return " ".join(value.split()) or None
+
+
+class ChannelRuleIn(ORMModel):
+    """The follow on one extra RMS channel. See ``RepricingChannelRule``.
+
+    No ``auto_enabled`` here for the same reason as the main rule: the switch
+    has its own route, so saving a gap can never turn rates loose.
+    """
+
+    source_id: int = Field(gt=0)
+    benchmark_undercut: Decimal = Field(default=Decimal("100"), ge=0, le=100000)
+    benchmark_with_tax: bool = True
+    benchmark_meal_plan: str | None = Field(default=None, max_length=60)
+    #: ``{our mapped room_type_id: {"ours": ..., "theirs": ...}}``.
+    room_pairs: dict[int, RoomPair] = Field(default_factory=dict, max_length=50)
+
+
+class ChannelRuleOut(ChannelRuleIn):
+    channel: str
+    auto_enabled: bool
     updated_at: datetime | None = None
 
 
@@ -120,6 +163,11 @@ class RunIn(ORMModel):
     channels: dict[int, dict[str, Decimal]] = Field(default_factory=dict, max_length=100)
     #: Rooms whose MAIN channel (Booking.com) the owner unticked: read, not written.
     skip_primary: list[int] = Field(default_factory=list, max_length=100)
+    #: An extra channel with a rule of its own (Agoda, Goibibo), to Preview
+    #: or Apply alone. ``None`` is the main channel. A run for one ignores
+    #: ``overrides``, ``channels`` and ``skip_primary``: those are the main
+    #: channel's section's, not this one's.
+    channel: str | None = Field(default=None, min_length=1, max_length=120)
 
     @field_validator("overrides")
     @classmethod
