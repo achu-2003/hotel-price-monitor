@@ -342,7 +342,14 @@ ENGINES: tuple[EngineProfile, ...] = (
             # pair arrives with one identity and one of them is dropped as a
             # collision -- which is the "shared an identity with another offer
             # AT A DIFFERENT PRICE" alert.
-            "rooms_filter": {"field": "isFit", "equals": True},
+            #
+            # But a rate Agoda prices ONLY for more guests (ASG's breakfast
+            # rate, sold as a 3-adult row) has no isFit row at all, so the
+            # smallest row that still holds the party stands in for it, per
+            # room and board. Migration 0035 adds this to attached listings.
+            "rooms_filter": {"field": "isFit", "equals": True,
+                             "fallback": {"group_by": ["name", "isBreakfastIncluded"],
+                                          "occupancy": "adults"}},
             # isFit settles occupancy. It does NOT settle supply: Agoda is a
             # marketplace and lists the same room once per supplier, at
             # different prices, with nothing in the offer identity to tell
@@ -375,6 +382,12 @@ ENGINES: tuple[EngineProfile, ...] = (
                 # one series is worse than either.
                 "price_exclusive": "perNightPrice.display",
                 "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+                # Agoda names no board, but says whether breakfast is in.
+                # Without it a room's breakfast and room-only rates were one
+                # offer and "cheapest" kept the room-only one, so a rule
+                # comparing on breakfast had no Agoda price to compare.
+                # Migration 0034 adds this to listings attached before it.
+                "breakfast_included": "isBreakfastIncluded",
             },
             "wait_timeout_ms": 45000,
         },

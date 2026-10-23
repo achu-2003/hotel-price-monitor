@@ -318,7 +318,8 @@ class PlaywrightDirectSiteAdapter:
 
         # Rows for an occupancy nobody asked for are dropped BEFORE they are
         # mapped, so they cannot collide with the row that was asked for.
-        nodes = filter_rooms(nodes, config.get("rooms_filter"))
+        nodes = filter_rooms(nodes, config.get("rooms_filter"),
+                             params=booking_conditions(context))
 
         offers = [
             offer_from_mapping(node, mapping, default_currency=context.currency,

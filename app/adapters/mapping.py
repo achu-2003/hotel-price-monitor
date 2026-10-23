@@ -25,6 +25,7 @@ from typing import Any
 from app.adapters.base import NormalizedOffer
 from app.adapters.parsing import MIN_PLAUSIBLE_PRICE, parse_price
 from app.core.errors import SchemaDriftError
+from app.services import meal_plan
 
 MISSING = object()
 
@@ -197,7 +198,8 @@ def _select(current: Any, selector: re.Match, params, default, path: str) -> Any
     return _MISS
 
 
-def filter_rooms(nodes: list, spec: dict | None) -> list:
+def filter_rooms(nodes: list, spec: dict | None,
+                 params: dict[str, Any] | None = None) -> list:
     """Drop rows a source returns that are not the row we asked for.
 
     WHY A SOURCE RETURNS ROWS YOU DID NOT ASK FOR
@@ -224,6 +226,26 @@ def filter_rooms(nodes: list, spec: dict | None) -> list:
     :func:`_select` is: JSON carries ``true`` and a config carries ``"true"``,
     and a filter that stopped working because someone quoted a boolean is not
     a filter.
+
+    WHEN THE ONLY RATE FOR A BOARD IS PRICED FOR MORE GUESTS
+    ========================================================
+    ``fallback`` covers a rate that has no row at the searched occupancy at
+    all. ASG Holiday Resorts, 23 Oct 2026, a 2-adult search::
+
+        Deluxe Family Room   2 adults   room only   4,369   isFit=true
+        Deluxe Family Room   3 adults   breakfast   5,194   isFit=false
+
+    The breakfast rate exists only as the 3-adult row, so the filter dropped
+    every breakfast rate for the room, and a rule comparing on breakfast
+    found nothing even though the listing shows breakfast to a couple. That 3-adult
+    row is still a price two adults can book. So within each
+    ``fallback.group_by`` group that has no fitting row, the smallest
+    ``fallback.occupancy`` that still holds the searched adults is kept. A
+    group that has a fitting row is unchanged, and a row too small for the
+    party is never kept::
+
+        "fallback": {"group_by": ["name", "isBreakfastIncluded"],
+                     "occupancy": "adults"}
     """
     if not spec or not isinstance(spec, dict):
         return nodes
@@ -239,17 +261,56 @@ def filter_rooms(nodes: list, spec: dict | None) -> list:
         return nodes
 
     target = str(wanted).strip().lower()
-    kept = [
-        node for node in nodes
-        if isinstance(node, dict)
-        and (str(node.get(field)).strip().lower() == target) is keep_when_equal
-    ]
+
+    def passes(node: Any) -> bool:
+        return (isinstance(node, dict)
+                and (str(node.get(field)).strip().lower() == target) is keep_when_equal)
+
+    kept = [node for node in nodes if passes(node)]
+    kept += _smallest_that_holds_the_party(nodes, passes, spec.get("fallback"), params)
+    chosen = {id(node) for node in kept}
+    kept = [node for node in nodes if id(node) in chosen]  # in the source's order
 
     # A filter that removes everything is a filter that has gone stale -- the
     # field was renamed, or the source stopped publishing it. Keeping the
     # unfiltered rows lets the collision alert fire and name the problem,
     # which beats reporting a sell-out the site never declared.
     return kept or nodes
+
+
+def _smallest_that_holds_the_party(nodes: list, passes, fallback: Any,
+                                   params: dict[str, Any] | None) -> list:
+    """The rows :func:`filter_rooms` keeps for groups with no fitting row."""
+    if not isinstance(fallback, dict) or not fallback.get("occupancy"):
+        return []
+    adults = _as_int((params or {}).get("adults"))
+    if adults is None:
+        return []
+    group_by = fallback.get("group_by") or []
+
+    groups: dict[tuple, list] = {}
+    for node in nodes:
+        if isinstance(node, dict):
+            key = tuple(str(node.get(g)).strip().lower() for g in group_by)
+            groups.setdefault(key, []).append(node)
+
+    out: list = []
+    for rows in groups.values():
+        if any(passes(r) for r in rows):
+            continue
+        sized = [(n, r) for r in rows
+                 if (n := _as_int(r.get(fallback["occupancy"]))) is not None and n >= adults]
+        if sized:
+            smallest = min(n for n, _ in sized)
+            out += [r for n, r in sized if n == smallest]
+    return out
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def dedupe_offers(offers: list, keep: str | None) -> list:
@@ -442,6 +503,10 @@ def offer_from_mapping(
     ``taxes_fees``      the tax component
     ``currency``        ISO code, if the payload carries one
     ``meal_plan``       "Room Only", "Breakfast Included", ...
+    ``breakfast_included``  truthy/falsy field, for a source that says
+                        only whether breakfast is in -- read as
+                        "Breakfast" or "Room Only" when ``meal_plan``
+                        gives nothing
     ``refundable``      truthy/falsy field
     ``available``       truthy/falsy field
     ``rooms_left``      urgency counter, informational only
@@ -500,6 +565,19 @@ def offer_from_mapping(
         if mapping.get("refundable") else None
     )
 
+    board = _clean(
+        dig(node, mapping["meal_plan"], None, params=params)
+        if mapping.get("meal_plan") else None
+    )
+    # A FLAG, NOT A LABEL. Agoda prints no board name, only
+    # isBreakfastIncluded, and without reading it the breakfast and room-only
+    # rates of one room shared an identity and "cheapest" kept the room-only
+    # one -- so a rule pinned to breakfast had nothing to compare on Agoda.
+    if board is None and mapping.get("breakfast_included"):
+        flag = dig(node, mapping["breakfast_included"], None, params=params)
+        if flag is not None:
+            board = meal_plan.BREAKFAST if _truthy(flag) else meal_plan.ROOM_ONLY
+
     return NormalizedOffer(
         raw_room_name=str(raw_name).strip(),
         price_inclusive=inclusive,
@@ -510,10 +588,7 @@ def offer_from_mapping(
              if mapping.get("currency")
              else default_currency) or default_currency
         )[:3].upper(),
-        meal_plan=_clean(
-            dig(node, mapping["meal_plan"], None, params=params)
-            if mapping.get("meal_plan") else None
-        ),
+        meal_plan=board,
         refundable=None if refundable_raw is None else _truthy(refundable_raw),
         is_available=available,
         rooms_left=rooms_left,

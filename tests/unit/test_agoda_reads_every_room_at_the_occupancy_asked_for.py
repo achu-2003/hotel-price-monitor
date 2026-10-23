@@ -77,6 +77,13 @@ MULTI_SUPPLIER = json.loads(
     .read_text(encoding="utf-8")
 )
 
+#: ASG Holiday Resorts, 23 Oct 2026, 2 adults: the breakfast rates for Deluxe
+#: Family Room exist only as 3-adult rows (isFit=false).
+ASG = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "agoda_room_grid_asg_2026-10-23.json")
+    .read_text(encoding="utf-8")
+)
+
 LISTING = "https://www.agoda.com/ananthyam-resort-by-anukulas/hotel/yelagiri-in.html"
 
 #: Read off the live grid for a 2-adult search: the "Max 2 adults" row of each
@@ -112,7 +119,7 @@ def _offers(payload=None, dedupe: bool = True):
     """The adapter's whole JSON path: locate, filter, map, dedupe."""
     config = _profile().adapter_config
     nodes = dig(payload if payload is not None else PAYLOAD, config["rooms_path"], None)
-    nodes = filter_rooms(nodes, config["rooms_filter"])
+    nodes = filter_rooms(nodes, config["rooms_filter"], params=booking_conditions(_context()))
     offers = [
         offer_from_mapping(n, config["fields"], default_currency="INR",
                            params=booking_conditions(_context()))
@@ -187,6 +194,41 @@ class TestTheFilterItself:
         assert filter_rooms(rows, {"field": "wasRenamed", "equals": True}) == rows
 
 
+class TestARatePricedOnlyForMoreGuests:
+    """ASG's Agoda breakfast rate is a 3-adult row with no 2-adult twin.
+
+    The listing shows that rate to a couple, but the isFit filter dropped it,
+    so a rule comparing on breakfast found nothing for ASG and was handed the
+    room-only rate instead.
+    """
+
+    def _got(self):
+        return {(o.raw_room_name, o.meal_plan): float(o.price_exclusive) for o in _offers(ASG)}
+
+    def test_the_breakfast_rate_is_kept_from_the_three_adult_row(self):
+        assert self._got()[("Deluxe Family Room", "Breakfast")] == 5194.28
+
+    def test_the_cheapest_breakfast_plan_wins_over_breakfast_and_dinner(self):
+        """The 7,230 row has breakfast AND dinner; both read as breakfast."""
+        assert 7230.62 not in self._got().values()
+
+    def test_a_board_with_a_two_adult_row_still_uses_it(self):
+        """The 3-adult room-only 4,875 must not displace the 2-adult 4,369."""
+        assert self._got()[("Deluxe Family Room", "Room Only")] == 4368.98
+        assert 4874.82 not in self._got().values()
+
+    def test_a_row_too_small_for_the_party_is_never_kept(self):
+        """Honeymoon Suite and Luxury Villa are priced for one adult."""
+        names = {name for name, _ in self._got()}
+        assert "Honeymoon Suite - Non-Smoking" not in names
+        assert "Luxury Villa" not in names
+
+    def test_without_the_searched_adults_nothing_falls_back(self):
+        config = _profile().adapter_config
+        nodes = dig(ASG, config["rooms_path"], None)
+        assert filter_rooms(nodes, config["rooms_filter"]) == [n for n in nodes if n["isFit"]]
+
+
 class TestTheProfileIsWiredForAnOta:
     def test_agoda_is_recognised(self):
         assert _profile().key == "agoda"
@@ -209,7 +251,9 @@ class TestOneRoomSoldBySeveralSuppliers:
 
     Agoda is a marketplace: the same room at the same occupancy comes back once
     per supplier, and the cheaper of the pair is the one that INCLUDES
-    breakfast -- so no meal_plan or refundable selector separates them either.
+    breakfast. Agoda prints no board name, but isBreakfastIncluded does tell
+    these pairs apart, so it is read as the board (fields.breakfast_included)
+    and ``cheapest`` is left to settle suppliers selling the SAME board.
     """
 
     def test_the_payload_really_does_repeat_a_room(self):
@@ -227,17 +271,27 @@ class TestOneRoomSoldBySeveralSuppliers:
         cheap = min(deluxe, key=lambda r: r["pricePopupViewModel"]["agodaPrice"])
         assert cheap["isBreakfastIncluded"] is True
 
-    def test_every_room_is_reported_once(self):
-        names = [o.raw_room_name for o in _offers(MULTI_SUPPLIER)]
-        assert len(names) == len(set(names)) == 4
+    def test_every_room_is_reported_once_per_board(self):
+        """isBreakfastIncluded is what told these rows apart all along: read as
+        the board, each room arrives once as each rate a guest can choose."""
+        keys = [(o.raw_room_name, o.meal_plan) for o in _offers(MULTI_SUPPLIER)]
+        assert len(keys) == len(set(keys)) == 7
+        assert {o.raw_room_name for o in _offers(MULTI_SUPPLIER)} == {
+            "Deluxe", "Superior", "Villa with Garden View", "Family Room"}
 
-    def test_the_cheapest_supplier_wins(self):
-        got = {o.raw_room_name: int(o.price_exclusive) for o in _offers(MULTI_SUPPLIER)}
+    def test_breakfast_and_room_only_keep_their_own_price(self):
+        """Before the board was read, "cheapest" kept one of each pair and a
+        rule comparing on breakfast was handed the room-only 7,650 for Family
+        Room. Now a comparison on either board finds its own rate."""
+        got = {(o.raw_room_name, o.meal_plan): int(o.price_exclusive) for o in _offers(MULTI_SUPPLIER)}
         assert got == {
-            "Deluxe": 4950,              # not the 5,500 second supplier
-            "Superior": 6750,            # not 7,500
-            "Villa with Garden View": 7650,
-            "Family Room": 7650,         # not 11,700
+            ("Deluxe", "Breakfast"): 4950,
+            ("Deluxe", "Room Only"): 5500,
+            ("Superior", "Breakfast"): 6750,
+            ("Superior", "Room Only"): 7500,
+            ("Villa with Garden View", "Breakfast"): 7650,
+            ("Family Room", "Breakfast"): 11700,
+            ("Family Room", "Room Only"): 7650,
         }
 
     def test_without_dedupe_the_pipeline_would_see_a_collision(self):

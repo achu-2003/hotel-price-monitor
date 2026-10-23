@@ -1,0 +1,391 @@
+{
+ "roomGridData": {
+  "masterRooms": [
+   {
+    "name": "Deluxe Family Room",
+    "rooms": [
+     {
+      "name": "Deluxe Family Room",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 4368.98,
+       "crossedOut": 4725.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 4605.23,
+       "crossedOut": 4961.25,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Deluxe Family Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 5194.28,
+       "crossedOut": 5600.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5474.28,
+       "crossedOut": 5880.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Deluxe Family Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 4874.82,
+       "crossedOut": 5250.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5137.32,
+       "crossedOut": 5512.5,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Deluxe Family Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 7230.62,
+       "crossedOut": 7700.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 8616.62,
+       "crossedOut": 9086.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     }
+    ]
+   },
+   {
+    "name": "Standard Double Room",
+    "rooms": [
+     {
+      "name": "Standard Double Room",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 4972.15,
+       "crossedOut": 8229.42,
+       "extraBed": 0.0,
+       "couponCrossedOut": 5355.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5239.9,
+       "crossedOut": 9875.31,
+       "extraBed": 0.0,
+       "couponCrossedOut": 5355.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Standard Double Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 5525.42,
+       "crossedOut": 8229.42,
+       "extraBed": 0.0,
+       "couponCrossedOut": 5950.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 5822.92,
+       "crossedOut": 9875.31,
+       "extraBed": 0.0,
+       "couponCrossedOut": 5950.0
+      },
+      "supplierId": 3038
+     }
+    ]
+   },
+   {
+    "name": "Deluxe Room",
+    "rooms": [
+     {
+      "name": "Deluxe Room",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 6106.71,
+       "crossedOut": 10649.87,
+       "extraBed": 787.5,
+       "couponCrossedOut": 6800.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 6446.71,
+       "crossedOut": 12779.84,
+       "extraBed": 0.0,
+       "couponCrossedOut": 6800.0
+      },
+      "supplierId": 332
+     }
+    ]
+   },
+   {
+    "name": "Suite Room",
+    "rooms": [
+     {
+      "name": "Suite Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 8505.75,
+       "crossedOut": 9900.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 9350.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 10188.75,
+       "crossedOut": 11583.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 9350.0
+      },
+      "supplierId": 332
+     }
+    ]
+   },
+   {
+    "name": "Junior Suite",
+    "rooms": [
+     {
+      "name": "Junior Suite",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 8555.8,
+       "crossedOut": 9100.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 10193.8,
+       "crossedOut": 10738.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Junior Suite",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 10598.01,
+       "crossedOut": 11284.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 12629.13,
+       "crossedOut": 13315.12,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Junior Suite",
+      "isFit": true,
+      "adults": 2,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 11833.11,
+       "crossedOut": 12600.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 14101.11,
+       "crossedOut": 14868.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     }
+    ]
+   },
+   {
+    "name": "Superior King Room",
+    "rooms": [
+     {
+      "name": "Superior King Room",
+      "isFit": false,
+      "adults": 3,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 9871.33,
+       "crossedOut": 10500.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 11761.33,
+       "crossedOut": 12390.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 0.0
+      },
+      "supplierId": 3038
+     }
+    ]
+   },
+   {
+    "name": "Family Suite",
+    "rooms": [
+     {
+      "name": "Family Suite",
+      "isFit": false,
+      "adults": 6,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 9871.33,
+       "crossedOut": 12457.18,
+       "extraBed": 0.0,
+       "couponCrossedOut": 10500.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 11761.33,
+       "crossedOut": 14948.61,
+       "extraBed": 0.0,
+       "couponCrossedOut": 10500.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Family Suite",
+      "isFit": false,
+      "adults": 6,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 11174.87,
+       "crossedOut": 12457.18,
+       "extraBed": 0.0,
+       "couponCrossedOut": 11900.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 13316.87,
+       "crossedOut": 14948.61,
+       "extraBed": 0.0,
+       "couponCrossedOut": 11900.0
+      },
+      "supplierId": 3038
+     },
+     {
+      "name": "Family Suite",
+      "isFit": false,
+      "adults": 6,
+      "isBreakfastIncluded": true,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 13147.07,
+       "crossedOut": 0.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 14000.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 15667.07,
+       "crossedOut": 0.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 14000.0
+      },
+      "supplierId": 3038
+     }
+    ]
+   },
+   {
+    "name": "Honeymoon Suite - Non-Smoking",
+    "rooms": [
+     {
+      "name": "Honeymoon Suite - Non-Smoking",
+      "isFit": false,
+      "adults": 1,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 9279.01,
+       "crossedOut": 10800.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 10200.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 11115.01,
+       "crossedOut": 12636.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 10200.0
+      },
+      "supplierId": 332
+     }
+    ]
+   },
+   {
+    "name": "Luxury Villa",
+    "rooms": [
+     {
+      "name": "Luxury Villa",
+      "isFit": false,
+      "adults": 1,
+      "isBreakfastIncluded": false,
+      "quantity": 1,
+      "perNightPrice": {
+       "display": 10052.26,
+       "crossedOut": 0.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 11050.0
+      },
+      "inclusivePriceWithoutExtraBed": {
+       "display": 12041.26,
+       "crossedOut": 0.0,
+       "extraBed": 0.0,
+       "couponCrossedOut": 11050.0
+      },
+      "supplierId": 332
+     }
+    ]
+   }
+  ]
+ }
+}
