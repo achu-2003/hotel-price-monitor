@@ -325,6 +325,7 @@
     // start the same job and must be disabled by the same busy() -- two
     // runs at once is one browser fighting itself over the same grid.
     const roomButtons = Array.from(document.querySelectorAll("button.apply-room"));
+    const laneRoomButtons = Array.from(document.querySelectorAll("button.apply-lane-room"));
     const status = form.querySelector(".form-status");
     const endpoint = form.dataset.endpoint;
     const roundTo = Number(form.dataset.roundTo) || 1;
@@ -462,7 +463,9 @@
     // ticked; the others are written only when ticked. A channel's box
     // holds the RMS rate to write: filled in with the share the guest
     // price moves by (Goibibo 9,000 and the price -10% makes 8,100) until
-    // the owner types in it, after which it is theirs and stays put.
+    // the owner types in it, after which it is theirs and stays put. A
+    // channel with a rule of its own (Agoda) arrives filled with that rule's
+    // rate and keeps it: Booking.com's share says nothing about Agoda.
     function channelRow(id) {
       return document.querySelector('tr.channels-row[data-room-type-id="' + id + '"]');
     }
@@ -490,7 +493,7 @@
       const share = our && typed > 0 ? typed / our : 1;
       row.querySelectorAll("input.channel-rate").forEach(function (rate) {
         const cur = Number(rate.dataset.cur);
-        if (!rate.dataset.touched) rate.value = Math.round((cur * share) / roundTo) * roundTo;
+        if (!rate.dataset.touched && !rate.dataset.ownRule) rate.value = Math.round((cur * share) / roundTo) * roundTo;
         noteChannel(rate, box);
       });
     }
@@ -517,7 +520,7 @@
         const main = row.querySelector("input.pick-main");
         if (main && !main.checked) {
           skip.push(Number(id));
-          lines.push("  " + name + ": " + main.parentElement.querySelector("strong").textContent + " left as it is");
+          lines.push("  " + name + ": " + main.parentElement.querySelector("strong, button.view-channel").textContent + " left as it is");
         }
         row.querySelectorAll("input.pick-channel:checked").forEach(function (pick) {
           const rate = pick.parentElement.querySelector("input.channel-rate");
@@ -561,7 +564,7 @@
     }
     function busy(on) {
       buttons.forEach(function (b) { b.disabled = on; });
-      roomButtons.forEach(function (b) {
+      roomButtons.concat(laneRoomButtons).forEach(function (b) {
         // Never re-enable a button the template disabled for its own reason
         // (no login saved, no price of ours tonight).
         if (on) { b.disabled = true; } else if (b.dataset.lockedOff !== "1") { b.disabled = false; }
@@ -622,6 +625,22 @@
       });
     });
 
+    // -- one room on another website's rule -----------------------------
+    //
+    // The row a website's name swaps in under a room has its own Apply: that
+    // website's rule, that room, nothing else. The rule's price only -- a
+    // channel run takes no typed price.
+    laneRoomButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        const ch = button.dataset.channel;
+        start(
+          { mode: "manual", channel: ch, only_room_type_id: Number(button.dataset.roomTypeId) },
+          "Set " + button.dataset.room + " on " + ch + " to " + rupees(Number(button.dataset.price))
+            + " in RMS now?\n\nOnly " + ch + "'s row for this room is written. Booking.com and every other room are not touched."
+        );
+      });
+    });
+
     buttons.forEach(function (button) {
       button.addEventListener("click", async function () {
         const changes = overrides();
@@ -650,6 +669,26 @@
         apply(result.body);
         polling = setInterval(poll, 2000);
       }
+    });
+  });
+
+  // -- which website a room's row shows --------------------------------
+  //
+  // Clicking a website's name under a room shows that room's row from the
+  // website's own rule in place of the Booking.com one. Only the view moves:
+  // the name is a button inside the tick's label, so it does not tick, and
+  // what Apply writes is still decided by the boxes.
+  document.querySelectorAll("button.view-channel").forEach(function (button) {
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      const id = button.dataset.roomTypeId;
+      const want = button.dataset.view;
+      document.querySelectorAll('tr.room-view[data-room-type-id="' + id + '"]').forEach(function (row) {
+        row.hidden = row.dataset.view !== want;
+      });
+      document.querySelectorAll('button.view-channel[data-room-type-id="' + id + '"]').forEach(function (b) {
+        b.classList.toggle("on", b.dataset.view === want);
+      });
     });
   });
 

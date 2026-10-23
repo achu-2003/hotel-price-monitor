@@ -878,8 +878,17 @@ def _run(owner_user_id: int, mode: str = "manual",
                                 plan=anchor, rate_type=anchor_row, current_rms=current[anchor], reason=str(exc))
                         continue
                     # The owner's rupee floor and ceiling are RMS numbers: checked
-                    # here, on the RMS number, and a breach holds the whole room.
-                    outside = rule.rms_bounds(new_anchor, floor=m.floor_amount, ceiling=m.ceiling_amount)
+                    # here, on the RMS number. The rule's number is moved onto
+                    # the bound (see rule.within_rms_bounds); a typed one past
+                    # it holds the whole room.
+                    outside = None
+                    if p.room_type_id in typed:
+                        outside = rule.rms_bounds(new_anchor, floor=m.floor_amount, ceiling=m.ceiling_amount)
+                    else:
+                        new_anchor, bounded = rule.within_rms_bounds(
+                            new_anchor, floor=m.floor_amount, ceiling=m.ceiling_amount)
+                        if bounded:
+                            p = replace(p, capped="; ".join(filter(None, (p.capped, bounded))))
                     if outside:
                         _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode, status="held",
                                 plan=anchor, rate_type=anchor_row, current_rms=current[anchor],
@@ -1083,6 +1092,15 @@ def _run(owner_user_id: int, mode: str = "manual",
         return state.write(owner_user_id, "done", KIND, scope=scope, ok=False, message=f"Could not sign in: {probe.message}")
     if outcome.get("error"):
         return state.write(owner_user_id, "done", KIND, scope=scope, ok=False, message=outcome["error"])
+    # on_grid sets "day" only once it has walked every job. Without it the
+    # step raised part-way, and the login reported that in its message while
+    # still counting as a good login -- which read here as "Would set 0
+    # rate(s)", a clean run that had in fact never reached a cell.
+    if "day" not in outcome:
+        log.warning("repricing_grid_step_failed", owner_user_id=owner_user_id, mode=mode, message=probe.message)
+        return state.write(owner_user_id, "done", KIND, scope=scope, ok=False,
+                           applied=outcome["applied"], failed=outcome["failed"],
+                           message=f"Could not finish in the rate application: {probe.message}")
     verb = "Would set" if dry else "Set"
     summary = (
         f"{verb} {len(outcome['lines'])} rate(s) for {outcome.get('day', 'today')}"

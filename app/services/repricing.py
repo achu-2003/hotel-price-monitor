@@ -1144,3 +1144,27 @@ def rms_bounds(amount: Decimal, *, floor: Decimal | None, ceiling: Decimal | Non
     if ceiling is not None and amount > ceiling:
         return f"above this room's RMS ceiling of {ceiling:,.0f}"
     return None
+
+
+def within_rms_bounds(amount: Decimal, *, floor: Decimal | None,
+                      ceiling: Decimal | None) -> tuple[Decimal, str | None]:
+    """The RULE's RMS rate, moved onto the owner's floor or ceiling when past it.
+
+    Returns ``(amount, note)``; ``note`` is ``None`` when nothing moved.
+
+    A FLOOR IS "NEVER BELOW", NOT "NEVER MOVE". Holding instead left the cell
+    where it was: on 23 Oct the rule wanted Goibibo's CLASSIC EP at 5,369
+    against a floor of 5,700, and the hold kept it at 7,500 -- further from
+    the market than the owner allows, on account of a limit meant to stop it
+    going too far the other way. The nearest rate the owner permits is the
+    floor itself.
+
+    Only for the rule's own number. A price the owner TYPES past their own
+    bound is more likely a slip than an instruction, so that one is still
+    held through :func:`rms_bounds` and they are told.
+    """
+    if floor is not None and amount < floor:
+        return floor, f"raised to this room's RMS floor of {floor:,.0f} (the rule wanted {amount:,.0f})"
+    if ceiling is not None and amount > ceiling:
+        return ceiling, f"lowered to this room's RMS ceiling of {ceiling:,.0f} (the rule wanted {amount:,.0f})"
+    return amount, None

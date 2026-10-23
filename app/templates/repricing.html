@@ -43,6 +43,92 @@
   </div>
 </div>
 
+{#
+  ONE ROOM ON ANOTHER WEBSITE'S RULE (Agoda, Goibibo).
+  The cells of a lane's row, worked out once and drawn in two places: the
+  website's own section at the bottom of the page, and the room's row at the
+  top when the owner clicks that website's name under it. ``full`` is the
+  top table's layout -- tier, competitors and a per-room Apply as well.
+#}
+{% macro lane_cells(L, p, full=false) %}
+  {% set r = L.rule %}
+  {% set m = mappings.get(p.room_type_id) %}
+  {#- The sum is the route's (_lane_rms), so this row, the section's and the
+      box beside the website's tick cannot disagree. -#}
+  {% set ns = L.rms[p.room_type_id] %}
+  {% set anchor = ns.anchor %}
+  <td class="room"><strong>{{ p.room_name }}</strong>
+    {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
+    {% if full %}<br><span class="tag channel-tag">on {{ r.channel }}</span>{% endif %}</td>
+  {% if full %}<td>{{ p.tier_label }}</td>{% endif %}
+  <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
+  <td class="num market">
+    {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
+    {% if p.benchmark_entry %}
+      <br><span class="muted">{{ p.benchmark_entry.room }}</span>
+      <br><span class="muted">− {{ money(r.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
+    {% endif %}
+  </td>
+  {% if full %}
+  <td class="competitors">
+    {% if p.competitors %}
+      <details>
+        <summary>{{ p.competitors|length }} hotel{{ 's' if p.competitors|length != 1 }} on {{ r.channel }}{% if p.benchmark %} — not used{% endif %}</summary>
+        <ul class="plain">
+        {% for c in p.competitors %}
+          <li><span class="num">{{ money(c.price) }}</span> <span class="who">{{ c.hotel }}{% if c.sold_out %} <em class="muted">sold out</em>{% endif %}<small class="muted">{{ c.room }}</small></span></li>
+        {% endfor %}
+        </ul>
+      </details>
+    {% else %}<span class="muted">none in this tier</span>{% endif %}
+  </td>
+  {% endif %}
+  <td class="num proposed">
+    {% if ns.settled %}<span class="muted">no change</span>
+    {% elif p.target is not none %}<strong>{{ money(p.target) }}</strong>
+      {% if p.change_pct is not none %}<br><span class="muted">{{ '%+.1f'|format(p.change_pct) }}%</span>{% endif %}
+      {% if p.wanted is not none and p.wanted != p.target %}<br><span class="muted">rule's own target {{ money(p.wanted) }}, limited by the {{ settings.max_step_pct|float|round|int }}% step</span>{% endif %}
+    {% else %}—{% endif %}
+    {#- This room on this website alone: the same job as the section's Apply,
+        narrowed to one room. Nothing typed or ticked for Booking.com rides
+        along -- the worker drops it for a channel run. -#}
+    {% if full and m and m.is_enabled and p.our_price and p.target is not none and not ns.settled %}
+      <br><button type="button" class="apply-lane-room"
+              data-room-type-id="{{ p.room_type_id }}" data-room="{{ p.room_name }}"
+              data-channel="{{ r.channel }}" data-price="{{ p.target|int }}"
+              {% if not has_rate_app %}disabled data-locked-off="1"{% endif %}>Apply this room on {{ r.channel }}</button>
+    {% endif %}
+  </td>
+  {% if full and not (benchmark is defined and benchmark) %}<td class="ai"></td>{% endif %}
+  <td class="num rms">
+    {% if ns.cur is not none %}
+      <span class="plan">{{ anchor }}</span>
+      {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
+      {% else %}{{ money(ns.cur) }} → <strong>{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}
+      {% if ns.bounded and not ns.settled %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
+      <br><span class="muted">the other plans keep today's supplement</span>
+    {% elif m %}<span class="muted">read the grid first (Preview)</span>
+    {% else %}—{% endif %}
+  </td>
+  <td class="num site">
+    {% if ns.cur and ns.rms_new is not none and p.our_price %}
+      <strong>{{ money(rule.guest_sees(ns.rms_new, p.our_price, ns.base, with_tax=p.with_tax)|round|int) }}</strong>
+      <br><span class="muted">on {{ r.channel }}{% if r.benchmark_with_tax %}, tax in{% endif %}</span>
+      {% if full and p.benchmark_entry %}<br><span class="muted">vs {{ p.benchmark }} {{ money(p.market) }}</span>{% endif %}
+    {% elif m %}<span class="muted">Preview to see</span>
+    {% else %}—{% endif %}
+  </td>
+  <td class="status">
+    {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
+    {% elif ns.settled %}<span class="tag settled">no change needed</span>
+      <span class="muted">already {{ money(r.benchmark_undercut) }} under {{ p.benchmark }}</span>
+    {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
+      <span class="muted">{{ money(p.short_by) }} short; {{ p.capped }}</span>
+      {% else %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
+    {% else %}—{% endif %}
+  </td>
+{% endmacro %}
+
 {% if not own %}
 <p class="panel">No hotel is marked as your own property yet. Mark one on its hotel page and come back.</p>
 {% else %}
@@ -92,7 +178,27 @@
     <tbody>
     {% for p in proposals %}
       {% set m = mappings.get(p.room_type_id) %}
-      <tr class="{{ 'held' if p.held else ('ok' if p.target is not none else '') }}">
+      {#
+        THE SAME ROOM ON ANOTHER WEBSITE. Each website with a rule of its own
+        (the sections at the bottom) gets a row here, hidden, drawn from that
+        rule: its prices, its benchmark, its RMS row. Clicking the website's
+        name under the room swaps it in for the Booking.com row; clicking
+        Booking.com swaps back. Only the view changes -- the tick beside each
+        name still decides what Apply writes, as before.
+      #}
+      {% set views = namespace(channels=[], own={}) %}
+      {% for L in (lanes if lanes is defined else []) %}
+        {% for lp in L.proposals if lp.room_type_id == p.room_type_id %}
+          {% set views.channels = views.channels + [L.rule.channel] %}
+          {% set views.own = dict(views.own, **{L.rule.channel: (L.rms[lp.room_type_id], lp, L.rule)}) %}
+          <tr class="room-view channel-view {{ 'held' if lp.held else ('ok' if lp.target is not none else '') }}"
+              data-room-type-id="{{ p.room_type_id }}" data-view="{{ L.rule.channel }}" hidden>
+            {{ lane_cells(L, lp, full=true) }}
+          </tr>
+        {% endfor %}
+      {% endfor %}
+      <tr class="room-view {{ 'held' if p.held else ('ok' if p.target is not none else '') }}"
+          data-room-type-id="{{ p.room_type_id }}" data-view="{{ settings.channel }}">
         <td class="room">
           <strong>{{ p.room_name }}</strong>
           {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
@@ -147,7 +253,7 @@
           room that is not mapped, or has no price of ours to take the
           ratio from, cannot be applied, so it gets no box.
         #}
-        {% set ns = namespace(cur=none, base=none, rms_new=none, outside=none, settled=false) %}
+        {% set ns = namespace(cur=none, base=none, rms_new=none, bounded=none, settled=false) %}
         {% if m and m.anchor_for(p.board or settings.benchmark_meal_plan) and (m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))) in latest_rms %}
           {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)))] %}
         {% endif %}
@@ -162,8 +268,9 @@
           {% set ns.base = ratio_base.get((m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))), ns.cur) if ratio_base is defined else ns.cur %}
         {% endif %}
         {% if ns.base is not none and p.target is not none and p.our_price %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact, with_tax=p.with_tax) %}
-          {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
+          {% set bounded = rule.within_rms_bounds(rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact, with_tax=p.with_tax), floor=m.floor_amount, ceiling=m.ceiling_amount) %}
+          {% set ns.rms_new = bounded[0] %}
+          {% set ns.bounded = bounded[1] %}
           {#
             NOTHING TO SAY WHEN THE FOLLOW HAS CAUGHT UP. Sitting a hundred
             under them, the rule recomputes the same rate every half hour and
@@ -260,6 +367,7 @@
               {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
               <span class="rms-new" hidden>{{ money(ns.rms_new) }}</span>
               {% else %}{{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}</span>
+            {% if ns.bounded and not ns.settled %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
             {#
               THE OTHER PLANS, WITH THEIR NUMBERS. Apply writes CLASSIC's EP
               and MAP as well as its CP -- it always did -- but the cell said
@@ -303,7 +411,6 @@
         </td>
         <td class="status">
           {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
-          {% elif ns.outside %}<span class="tag held">held</span> <span class="muted">{{ ns.outside }}</span>
           {#
             A CAPPED FOLLOW THAT LANDS ABOVE THE HOTEL IT FOLLOWS is still
             worth applying -- it is a move in the right direction -- but it
@@ -324,9 +431,19 @@
       {#
         WHICH WEBSITES CHANGE. The main channel is ticked, as it always was;
         every other channel RMS lists is unticked and is written ONLY if the
-        owner ticks it here. Its box holds the RMS rate to write -- filled in
-        with the same share the main channel moves by, and theirs to change.
-        A channel with no reading yet cannot be ticked: Preview reads them.
+        owner ticks it here. Its box holds the RMS rate to write, theirs to
+        change. A channel with no reading yet cannot be ticked: Preview reads
+        them.
+
+        WHAT THE BOX IS FILLED WITH. A website with a rule of its own (Agoda)
+        gets that rule's rate: Sterling's price ON AGODA less the gap, the
+        same number its own section proposes. Booking.com's share is the
+        wrong number there -- the two sites price Sterling differently, and
+        on 23 Oct carrying Booking.com's +28.5% across put ASG about 750
+        ABOVE Sterling on Agoda. A website with no rule of its own (Goibibo)
+        still gets the share the main channel moves by. Only when the rule
+        scales the same RMS row as this tick writes: otherwise the two
+        numbers are of different rows.
       #}
       {% if m and m.is_enabled and p.our_price and m.anchor_for(p.board or settings.benchmark_meal_plan) %}
       {% set anchor_row = m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)) %}
@@ -338,7 +455,9 @@
             <span class="channel-picks-label">Change in RMS:</span>
             <label class="channel-pick main">
               <input type="checkbox" class="pick-main" checked data-room-type-id="{{ p.room_type_id }}">
-              <strong>{{ settings.channel }}</strong>
+              {% if views.channels %}<button type="button" class="view-channel on" data-view="{{ settings.channel }}"
+                data-room-type-id="{{ p.room_type_id }}" title="Show this room's {{ settings.channel }} prices above">{{ settings.channel }}</button>
+              {% else %}<strong>{{ settings.channel }}</strong>{% endif %}
               <span class="muted">{{ m.rms_room }} › {{ anchor_row }}</span>
             </label>
             {% for ch in other_channels %}
@@ -346,13 +465,28 @@
               <label class="channel-pick{% if cur is none %} unread{% endif %}">
                 <input type="checkbox" class="pick-channel" data-channel="{{ ch }}"
                        data-room-type-id="{{ p.room_type_id }}" {% if cur is none %}disabled{% endif %}>
-                <strong>{{ ch }}</strong>
+                {% if ch in views.channels %}<button type="button" class="view-channel" data-view="{{ ch }}"
+                  data-room-type-id="{{ p.room_type_id }}" title="Show this room's {{ ch }} prices above">{{ ch }}</button>
+                {% else %}<strong>{{ ch }}</strong>{% endif %}
+                {% set own = views.own.get(ch) %}
+                {% set own_rate = none %}
+                {% if own and own[0].anchor and m.rate_type_for(own[0].anchor) == anchor_row %}
+                  {#- Held or already where it should be: the rule moves
+                      nothing, so neither does the tick. -#}
+                  {% set own_rate = own[0].rms_new if (own[0].rms_new is not none and not own[0].settled and own[1].target is not none) else cur %}
+                {% endif %}
                 {% if cur is not none %}
                   <span class="muted">{{ money(cur) }} →</span>
                   <input type="number" class="channel-rate" min="1" step="1" data-cur="{{ cur }}"
                          data-channel="{{ ch }}" aria-label="New {{ ch }} rate for {{ p.room_name }}"
-                         value="{{ cur|int }}">
+                         {% if own_rate is not none %}data-own-rule="1"{% endif %}
+                         value="{{ (own_rate if own_rate is not none else cur)|int }}">
                   <span class="muted channel-note"></span>
+                  {% if own_rate is not none %}
+                    <span class="muted own-rule">{% if own[1].held %}· {{ ch }}'s rule holds: {{ own[1].held }}
+                      {% elif own[0].settled %}· already {{ money(own[2].benchmark_undercut) }} under {{ own[1].benchmark }} on {{ ch }}
+                      {% else %}· {{ money(own[2].benchmark_undercut) }} under {{ own[1].benchmark }} on {{ ch }}{% endif %}</span>
+                  {% endif %}
                 {% else %}
                   <span class="muted">press Preview to read it</span>
                 {% endif %}
@@ -462,73 +596,8 @@
       </tr></thead>
       <tbody>
       {% for p in L.proposals %}
-        {% set m = mappings.get(p.room_type_id) %}
-        {#- The row the run scales: the mapped anchor where this channel has it,
-            otherwise the first plan it does sell (Agoda has no EP row for
-            CLASSIC). Read off what the last Preview found under the channel. -#}
-        {% set an = namespace(plan=m.anchor_for(p.board or r.benchmark_meal_plan) if m else none) %}
-        {% if m and an.plan and (r.channel, m.rms_room, m.rate_type_for(an.plan)) not in channel_rms %}
-          {% for plan in ("EP", "CP", "MAP") %}
-            {% if an.plan == m.anchor_for(p.board or r.benchmark_meal_plan) and m.rate_type_for(plan) and (r.channel, m.rms_room, m.rate_type_for(plan)) in channel_rms %}{% set an.plan = plan %}{% endif %}
-          {% endfor %}
-        {% endif %}
-        {% set anchor = an.plan %}
-        {% set ns = namespace(cur=none, base=none, rms_new=none, outside=none, settled=false) %}
-        {% if anchor and (r.channel, m.rms_room, m.rate_type_for(anchor)) in channel_rms %}
-          {% set ns.cur = channel_rms[(r.channel, m.rms_room, m.rate_type_for(anchor))] %}
-          {% set ns.base = L.ratio_base.get((m.rms_room, m.rate_type_for(anchor)), ns.cur) %}
-        {% endif %}
-        {% if ns.base is not none and p.target is not none and p.our_price %}
-          {% set ns.rms_new = rule.to_rms(p.target, p.our_price, ns.base, round_to=settings.round_to, exact=p.exact, with_tax=p.with_tax) %}
-          {% set ns.outside = rule.rms_bounds(ns.rms_new, floor=m.floor_amount, ceiling=m.ceiling_amount) %}
-        {% endif %}
-        {% if p.target is not none and p.our_price %}
-          {% set ns.settled = rule.settled(p.our_price, p.target, round_to=settings.round_to) %}
-        {% endif %}
         <tr class="{{ 'held' if p.held else ('ok' if p.target is not none else '') }}">
-          <td class="room"><strong>{{ p.room_name }}</strong>
-            {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}</td>
-          <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
-          <td class="num market">
-            {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
-            {% if p.benchmark_entry %}
-              <br><span class="muted">{{ p.benchmark_entry.room }}</span>
-              <br><span class="muted">− {{ money(r.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
-            {% endif %}
-          </td>
-          <td class="num proposed">
-            {% if ns.settled %}<span class="muted">no change</span>
-            {% elif p.target is not none %}<strong>{{ money(p.target) }}</strong>
-              {% if p.change_pct is not none %}<br><span class="muted">{{ '%+.1f'|format(p.change_pct) }}%</span>{% endif %}
-              {% if p.wanted is not none and p.wanted != p.target %}<br><span class="muted">rule's own target {{ money(p.wanted) }}, limited by the {{ settings.max_step_pct|float|round|int }}% step</span>{% endif %}
-            {% else %}—{% endif %}
-          </td>
-          <td class="num rms">
-            {% if ns.cur is not none %}
-              <span class="plan">{{ anchor }}</span>
-              {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
-              {% else %}{{ money(ns.cur) }} → <strong>{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}
-              <br><span class="muted">the other plans keep today's supplement</span>
-            {% elif m %}<span class="muted">read the grid first (Preview)</span>
-            {% else %}—{% endif %}
-          </td>
-          <td class="num site">
-            {% if ns.cur and ns.rms_new is not none and p.our_price %}
-              <strong>{{ money(rule.guest_sees(ns.rms_new, p.our_price, ns.base, with_tax=p.with_tax)|round|int) }}</strong>
-              <br><span class="muted">on {{ r.channel }}{% if r.benchmark_with_tax %}, tax in{% endif %}</span>
-            {% elif m %}<span class="muted">Preview to see</span>
-            {% else %}—{% endif %}
-          </td>
-          <td class="status">
-            {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
-            {% elif ns.outside %}<span class="tag held">held</span> <span class="muted">{{ ns.outside }}</span>
-            {% elif ns.settled %}<span class="tag settled">no change needed</span>
-              <span class="muted">already {{ money(r.benchmark_undercut) }} under {{ p.benchmark }}</span>
-            {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
-              <span class="muted">{{ money(p.short_by) }} short; {{ p.capped }}</span>
-              {% else %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
-            {% else %}—{% endif %}
-          </td>
+          {{ lane_cells(L, p) }}
         </tr>
       {% endfor %}
       </tbody>

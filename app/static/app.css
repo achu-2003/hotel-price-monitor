@@ -1934,6 +1934,18 @@ button.small { padding: 5px 12px; font-size: 13px; }
 .channel-pick.unread { opacity: .6; cursor: default; }
 .channel-pick input.channel-rate { width: 6.5em; padding: 2px 6px; text-align: right; font-weight: 600; }
 .channel-pick .channel-note { font-size: 12px; }
+/* A website's name under a room shows that room's prices on it in the row
+   above. A button inside the tick's label, so a click on the name looks and
+   a click on the box ticks. */
+.repricing-section .grid tr.room-view:not([hidden]) td { border-bottom: 0; }
+.channel-pick button.view-channel {
+  font: inherit; font-weight: 700; color: inherit; background: none; border: 0; padding: 0;
+  cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
+}
+.channel-pick button.view-channel.on { color: #fff; background: #19704F; border-radius: 4px; padding: 1px 6px; text-decoration: none; }
+.channel-pick.unread button.view-channel { opacity: 1; }
+.repricing-section .grid tr.channel-view td { background: #f3f8fc; }
+.channel-tag { background: #dcebf7; color: #1d4f7a; }
 /* Sold-out rooms in the band table are history, not offers: kept small so a
    hotel with seven full rooms does not make its row a screen tall. */
 .band-room.cell-soldout { padding: 3px 7px; margin-bottom: 3px; }

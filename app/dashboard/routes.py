@@ -3006,6 +3006,9 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                     lane_ratio[(a.rms_room, a.rms_rate_type)] = a.current_rms
             lanes.append(SimpleNamespace(
                 rule=rule_row, lane=lane, proposals=lane_proposals, ratio_base=lane_ratio,
+                rms={p.room_type_id: _lane_rms(rule_row, p, mappings.get(p.room_type_id), channel_rms,
+                                               lane_ratio, settings.round_to)
+                     for p in lane_proposals},
                 our_names=await names_on_site(own.id),
                 their_names=await names_on_site(bench_row.id) if bench_row else [],
             ))
@@ -3060,6 +3063,41 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         has_rate_app=app_row is not None, rule=repricing_rule,
         last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
     )
+
+
+def _lane_rms(rule_row, p, m, channel_rms, lane_ratio, round_to) -> SimpleNamespace:
+    """One room's RMS sum under another website's rule (Agoda, Goibibo).
+
+    Worked out here, once, because three places show it and they must agree:
+    the website's own section, the room's row when the owner switches it to
+    that website, and the box beside the website's tick -- which is the
+    number Apply writes. The box used to carry Booking.com's share instead,
+    and ticking Agoda wrote a rate that put ASG above Sterling ON AGODA.
+
+    ``anchor`` is the plan the run scales: the mapped anchor where the channel
+    has that row, otherwise the first plan it does sell (Agoda has no EP row
+    for CLASSIC), read off what the last Preview found under the channel.
+    """
+    out = SimpleNamespace(anchor=None, cur=None, base=None, rms_new=None, bounded=None, settled=False)
+    if m is None:
+        return out
+    channel = rule_row.channel
+    anchor = m.anchor_for(p.board or rule_row.benchmark_meal_plan)
+    if anchor and (channel, m.rms_room, m.rate_type_for(anchor)) not in channel_rms:
+        anchor = next((plan for plan in ("EP", "CP", "MAP") if m.rate_type_for(plan)
+                       and (channel, m.rms_room, m.rate_type_for(plan)) in channel_rms), anchor)
+    out.anchor = anchor
+    if anchor and (channel, m.rms_room, m.rate_type_for(anchor)) in channel_rms:
+        out.cur = channel_rms[(channel, m.rms_room, m.rate_type_for(anchor))]
+        out.base = lane_ratio.get((m.rms_room, m.rate_type_for(anchor)), out.cur)
+    if out.base is not None and p.target is not None and p.our_price:
+        out.rms_new, out.bounded = repricing_rule.within_rms_bounds(
+            repricing_rule.to_rms(p.target, p.our_price, out.base, round_to=round_to,
+                                  exact=p.exact, with_tax=p.with_tax),
+            floor=m.floor_amount, ceiling=m.ceiling_amount)
+    if p.target is not None and p.our_price:
+        out.settled = repricing_rule.settled(p.our_price, p.target, round_to=round_to)
+    return out
 
 
 @router.get("/settings", response_class=HTMLResponse)

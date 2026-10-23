@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.schemas.repricing import RunIn
 from app.services.repricing import (
     Rule, follow, guard, market_figure, override, propose, rms_bounds, to_rms, usual_gaps,
+    within_rms_bounds,
 )
 
 OURS = SimpleNamespace(id=9, name="AGS")
@@ -97,6 +98,16 @@ def test_the_rooms_rupee_floor_is_on_the_rms_number():
     assert rms_bounds(Decimal("6750"), floor=Decimal("7500"), ceiling=None) == "below this room's RMS floor of 7,500"
     assert rms_bounds(Decimal("7500"), floor=Decimal("7500"), ceiling=None) is None
     assert rms_bounds(Decimal("9100"), floor=None, ceiling=Decimal("9000")) == "above this room's RMS ceiling of 9,000"
+
+
+def test_the_rules_rate_past_a_rupee_bound_lands_on_it_instead_of_staying_put():
+    """Goibibo CLASSIC EP, 23 Oct: the rule wanted 5,369 under a 5,700 floor
+    and the cell held 7,500. The nearest rate the owner allows is 5,700."""
+    assert within_rms_bounds(Decimal("5369"), floor=Decimal("5700"), ceiling=None) == (
+        Decimal("5700"), "raised to this room's RMS floor of 5,700 (the rule wanted 5,369)")
+    assert within_rms_bounds(Decimal("9100"), floor=None, ceiling=Decimal("9000")) == (
+        Decimal("9000"), "lowered to this room's RMS ceiling of 9,000 (the rule wanted 9,100)")
+    assert within_rms_bounds(Decimal("6000"), floor=Decimal("5700"), ceiling=Decimal("9000")) == (Decimal("6000"), None)
 
 
 def test_a_typed_price_replaces_the_rules_and_skips_its_limits():
