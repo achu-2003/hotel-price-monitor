@@ -1,0 +1,2288 @@
+{
+  "owner": "ags@123",
+  "sources": {
+    "booking-mgm-hotels-com": {
+      "display_name": "booking.mgm-hotels.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "booking.mgm-hotels.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "www-booking-com": {
+      "display_name": "www.booking.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "www.booking.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "treebo": {
+      "display_name": "Treebo (brand site)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "treebo.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 3,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "hotelzify": {
+      "display_name": "Hotelzify booking engine",
+      "adapter_key": "hotelzify",
+      "base_domain": "booking.sterlingholidays.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "www-cleartrip-com": {
+      "display_name": "www.cleartrip.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "www.cleartrip.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "agoda": {
+      "display_name": "Agoda (OTA listing)",
+      "adapter_key": "playwright_ota",
+      "base_domain": "agoda.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-25",
+      "tos_reviewed_by": "ags",
+      "tos_notes": null
+    }
+  },
+  "hotels": [
+    {
+      "name": " Hotel Kumararraja Palace",
+      "slug": "hotel-kumararraja-palace",
+      "location": "Athanavoor, Kottur Road,, Athanavoor, Yelagiri,   ",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Standard Room Non-Air Conditioning",
+          "canonical_name": "air conditioning non standard",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe - Air Conditioning",
+          "canonical_name": "air conditioning deluxe",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Suite",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "hotel-kumararraja-palace",
+          "url": "https://www.agoda.com/hotel-kumararraja-palace/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&tspTypes=4&los=1&searchrequestid=5356d062-72cc-411f-98ba-66ee5f14b9b0&ds=xtsuFhOPmtC30BtL",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "budget_restored",
+              "last_attempt_at": null
+            },
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "air conditioning non standard",
+              "raw_name": "Standard Room Non-Air Conditioning",
+              "normalized_name": "air conditioning non standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "air conditioning deluxe",
+              "raw_name": "Deluxe - Air Conditioning",
+              "normalized_name": "air conditioning deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A R Thanga Kottai",
+      "slug": "a-r-thanga-kottai",
+      "location": "Kottur, Athanavur, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Club Room",
+          "canonical_name": "club",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Club Twin Room",
+          "canonical_name": "club twin",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room · Pool view",
+          "canonical_name": "deluxe pool view",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Twin Room",
+          "canonical_name": "deluxe twin",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Nandhavanam Room",
+          "canonical_name": "nandhavanam",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Palace Avenue Room · Pool view",
+          "canonical_name": "avenue palace pool view",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "Temple Street Suite with 1 Bedroom and 1 Living room · Courtyard",
+          "canonical_name": "1 1 bedroom courtyard living street suite temple",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        },
+        {
+          "name": "Anthapuram Suite with 1 Bedroom and Private Swimming Pool",
+          "canonical_name": "1 anthapuram bedroom pool private suite swimming",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": true
+        },
+        {
+          "name": "Anthapuram Suite with 2 Bedrooms and 1 Living room",
+          "canonical_name": "1 2 anthapuram bedrooms living suite",
+          "capacity": null,
+          "sort_order": 8,
+          "is_active": true
+        },
+        {
+          "name": "Anthapuram Suite with 2 Bedrooms, 1 Living room and Private Swimming Pool",
+          "canonical_name": "1 2 anthapuram bedrooms living pool private suite swimming",
+          "capacity": null,
+          "sort_order": 10,
+          "is_active": true
+        },
+        {
+          "name": "Club Room, 1 Double Bed",
+          "canonical_name": "1 bed club double",
+          "capacity": null,
+          "sort_order": 12,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room, 1 Double Bed · Pool view",
+          "canonical_name": "1 bed deluxe double pool view",
+          "capacity": null,
+          "sort_order": 13,
+          "is_active": true
+        },
+        {
+          "name": "Traditional Room, 1 Double Bed · Garden view",
+          "canonical_name": "1 bed double garden traditional view",
+          "capacity": null,
+          "sort_order": 14,
+          "is_active": true
+        },
+        {
+          "name": "Premium Room, 1 Double Bed · Pool view",
+          "canonical_name": "1 bed double pool premium view",
+          "capacity": null,
+          "sort_order": 15,
+          "is_active": true
+        },
+        {
+          "name": "Traditional House, 1 Double Bed",
+          "canonical_name": "1 bed double house traditional",
+          "capacity": null,
+          "sort_order": 16,
+          "is_active": true
+        },
+        {
+          "name": "Junior Suite, 1 Double Bed",
+          "canonical_name": "1 bed double junior suite",
+          "capacity": null,
+          "sort_order": 17,
+          "is_active": true
+        },
+        {
+          "name": "Premium Suite, 2 Double Beds",
+          "canonical_name": "2 beds double premium suite",
+          "capacity": null,
+          "sort_order": 18,
+          "is_active": true
+        },
+        {
+          "name": "Royal Suite, 2 Double Beds",
+          "canonical_name": "2 beds double royal suite",
+          "capacity": null,
+          "sort_order": 19,
+          "is_active": true
+        },
+        {
+          "name": "Traditional Duplex, 2 Double Beds",
+          "canonical_name": "2 beds double duplex traditional",
+          "capacity": null,
+          "sort_order": 20,
+          "is_active": true
+        },
+        {
+          "name": "Temple Street Suite with 2 Bedrooms and 1 Living room",
+          "canonical_name": "1 2 bedrooms living street suite temple",
+          "capacity": null,
+          "sort_order": 21,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-cleartrip-com",
+          "external_id": null,
+          "url": "https://www.cleartrip.com/hotels/details/-4534091?c={check_in:%d%m%y}|{check_out:%d%m%y}&city=null&state=null&country=null&r=2%2C0",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "div.iWfHoM.component-stacked-slots",
+            "room_card": "div.iWfHoM.component-stacked-slots",
+            "selectors": {
+              "price": "h5.hFFAkE.mr-1",
+              "room_name": "h4.hFFAkE"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T10:43:50.061661+00:00"
+            },
+            "standing_rate": true,
+            "discovery_note": "Auto-repaired 2026-09-24: 10 rooms, 8/8 prices confirmed against the page, 8 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "club",
+              "raw_name": "Club Room",
+              "normalized_name": "club",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "club twin",
+              "raw_name": "Club Twin Room",
+              "normalized_name": "club twin",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe pool view",
+              "raw_name": "Deluxe Room · Pool view",
+              "normalized_name": "deluxe pool view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe twin",
+              "raw_name": "Deluxe Twin Room",
+              "normalized_name": "deluxe twin",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "nandhavanam",
+              "raw_name": "Nandhavanam Room",
+              "normalized_name": "nandhavanam",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "avenue palace pool view",
+              "raw_name": "Palace Avenue Room · Pool view",
+              "normalized_name": "avenue palace pool view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 1 bedroom courtyard living street suite temple",
+              "raw_name": "Temple Street Suite with 1 Bedroom and 1 Living room · Courtyard",
+              "normalized_name": "1 1 bedroom courtyard living street suite temple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 anthapuram bedroom pool private suite swimming",
+              "raw_name": "Anthapuram Suite with 1 Bedroom and Private Swimming Pool",
+              "normalized_name": "1 anthapuram bedroom pool private suite swimming",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 2 anthapuram bedrooms living suite",
+              "raw_name": "Anthapuram Suite with 2 Bedrooms and 1 Living room",
+              "normalized_name": "1 2 anthapuram bedrooms living suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 2 anthapuram bedrooms living pool private suite swimming",
+              "raw_name": "Anthapuram Suite with 2 Bedrooms, 1 Living room and Private Swimming Pool",
+              "normalized_name": "1 2 anthapuram bedrooms living pool private suite swimming",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed double house traditional",
+              "raw_name": "Traditional House, 2 Double Beds",
+              "normalized_name": "2 beds double house traditional",
+              "match_method": "fuzzy",
+              "confidence": "0.951"
+            },
+            {
+              "room": "1 bed club double",
+              "raw_name": "Club Room, 1 Double Bed",
+              "normalized_name": "1 bed club double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed deluxe double pool view",
+              "raw_name": "Deluxe Room, 1 Double Bed · Pool view",
+              "normalized_name": "1 bed deluxe double pool view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed double garden traditional view",
+              "raw_name": "Traditional Room, 1 Double Bed · Garden view",
+              "normalized_name": "1 bed double garden traditional view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed double pool premium view",
+              "raw_name": "Premium Room, 1 Double Bed · Pool view",
+              "normalized_name": "1 bed double pool premium view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed double house traditional",
+              "raw_name": "Traditional House, 1 Double Bed",
+              "normalized_name": "1 bed double house traditional",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 bed double junior suite",
+              "raw_name": "Junior Suite, 1 Double Bed",
+              "normalized_name": "1 bed double junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "2 beds double premium suite",
+              "raw_name": "Premium Suite, 2 Double Beds",
+              "normalized_name": "2 beds double premium suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "2 beds double royal suite",
+              "raw_name": "Royal Suite, 2 Double Beds",
+              "normalized_name": "2 beds double royal suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "2 beds double duplex traditional",
+              "raw_name": "Traditional Duplex, 2 Double Beds",
+              "normalized_name": "2 beds double duplex traditional",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 2 bedrooms living street suite temple",
+              "raw_name": "Temple Street Suite with 2 Bedrooms and 1 Living room",
+              "normalized_name": "1 2 bedrooms living street suite temple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ananthyam Resort",
+      "slug": "ananthyam-resort",
+      "location": "Nilavur Road, near Murugan Temple Road, Yelagiri, Mangalam R.F., Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Double Room (2 Adults + 1 Child)",
+          "canonical_name": "1 2 adults child deluxe double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Superior Double Room",
+          "canonical_name": "double superior",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Villa with Garden View",
+          "canonical_name": "garden view villa",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Family Room",
+          "canonical_name": "family",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Suite",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Bed:",
+          "canonical_name": "bed",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": false
+        },
+        {
+          "name": "Bedroom:",
+          "canonical_name": "bedroom",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": false
+        },
+        {
+          "name": "Beds:",
+          "canonical_name": "beds",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": false
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/ananthyam-resort-by-anukulas.html?aid=356980&label=gog235jc-10CAsobEIcYW5hbnRoeWFtLXJlc29ydC1ieS1hbnVrdWxhc0gzWANobIgBAZgBM7gBF8gBDNgBA-gBAfgBAYgCAagCAbgC0bva1AbAAgHSAiQ3N2YxMWVlMi1lMzUyLTQzNzYtOWEwNy1mNjk3YmI2NmYwNDbYAgHgAgE&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=1252861903_442984411_2_2_0&checkin={check_in}&checkout={check_out}&dest_id=900052697&dest_type=city&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=1252861903_442984411_2_2_0&hpos=1&matching_block_id=1252861903_442984411_2_2_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=1252861903_442984411_2_2_0__550000&srepoch=1788255715&srpvid=949a4429ae8e02eb&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T10:43:08.403786+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 5 rooms, 5/5 prices confirmed against the page, 5 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "1 2 adults child deluxe double",
+              "raw_name": "Deluxe Double Room (2 Adults + 1 Child)",
+              "normalized_name": "1 2 adults child deluxe double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "double superior",
+              "raw_name": "Superior Double Room",
+              "normalized_name": "double superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View",
+              "normalized_name": "garden view villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room",
+              "normalized_name": "family",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed",
+              "raw_name": "Bed:",
+              "normalized_name": "bed",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bedroom",
+              "raw_name": "Bedroom:",
+              "normalized_name": "bedroom",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "beds",
+              "raw_name": "Beds:",
+              "normalized_name": "beds",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ASG HOLIDAY RESORTS",
+      "slug": "asg-holiday-resorts",
+      "location": "Bus Stand, near Athanavur, Athanavur, Nagalathu Extension R F, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": true,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Double Room",
+          "canonical_name": "deluxe double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Junior Suite",
+          "canonical_name": "junior suite",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Standard Double Room",
+          "canonical_name": "double standard",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Superior King Room",
+          "canonical_name": "king superior",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Family Suite",
+          "canonical_name": "family suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room",
+          "canonical_name": "deluxe",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Family Room",
+          "canonical_name": "deluxe family",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        },
+        {
+          "name": "Suite Room",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/ags-holiday-resorts-yelagiri1.en-gb.html?aid=1288252&label=metagha-link-MRIN-hotel-6805954_dev-desktop_los-1_bw-11_dow-Saturday_defdate-0_room-0_gstadt-2_rateid-dg_aud-0_gacid-21411129971_mcid-50_bc-AGfZwg_ppa-0_clrid-0_ad-1_gstkid-0_checkin-20260912_ppt-GB_lp-2356_r-10661018546978415036&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=680595401_430284343_3_42_0&checkin={check_in}&checkout={check_out}&dest_id=6805954&dest_type=hotel&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=680595401_430284343_3_42_0&hpos=1&matching_block_id=680595401_430284343_3_42_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=680595401_430284343_3_42_0__336600&srepoch=1788261705&srpvid=7bd04fe4243f0a2b&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T10:40:17.873934+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 11 rooms, 5/5 prices confirmed against the page, 5 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Double Room",
+              "normalized_name": "deluxe double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite",
+              "normalized_name": "junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "double standard",
+              "raw_name": "Standard Double Room",
+              "normalized_name": "double standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "king superior",
+              "raw_name": "Superior King Room",
+              "normalized_name": "king superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family suite",
+              "raw_name": "Family Suite",
+              "normalized_name": "family suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Family Room",
+              "normalized_name": "deluxe family",
+              "match_method": "manual",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 5,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "agoda",
+          "external_id": "18518106",
+          "url": "https://www.agoda.com/accom/property?propertyId=18518106&countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "budget_restored",
+              "last_attempt_at": null
+            },
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "double standard",
+              "raw_name": "Standard Double Room",
+              "normalized_name": "double standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite",
+              "normalized_name": "junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room",
+              "normalized_name": "deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Family Room",
+              "normalized_name": "deluxe family",
+              "match_method": "manual",
+              "confidence": "1.000"
+            },
+            {
+              "room": "king superior",
+              "raw_name": "Superior King Room",
+              "normalized_name": "king superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family suite",
+              "raw_name": "Family Suite",
+              "normalized_name": "family suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite Room",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hotel Hills",
+      "slug": "hotel-hills",
+      "location": "Boat House Road, Athanovoor Village, Yelagiri Hills, Vellore District., Athanavoor, Yelagiri, India, 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Standard Room",
+          "canonical_name": "standard",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room",
+          "canonical_name": "deluxe",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "hotel-hills_2",
+          "url": "https://www.agoda.com/hotel-hills_2/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1&searchrequestid=2b9015d6-353b-4318-a0fd-d7e673ba4d75&ds=VZ9Csc5%2BVAzW3Yv6",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "available": "amenities.0.isAvailable",
+              "room_name": "recommendedRoomName",
+              "rooms_left": "rooms.0.quantity",
+              "price_inclusive": "cheapestPrice",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms",
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-10-14T05:01:57.803608+00:00"
+            },
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "discovery_note": "Auto-repaired 2026-10-14: 2 rooms, 1/2 prices confirmed against the page, 1 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "standard",
+              "raw_name": "Standard Room",
+              "normalized_name": "standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room",
+              "normalized_name": "deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MGM WHISPERING MEADOWS",
+      "slug": "mgm-whispering-meadows",
+      "location": "45/52, Main Road, B1, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Compact Room",
+          "canonical_name": "compact",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Club Room",
+          "canonical_name": "club",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Grandeur Suite",
+          "canonical_name": "grandeur suite",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Junior Suite",
+          "canonical_name": "junior suite",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Room Only Monsoon Offer",
+          "canonical_name": "monsoon offer only",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "booking-mgm-hotels-com",
+          "external_id": null,
+          "url": "https://booking.mgm-hotels.com/getavailability?checkin={check_in}&checkout={check_out}&utm_campaign=HotelAds&utm_medium=GHPA&type=&hotel_id=2004&promo=&guest=1&child={children}&Adult={adults}&childsage=",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "div.bg-white.px-3.pt-3",
+            "room_card": "div.bg-white.px-3.pt-3",
+            "selectors": {
+              "price": "text=/(?:₹|Rs[.]?|INR)[^0-9]{0,3}[0-9][0-9.,]*/",
+              "room_name": "h2.notranslate"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "unlearnable",
+              "last_attempt_at": "2026-10-14T05:10:55.759330+00:00"
+            },
+            "discovery_note": "Restored 2026-09-04: the 09:50 sweep had moved room_name onto the rate-plan heading, naming both cards 'Room Only Monsoon Offer' at different prices. Discovery now refuses that candidate.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "compact",
+              "raw_name": "Compact Room",
+              "normalized_name": "compact",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "club",
+              "raw_name": "Club Room",
+              "normalized_name": "club",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "grandeur suite",
+              "raw_name": "Grandeur Suite",
+              "normalized_name": "grandeur suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite",
+              "normalized_name": "junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "monsoon offer only",
+              "raw_name": "Room Only Monsoon Offer",
+              "normalized_name": "monsoon offer only",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MGM WHISPERING NEST",
+      "slug": "mgm-whispering-nest",
+      "location": "594/1, Nilavoor Rd, next to Bharat Petroleum, Mangalam, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Villa 1 Bedroom",
+          "canonical_name": "1 bedroom villa",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Villa 3 Bedroom with Living Room",
+          "canonical_name": "3 bedroom living villa",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Villa 5 Bedroom with Living Room",
+          "canonical_name": "5 bedroom living villa",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "booking-mgm-hotels-com",
+          "external_id": null,
+          "url": "https://booking.mgm-hotels.com/getavailability?checkin={check_in}&checkout={check_out}&utm_campaign=HotelAds&utm_medium=GHPA&type=&hotel_id=2005&promo=&guest=1&child={children}&Adult={adults}&childsage=",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "div.bg-white.px-3.pt-3",
+            "room_card": "div.bg-white.px-3.pt-3",
+            "selectors": {
+              "price": "text=/(?:₹|Rs[.]?|INR)[^0-9]{0,3}[0-9][0-9.,]*/",
+              "room_name": "h2.notranslate"
+            },
+            "auto_repair": {
+              "attempts": 1,
+              "last_outcome": "unlearnable",
+              "last_attempt_at": "2026-10-14T05:13:13.229102+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-04: 2 rooms, 2/2 prices confirmed against the page, 2 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "1 bedroom villa",
+              "raw_name": "Villa 1 Bedroom",
+              "normalized_name": "1 bedroom villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "3 bedroom living villa",
+              "raw_name": "Villa 3 Bedroom with Living Room",
+              "normalized_name": "3 bedroom living villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "5 bedroom living villa",
+              "raw_name": "Villa 5 Bedroom with Living Room",
+              "normalized_name": "5 bedroom living villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MGM WHISPERING WINDS",
+      "slug": "mgm-whispering-winds",
+      "location": "Mangalam R.F., Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Compact Cottage - Sitout",
+          "canonical_name": "compact cottage sitout",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Club Room - King and Sofa Bed - Sitout",
+          "canonical_name": "bed club king sitout sofa",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Club Room - King and Sofa Bed - Exclusive Sitout",
+          "canonical_name": "bed club exclusive king sitout sofa",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Cottage - King and Sofa Bed - Sitout",
+          "canonical_name": "bed cottage king sitout sofa",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Private Cottage - King Bed - Pool view - Sitout",
+          "canonical_name": "bed cottage king pool private sitout view",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Cottage - 2 Queen Bed - Pool view - Sitout",
+          "canonical_name": "2 bed cottage pool queen sitout view",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "Cottage - 2 King Bed - Pool view - Sitout",
+          "canonical_name": "2 bed cottage king pool sitout view",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        },
+        {
+          "name": "Penthouse - 2 King and 1 Single Bed",
+          "canonical_name": "1 2 bed king penthouse single",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room - King Bed",
+          "canonical_name": "bed deluxe king",
+          "capacity": null,
+          "sort_order": 8,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "booking-mgm-hotels-com",
+          "external_id": null,
+          "url": "https://booking.mgm-hotels.com/getavailability?checkin={check_in}&checkout={check_out}&utm_campaign=HotelAds&utm_medium=GHPA&type=&hotel_id=2003&promo=&guest=1&child={children}&Adult={adults}&childsage=",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "div.bg-white.px-3.pt-3",
+            "room_card": "div.bg-white.px-3.pt-3",
+            "selectors": {
+              "price": "text=/(?:₹|Rs[.]?|INR)[^0-9]{0,3}[0-9][0-9.,]*/",
+              "room_name": "h2.notranslate"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "unlearnable",
+              "last_attempt_at": "2026-10-14T05:12:06.478037+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-04: 6 rooms, 6/6 prices confirmed against the page, 6 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "compact cottage sitout",
+              "raw_name": "Compact Cottage - Sitout",
+              "normalized_name": "compact cottage sitout",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed club king sitout sofa",
+              "raw_name": "Club Room - King and Sofa Bed - Sitout",
+              "normalized_name": "bed club king sitout sofa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed club exclusive king sitout sofa",
+              "raw_name": "Club Room - King and Sofa Bed - Exclusive Sitout",
+              "normalized_name": "bed club exclusive king sitout sofa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed cottage king sitout sofa",
+              "raw_name": "Cottage - King and Sofa Bed - Sitout",
+              "normalized_name": "bed cottage king sitout sofa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed cottage king pool private sitout view",
+              "raw_name": "Private Cottage - King Bed - Pool view - Sitout",
+              "normalized_name": "bed cottage king pool private sitout view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "2 bed cottage pool queen sitout view",
+              "raw_name": "Cottage - 2 Queen Bed - Pool view - Sitout",
+              "normalized_name": "2 bed cottage pool queen sitout view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "2 bed cottage king pool sitout view",
+              "raw_name": "Cottage - 2 King Bed - Pool view - Sitout",
+              "normalized_name": "2 bed cottage king pool sitout view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "1 2 bed king penthouse single",
+              "raw_name": "Penthouse - 2 King and 1 Single Bed",
+              "normalized_name": "1 2 bed king penthouse single",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed deluxe king",
+              "raw_name": "Deluxe Room - King Bed",
+              "normalized_name": "bed deluxe king",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MSB Silver Spring Resort  ",
+      "slug": "msb-silver-spring-resort-4-stars-out-of-5",
+      "location": "No. 257/2c, Pallakaniyur Athanavur, Yelagiri Hills, Tirupattur, Athanavoor, Yelagiri, India, 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Bungalow Triple",
+          "canonical_name": "bungalow triple",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Honeymoon Cottage",
+          "canonical_name": "cottage honeymoon",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Honeymoon Suite",
+          "canonical_name": "honeymoon suite",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Triple Suite",
+          "canonical_name": "suite triple",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Execuitve Suite",
+          "canonical_name": "execuitve suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Executive Room",
+          "canonical_name": "deluxe executive",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "VIP Suite",
+          "canonical_name": "suite vip",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        },
+        {
+          "name": "Suite",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": true
+        },
+        {
+          "name": "Family",
+          "canonical_name": "family",
+          "capacity": null,
+          "sort_order": 8,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "agoda",
+          "external_id": "msb-silver-spring-resort",
+          "url": "https://www.agoda.com/msb-silver-spring-resort/hotel/yelagiri-in.html?countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1833981&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1&searchrequestid=ddb206a9-68d6-409c-bd14-a8f27805cdf4&ds=HHMbX5DfZ1Q6lRAO",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "budget_restored",
+              "last_attempt_at": null
+            },
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "bungalow triple",
+              "raw_name": "Bungalow Triple",
+              "normalized_name": "bungalow triple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "cottage honeymoon",
+              "raw_name": "Honeymoon Cottage",
+              "normalized_name": "cottage honeymoon",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "honeymoon suite",
+              "raw_name": "Honeymoon Suite",
+              "normalized_name": "honeymoon suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite triple",
+              "raw_name": "Triple Suite",
+              "normalized_name": "suite triple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "execuitve suite",
+              "raw_name": "Execuitve Suite",
+              "normalized_name": "execuitve suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe executive",
+              "raw_name": "Deluxe Executive Room",
+              "normalized_name": "deluxe executive",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite vip",
+              "raw_name": "VIP Suite",
+              "normalized_name": "suite vip",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family",
+              "normalized_name": "family",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Peters Park",
+      "slug": "peters-park",
+      "location": "3-510, Manjankollai Pudur, Yelagiri Hills, Next to Govt Boys Hostel, Nagalathu Extension R F, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Double Room",
+          "canonical_name": "double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Bungalow",
+          "canonical_name": "bungalow deluxe",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Superior Bungalow",
+          "canonical_name": "bungalow superior",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Cottage",
+          "canonical_name": "cottage",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Three-Bedroom Cottage",
+          "canonical_name": "bedroom cottage three",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/peters-park.en-gb.html?aid=1288252&label=metagha-link-MRIN-hotel-11633671_dev-desktop_los-1_bw-0_dow-Friday_defdate-1_room-0_gstadt-2_rateid-public_aud-0_gacid-21411129971_mcid-50_bc-ALGEBw_ppa-0_clrid-0_ad-1_gstkid-0_checkin-20260925_ppt-B_lp-2356_r-12884149742180631472&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=1163367102_441141636_2_42_0&checkin={check_in}&checkout={check_out}&dest_id=11633671&dest_type=hotel&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=1163367102_441141636_2_42_0&hpos=1&matching_block_id=1163367102_441141636_2_42_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=1163367102_441141636_2_42_0__440000&srepoch=1790315790&srpvid=0cfd64110410a3c258cae1bde6aaa421&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 1,
+              "last_outcome": "no_change",
+              "last_attempt_at": "2026-09-25T06:40:50.919646+00:00"
+            },
+            "discovery_note": "Auto-discovered: 5 rooms from /in/peters-park.en-gb.html, 5/5 prices confirmed against the page.",
+            "keep_link_deal": true,
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "double",
+              "raw_name": "Double Room",
+              "normalized_name": "double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bungalow deluxe",
+              "raw_name": "Deluxe Bungalow",
+              "normalized_name": "bungalow deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bungalow superior",
+              "raw_name": "Superior Bungalow",
+              "normalized_name": "bungalow superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "cottage",
+              "raw_name": "Cottage",
+              "normalized_name": "cottage",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bedroom cottage three",
+              "raw_name": "Three-Bedroom Cottage",
+              "normalized_name": "bedroom cottage three",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sterling",
+      "slug": "sterling",
+      "location": "Nilavoor Main Road, near Murugan Temple Road, Yelagiri, Mangalam R.F., Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Classic Room",
+          "canonical_name": "classic",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Classic room with Balcony",
+          "canonical_name": "balcony classic",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Mountain View Classic Room",
+          "canonical_name": "classic mountain view",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "hotelzify",
+          "external_id": "5171",
+          "url": "https://booking.sterlingholidays.com/rooms/5171/{check_in}/{check_out}/2/0?google_source=mapresults&user_list_id=&utm_campaign=&utm_source=free_booking_link&country=IN&price=6361.95&language=en&user_list=&currency=INR&click_type=hotel&device=desktop&raterule_id=",
+          "currency": "INR",
+          "adapter_config": {},
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/yelagiri-marigold-ridge-a-sterling-holidays-resorts.en-gb.html?aid=311984&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=54807301_195167792_2_34_0&checkin={check_in}&checkout={check_out}&dest_id=900052697&dest_type=city&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=54807301_195167792_2_34_0&hpos=1&matching_block_id=54807301_195167792_2_34_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=54807301_195167792_2_34_0__293058&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T12:09:58.637600+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 6 rooms, 3/3 prices confirmed against the page, 3 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "agoda",
+          "external_id": "463100",
+          "url": "https://www.agoda.com/accom/property?propertyId=463100&countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic Room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TREEBO MIDVALLEY  RESIDENCY ",
+      "slug": "treebo-midvalley-residency",
+      "location": "48/1, ROAD, Athanavur, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Room (Maple)",
+          "canonical_name": "deluxe maple",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Premium Room (Mahogany)",
+          "canonical_name": "mahogany premium",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "treebo",
+          "external_id": "4278",
+          "url": "https://www.treebo.com/hotels-in-yelagiri/treebo-midvalley-residence-yelagiri-4278/?checkin={check_in}&checkout={check_out}&city=Yelagiri&hotel_id=4278&landmark=&locality=Yelagiri&q=Treebo+Midvalley+Residence+Yelagiri%2C+Yelagiri&rateplan=105b7ef8078e46039b25f21fddca17c5&roomconfig={adults}-{children}&roomtype=maple",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "#t-roomTypes",
+            "room_card": "#t-roomTypes",
+            "selectors": {
+              "price": "text=/^₹\\s?[\\d,]+$/",
+              "room_name": "text=/Room \\(/"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-10-13T05:33:13.843196+00:00"
+            },
+            "sold_out_markers": [
+              "no rooms available",
+              "sold out",
+              "fully booked"
+            ],
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe maple",
+              "raw_name": "Deluxe Room (Maple)",
+              "normalized_name": "deluxe maple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "mahogany premium",
+              "raw_name": "Premium Room (Mahogany)",
+              "normalized_name": "mahogany premium",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TREEBO PREMIMUM EMERALD DOVEWITH SWIMMING POOL",
+      "slug": "treebo-premimum-emerald-dovewith-swimming-pool",
+      "location": "10/26, Main Road, Kottaiyour, Athanavur, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Room (Maple)",
+          "canonical_name": "deluxe maple",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Premium Room (Mahogany)",
+          "canonical_name": "mahogany premium",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "treebo",
+          "external_id": "4198",
+          "url": "https://www.treebo.com/hotels-in-yelagiri/treebo-premium-emerald-dove-with-swimming-pool-kottaiyur-4198/?checkin={check_in}&checkout={check_out}&city=Yelagiri&hotel_id=4198&landmark=&locality=Kottaiyur&q=Treebo+Premium+Emerald+Dove+With+Swimming+Pool+Kottaiyur%2C+Yelagiri&rateplan=056e6bb05bd645afb8ed565d8b31cd9e&roomconfig={adults}-{children}&roomtype=maple",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "#t-roomTypes",
+            "room_card": "#t-roomTypes",
+            "selectors": {
+              "price": "text=/^₹\\s?[\\d,]+$/",
+              "room_name": "text=/Room \\(/"
+            },
+            "auto_repair": {
+              "attempts": 1,
+              "last_outcome": "error",
+              "last_attempt_at": "2026-09-24T11:06:47.575673+00:00"
+            },
+            "sold_out_markers": [
+              "no rooms available",
+              "sold out",
+              "fully booked"
+            ],
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe maple",
+              "raw_name": "Deluxe Room (Maple)",
+              "normalized_name": "deluxe maple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "mahogany premium",
+              "raw_name": "Premium Room (Mahogany)",
+              "normalized_name": "mahogany premium",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TREEBO SNS GARDEN IN  WITH SWIMMING POOL",
+      "slug": "treebo-sns-garden-in-with-swimming-pool",
+      "location": "Murugan Temple Rd, Kottaiyour, Mangalam, Yelagiri, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Premium Room (Mahogany)",
+          "canonical_name": "mahogany premium",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room (Maple)",
+          "canonical_name": "deluxe maple",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "treebo",
+          "external_id": "4310",
+          "url": "https://www.treebo.com/hotels-in-yelagiri/treebo-sns-grand-inn-with-swimming-pool-kottaiyur-4310/?checkin={check_in}&checkout={check_out}&city=Yelagiri&hotel_id=4310&landmark=&locality=Kottaiyur&q=Treebo+Sns+Grand+Inn+With+Swimming+Pool+Kottaiyur%2C+Yelagiri&rateplan=80cb8e0778c8410da23050a38e04e9a8&roomconfig={adults}-{children}&roomtype=mahogany",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "#t-roomTypes",
+            "room_card": "#t-roomTypes",
+            "selectors": {
+              "price": "text=/^₹\\s?[\\d,]+$/",
+              "room_name": "text=/Room \\(/"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "budget_restored",
+              "last_attempt_at": null
+            },
+            "sold_out_markers": [
+              "no rooms available",
+              "sold out",
+              "fully booked"
+            ],
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "mahogany premium",
+              "raw_name": "Premium Room (Mahogany)",
+              "normalized_name": "mahogany premium",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe maple",
+              "raw_name": "Deluxe Room (Maple)",
+              "normalized_name": "deluxe maple",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

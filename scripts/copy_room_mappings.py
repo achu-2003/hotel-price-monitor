@@ -132,7 +132,7 @@ def _settings_out(session, owner_id: int) -> dict | None:
     row = session.execute(
         text(
             "select " + ", ".join(SETTINGS_FIELDS) + ", benchmark_hotel_id, "
-            "       benchmark_room_pairs "
+            "       benchmark_room_pairs, source_id "
             "from repricing_settings where owner_user_id = :o"
         ),
         {"o": owner_id},
@@ -144,6 +144,9 @@ def _settings_out(session, owner_id: int) -> dict | None:
     out["benchmark_hotel"] = session.execute(
         text("select name from hotels where id = :h"), {"h": row["benchmark_hotel_id"]}
     ).scalar() if row["benchmark_hotel_id"] else None
+    # The website the main rule reads its prices from, by code: source ids
+    # are per database too.
+    out["source"] = _source_code(session, row["source_id"]) if row["source_id"] else None
 
     # {our room id: their room name} becomes {our room NAME: their room name}.
     # Only our side is an id; theirs is already a name, because the rule
@@ -182,19 +185,91 @@ def _settings_in(session, owner_id: int, wanted: dict) -> tuple[dict, list[str]]
 
     pairs = {}
     for our_room, their_room in (wanted.get("benchmark_room_pairs") or {}).items():
-        rid = session.execute(
-            text(
-                "select rt.id from room_types rt join hotels h on h.id = rt.hotel_id "
-                "where rt.name = :r and h.owner_user_id = :o and h.is_own_property"
-            ),
-            {"r": our_room, "o": owner_id},
-        ).scalar()
+        rid = _own_room_id(session, owner_id, our_room)
         if rid is None:
             unresolved.append(f"room pair {our_room!r}")
             continue
         pairs[str(rid)] = their_room
     params["benchmark_room_pairs"] = json.dumps(pairs)
+
+    params["source_id"] = None
+    if wanted.get("source"):
+        params["source_id"] = _source_id(session, wanted["source"])
+        if params["source_id"] is None:
+            unresolved.append(f"booking site {wanted['source']!r} (no source of that code here)")
     return params, unresolved
+
+
+def _source_code(session, source_id: int) -> str | None:
+    return session.execute(text("select code from sources where id = :i"), {"i": source_id}).scalar()
+
+
+def _source_id(session, code: str) -> int | None:
+    return session.execute(text("select id from sources where code = :c"), {"c": code}).scalar()
+
+
+def _own_room_id(session, owner_id: int, name: str) -> int | None:
+    return session.execute(
+        text(
+            "select rt.id from room_types rt join hotels h on h.id = rt.hotel_id "
+            "where rt.name = :r and h.owner_user_id = :o and h.is_own_property"
+        ),
+        {"r": name, "o": owner_id},
+    ).scalar()
+
+
+#: Another website's rule (Agoda, Goibibo): the same follow, priced off that
+#: website. ``auto_enabled`` is left behind for the reason it is left out of
+#: SETTINGS_FIELDS.
+CHANNEL_FIELDS = ("channel", "benchmark_undercut", "benchmark_with_tax", "benchmark_meal_plan")
+
+
+def _channel_rules_out(session, owner_id: int) -> list[dict]:
+    """Each rule with its source and its room pairs turned into names.
+
+    ``room_pairs`` is ``{our room id: {"ours": name on that site, "theirs":
+    the benchmark's room}}``; only the key is an id.
+    """
+    rows = session.execute(
+        text("select " + ", ".join(CHANNEL_FIELDS) + ", source_id, room_pairs "
+             "from repricing_channel_rules where owner_user_id = :o order by channel"),
+        {"o": owner_id},
+    ).mappings().all()
+    out = []
+    for row in rows:
+        rule = {f: (str(row[f]) if isinstance(row[f], Decimal) else row[f]) for f in CHANNEL_FIELDS}
+        rule["source"] = _source_code(session, row["source_id"])
+        pairs = {}
+        for room_id, pair in (row["room_pairs"] or {}).items():
+            name = session.execute(
+                text("select name from room_types where id = :r"), {"r": int(room_id)}
+            ).scalar()
+            if name:
+                pairs[name] = pair
+        rule["room_pairs"] = pairs
+        out.append(rule)
+    return out
+
+
+def _channel_rules_in(session, owner_id: int, wanted: list[dict]) -> tuple[list[dict], list[str]]:
+    planned, unresolved = [], []
+    for rule in wanted:
+        params = {f: rule.get(f) for f in CHANNEL_FIELDS}
+        params["source_id"] = _source_id(session, rule["source"]) if rule.get("source") else None
+        if params["source_id"] is None:
+            unresolved.append(f"{rule['channel']} rule: booking site {rule.get('source')!r} "
+                              f"(no source of that code here)")
+            continue
+        pairs = {}
+        for our_room, pair in (rule.get("room_pairs") or {}).items():
+            rid = _own_room_id(session, owner_id, our_room)
+            if rid is None:
+                unresolved.append(f"{rule['channel']} room pair {our_room!r}")
+                continue
+            pairs[str(rid)] = pair
+        params["room_pairs"] = json.dumps(pairs)
+        planned.append(params)
+    return planned, unresolved
 
 
 def export(path: Path, username: str | None) -> int:
@@ -214,6 +289,7 @@ def export(path: Path, username: str | None) -> int:
             {"o": owner_id},
         ).mappings().all()
         settings = _settings_out(s, owner_id)
+        channel_rules = _channel_rules_out(s, owner_id)
 
     if not rows:
         print(f"{owner_name} has no room mappings here. Nothing to export.", file=sys.stderr)
@@ -222,6 +298,7 @@ def export(path: Path, username: str | None) -> int:
     payload = {
         "owner": owner_name,
         "settings": settings,
+        "channel_rules": channel_rules,
         "mappings": [
             {
                 "hotel": r["hotel"],
@@ -249,10 +326,21 @@ def export(path: Path, username: str | None) -> int:
               f"ceiling {settings['ceiling_pct']}%")
         for ours, theirs in (settings["benchmark_room_pairs"] or {}).items():
             print(f"        {ours} competes with their {theirs}")
+    _print_channel_rules(channel_rules)
 
     print(f"\n{len(rows)} mapping(s) for {owner_name} written to {path}.")
     print("Import with --import; add --settings to carry the rule across too.")
     return 0
+
+
+def _print_channel_rules(rules: list[dict]) -> None:
+    for r in rules:
+        print(f"\n  {r['channel']}: prices from {r['source']}, {r['benchmark_undercut']} under"
+              f"{', tax in' if r['benchmark_with_tax'] else ''}"
+              f"{', on ' + r['benchmark_meal_plan'] if r['benchmark_meal_plan'] else ''}")
+        for ours, pair in (r.get("room_pairs") or {}).items():
+            called = f" (called {pair['ours']})" if pair.get("ours") else ""
+            print(f"        {ours}{called} competes with their {pair.get('theirs') or '(not paired)'}")
 
 
 def import_(path: Path, username: str | None, write: bool, with_settings: bool) -> int:
@@ -300,6 +388,7 @@ def import_(path: Path, username: str | None, write: bool, with_settings: bool) 
             print(f"  {verb:6} {room['hotel']} / {room['name']} -> {m['rms_room']}  {plans}{was}")
 
         rule_params, rule_unresolved = None, []
+        channel_planned: list[dict] = []
         if with_settings:
             if not payload.get("settings"):
                 print("\n  --settings asked for, but the file carries none.", file=sys.stderr)
@@ -316,6 +405,10 @@ def import_(path: Path, username: str | None, write: bool, with_settings: bool) 
             print("         (the automatic switch is never copied; turn it on "
                   "from the page)")
             missing.extend(rule_unresolved)
+            channel_planned, channel_unresolved = _channel_rules_in(
+                s, owner_id, payload.get("channel_rules") or [])
+            _print_channel_rules(payload.get("channel_rules") or [])
+            missing.extend(channel_unresolved)
 
         if missing:
             # Loudly, and without writing the rest by default: a partial copy
@@ -332,7 +425,7 @@ def import_(path: Path, username: str | None, write: bool, with_settings: bool) 
             return 2
 
         if not write:
-            extra = " and the rule" if rule_params else ""
+            extra = " and the rules" if rule_params else ""
             print(f"\nDry run. Re-run with --yes to write {len(planned)} mapping(s){extra}.")
             return 0
 
@@ -383,15 +476,37 @@ def import_(path: Path, username: str | None, write: bool, with_settings: bool) 
                     # and the column is jsonb, which Postgres will not
                     # coerce on its own inside an UPDATE.
                     + ", benchmark_room_pairs = cast(:benchmark_room_pairs as jsonb)"
+                    + ", source_id = :source_id"
                     # No default fires on an UPDATE, unlike the insert above.
                     + ", updated_at = now() where owner_user_id = :o"
                 ),
                 rule_params,
             )
+        for params in channel_planned:
+            params["o"] = owner_id
+            s.execute(
+                text(
+                    "insert into repricing_channel_rules "
+                    "  (owner_user_id, channel, source_id, benchmark_undercut, "
+                    "   benchmark_with_tax, benchmark_meal_plan, room_pairs) "
+                    "values (:o, :channel, :source_id, :benchmark_undercut, "
+                    "        :benchmark_with_tax, :benchmark_meal_plan, cast(:room_pairs as jsonb)) "
+                    # One rule per channel per owner: a second run corrects
+                    # it, and leaves its automatic switch where it was.
+                    "on conflict (owner_user_id, channel) do update set "
+                    "  source_id = excluded.source_id, "
+                    "  benchmark_undercut = excluded.benchmark_undercut, "
+                    "  benchmark_with_tax = excluded.benchmark_with_tax, "
+                    "  benchmark_meal_plan = excluded.benchmark_meal_plan, "
+                    "  room_pairs = excluded.room_pairs, "
+                    "  updated_at = now()"
+                ),
+                params,
+            )
         s.commit()
 
     print(f"\nWrote {len(planned)} mapping(s) for {owner_name}"
-          f"{' and the rule' if with_settings else ''}.")
+          f"{' and the rules' if with_settings else ''}.")
     print("Open the Repricing page: every room should now name its RMS row, and "
           "Preview in RMS has something to read.")
     return 0
@@ -406,8 +521,9 @@ def main() -> int:
     what.add_argument("--import", dest="import_", metavar="FILE", help="read them in")
     ap.add_argument("--owner", help="the username the mappings belong to")
     ap.add_argument("--settings", action="store_true",
-                    help="carry the rule as well: the benchmark hotel, the gap, "
-                         "the board, the room pairs and the limits (import only)")
+                    help="carry the rules as well: the benchmark hotel, the gap, "
+                         "the board, the room pairs and the limits, and each other "
+                         "website's rule -- Agoda, Goibibo (import only)")
     ap.add_argument("--yes", action="store_true", help="actually write them (import only)")
     args = ap.parse_args()
 

@@ -14,11 +14,31 @@
     "benchmark_with_tax": true,
     "benchmark_meal_plan": "Breakfast",
     "benchmark_hotel": "Sterling",
+    "source": "www-booking-com",
     "benchmark_room_pairs": {
       "Deluxe Double Room": "Classic Room",
       "Standard Double Room": "Mountain View Classic Room"
     }
   },
+  "channel_rules": [
+    {
+      "channel": "Agoda",
+      "benchmark_undercut": "100.00",
+      "benchmark_with_tax": true,
+      "benchmark_meal_plan": "Breakfast",
+      "source": "agoda",
+      "room_pairs": {
+        "Deluxe Double Room": {
+          "ours": null,
+          "theirs": "Classic Room"
+        },
+        "Standard Double Room": {
+          "ours": null,
+          "theirs": "Mountain View Classic Room"
+        }
+      }
+    }
+  ],
   "mappings": [
     {
       "hotel": "ASG HOLIDAY RESORTS",
