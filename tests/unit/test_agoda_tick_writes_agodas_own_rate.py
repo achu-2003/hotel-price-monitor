@@ -2,8 +2,8 @@
 
 On 23 Oct the box carried the share Booking.com moved by (+28.5%), and ticking
 Agoda would have written 10,280 -- about 750 ABOVE Sterling on Agoda, where the
-rule wants ASG a hundred under it. ``_lane_rms`` is the one sum the room's
-Agoda row, the Agoda section and that box all read.
+rule wants ASG a hundred under it. ``_lane_rms`` is the sum the Agoda section
+shows and applies; the tick has since left the Booking.com table altogether.
 """
 from __future__ import annotations
 

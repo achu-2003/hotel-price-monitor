@@ -3058,7 +3058,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         ratio_base=ratio_base,
         competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
         check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
-        channel_rms=channel_rms, other_channels=other_channels,
+        channel_rms=channel_rms,
         lanes=lanes, lane_sources=lane_sources, unruled_channels=unruled_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
         last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
@@ -3068,11 +3068,11 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
 def _lane_rms(rule_row, p, m, channel_rms, lane_ratio, round_to) -> SimpleNamespace:
     """One room's RMS sum under another website's rule (Agoda, Goibibo).
 
-    Worked out here, once, because three places show it and they must agree:
-    the website's own section, the room's row when the owner switches it to
-    that website, and the box beside the website's tick -- which is the
-    number Apply writes. The box used to carry Booking.com's share instead,
-    and ticking Agoda wrote a rate that put ASG above Sterling ON AGODA.
+    Shown in the website's own section only. The Booking.com table at the
+    top used to offer the website as a tick too, with a box that once carried
+    Booking.com's share and would have put ASG above Sterling ON AGODA; a
+    website with a rule of its own is now priced and applied from its
+    section alone.
 
     ``anchor`` is the plan the run scales: the mapped anchor where the channel
     has that row, otherwise the first plan it does sell (Agoda has no EP row

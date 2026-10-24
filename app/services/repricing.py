@@ -830,12 +830,21 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                 # and "no room of that tier on the site we are priced on" are
                 # different facts, but the answer to both is the same and the
                 # owner reads the sentence, not the branch.
-                on_board = f" on {board.lower()}" if board else ""
-                what = f'"{their_room}"' if their_room else label_for(tier)
+                #
+                # Said as the owner would say it. "Sterling has no 'Mountain
+                # View Classic Room' on sale" read as a pairing gone wrong;
+                # what it means is that their room is not bookable tonight
+                # -- usually sold out, since sites drop a full room from the
+                # list -- and so nothing moves. Not "sold out" outright: the
+                # same room on sale without breakfast lands here too.
+                on_board = f" with {board.lower()}" if board else ""
+                gone = (f"{benchmark.hotel}'s \"{their_room}\" is not on sale tonight{on_board}"
+                        if their_room else
+                        f"{benchmark.hotel} has no {label_for(tier)} room on sale tonight{on_board}")
                 proposals.append(Proposal(
                     **base, market=None, target=None, benchmark=benchmark.hotel,
-                    held=f"{benchmark.hotel} has no {what} on sale tonight{on_board} "
-                         f"on the site our own price comes from",
+                    held=f"{gone} on the site our own price comes from, so there is "
+                         f"nothing to follow: the rate stays as it is",
                 ))
                 continue
             # NOT rounded to ``round_to``. That setting exists because the

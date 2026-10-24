@@ -157,7 +157,7 @@ class TestTheRuleFollowsOneHotel:
         p = _for(_rows(), room_type_id=OUR_DELUXE)
         assert p.target is None
         assert p.benchmark == "Sterling"
-        assert "no Deluxe on sale tonight" in p.held
+        assert "no Deluxe room on sale tonight" in p.held
 
     def test_a_sold_out_benchmark_is_not_a_price_to_follow(self):
         """The median deliberately keeps a full hotel in at its last figure.
@@ -698,7 +698,7 @@ class TestARoomWithoutBreakfastDropsToRoomOnly:
         p = {p.room_name: p for p in
              rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=self.BENCH)}["Standard Double Room"]
         assert p.target is None
-        assert "on breakfast" in p.held
+        assert "with breakfast" in p.held
 
     def test_a_room_that_has_breakfast_still_uses_breakfast(self):
         p = self._all()["Deluxe Double Room"]

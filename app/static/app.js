@@ -457,59 +457,17 @@
       syncPairs();
     }
 
-    // -- other websites in RMS ----------------------------------------
+    // -- the Booking.com tick ------------------------------------------
     //
-    // Each room's second row lists every channel RMS has. The main one is
-    // ticked; the others are written only when ticked. A channel's box
-    // holds the RMS rate to write: filled in with the share the guest
-    // price moves by (Goibibo 9,000 and the price -10% makes 8,100) until
-    // the owner types in it, after which it is theirs and stays put. A
-    // channel with a rule of its own (Agoda) arrives filled with that rule's
-    // rate and keeps it: Booking.com's share says nothing about Agoda.
-    function channelRow(id) {
-      return document.querySelector('tr.channels-row[data-room-type-id="' + id + '"]');
-    }
+    // Each room's second row is the Booking.com tick: ticked, the room is
+    // written; unticked, it is left as it is. Other websites are changed
+    // from their own sections, never from here.
     function boxFor(id) {
       return priceBoxes.find(function (b) { return b.dataset.roomTypeId === String(id); });
     }
-    function noteChannel(rate, box) {
-      const cur = Number(rate.dataset.cur);
-      const v = Number(rate.value);
-      const note = rate.parentElement.querySelector(".channel-note");
-      if (!note) return;
-      let text = v > 0 && cur ? (v === cur ? "no change" : pctText(v, cur)) : "type a rate";
-      if (v > 0 && box && box.dataset.floor && v < Number(box.dataset.floor)) {
-        text += " · below the floor of " + inr.format(Number(box.dataset.floor)) + ", won't be sent";
-      } else if (v > 0 && box && box.dataset.ceiling && v > Number(box.dataset.ceiling)) {
-        text += " · above the ceiling of " + inr.format(Number(box.dataset.ceiling)) + ", won't be sent";
-      }
-      note.textContent = text;
-    }
-    function suggestChannels(box) {
-      const row = channelRow(box.dataset.roomTypeId);
-      if (!row) return;
-      const our = Number(box.dataset.our);
-      const typed = Number(box.value);
-      const share = our && typed > 0 ? typed / our : 1;
-      row.querySelectorAll("input.channel-rate").forEach(function (rate) {
-        const cur = Number(rate.dataset.cur);
-        if (!rate.dataset.touched && !rate.dataset.ownRule) rate.value = Math.round((cur * share) / roundTo) * roundTo;
-        noteChannel(rate, box);
-      });
-    }
-    document.querySelectorAll("input.channel-rate").forEach(function (rate) {
-      rate.addEventListener("input", function () {
-        rate.dataset.touched = "1";
-        const pick = rate.parentElement.querySelector("input.pick-channel");
-        if (pick && !pick.checked) pick.checked = true;
-        noteChannel(rate, boxFor(rate.closest("tr").dataset.roomTypeId));
-      });
-    });
-    // What the ticks say, for one room or all: the other channels to write
-    // with their rates, the rooms whose main channel was unticked, and a
-    // line per choice for the confirm dialog.
+    // What the ticks say, for one room or all: the rooms whose Booking.com
+    // tick was taken off, and a line each for the confirm dialog.
     function channelChoices(onlyId) {
-      const channels = {};
       const skip = [];
       const lines = [];
       document.querySelectorAll("tr.channels-row").forEach(function (row) {
@@ -520,23 +478,14 @@
         const main = row.querySelector("input.pick-main");
         if (main && !main.checked) {
           skip.push(Number(id));
-          lines.push("  " + name + ": " + main.parentElement.querySelector("strong, button.view-channel").textContent + " left as it is");
+          lines.push("  " + name + ": " + main.parentElement.querySelector("strong").textContent + " left as it is");
         }
-        row.querySelectorAll("input.pick-channel:checked").forEach(function (pick) {
-          const rate = pick.parentElement.querySelector("input.channel-rate");
-          const v = rate ? Math.round(Number(rate.value)) : 0;
-          if (!(v > 0)) return;
-          (channels[id] = channels[id] || {})[pick.dataset.channel] = v;
-          lines.push("  " + name + " on " + pick.dataset.channel + ": " + inr.format(Number(rate.dataset.cur))
-            + " to " + inr.format(v) + " in RMS");
-        });
       });
-      return { channels: channels, skip: skip, lines: lines };
+      return { skip: skip, lines: lines };
     }
 
     priceBoxes.forEach(function (box) {
-      box.addEventListener("input", function () { refresh(box); suggestChannels(box); });
-      suggestChannels(box);
+      box.addEventListener("input", function () { refresh(box); });
     });
     roomButtons.forEach(function (b) {
       if (b.disabled) b.dataset.lockedOff = "1";
@@ -617,7 +566,7 @@
         const picked = channelChoices(id);
         start(
           { mode: "manual", overrides: changes, only_room_type_id: Number(id),
-            channels: picked.channels, skip_primary: picked.skip },
+            skip_primary: picked.skip },
           "Set " + button.dataset.room + " to " + shown + " in RMS now?" + "\n\n"
             + (picked.lines.length ? "Websites:\n" + picked.lines.join("\n") + "\n\n" : "")
             + "No other room's rate is touched."
@@ -627,7 +576,7 @@
 
     // -- one room on another website's rule -----------------------------
     //
-    // The row a website's name swaps in under a room has its own Apply: that
+    // Each room in a website's own section has its own Apply: that
     // website's rule, that room, nothing else. The rule's price only -- a
     // channel run takes no typed price.
     laneRoomButtons.forEach(function (button) {
@@ -653,7 +602,6 @@
         const body = { mode: button.dataset.mode, overrides: changes };
         if (button.dataset.mode === "manual") {
           const picked = channelChoices(null);
-          body.channels = picked.channels;
           body.skip_primary = picked.skip;
           if (picked.lines.length) {
             ask = (ask ? ask + "\n\n" : "") + "Websites:\n" + picked.lines.join("\n");
@@ -669,26 +617,6 @@
         apply(result.body);
         polling = setInterval(poll, 2000);
       }
-    });
-  });
-
-  // -- which website a room's row shows --------------------------------
-  //
-  // Clicking a website's name under a room shows that room's row from the
-  // website's own rule in place of the Booking.com one. Only the view moves:
-  // the name is a button inside the tick's label, so it does not tick, and
-  // what Apply writes is still decided by the boxes.
-  document.querySelectorAll("button.view-channel").forEach(function (button) {
-    button.addEventListener("click", function (event) {
-      event.preventDefault();
-      const id = button.dataset.roomTypeId;
-      const want = button.dataset.view;
-      document.querySelectorAll('tr.room-view[data-room-type-id="' + id + '"]').forEach(function (row) {
-        row.hidden = row.dataset.view !== want;
-      });
-      document.querySelectorAll('button.view-channel[data-room-type-id="' + id + '"]').forEach(function (b) {
-        b.classList.toggle("on", b.dataset.view === want);
-      });
     });
   });
 
