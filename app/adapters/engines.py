@@ -348,7 +348,7 @@ ENGINES: tuple[EngineProfile, ...] = (
             # smallest row that still holds the party stands in for it, per
             # room and board. Migration 0035 adds this to attached listings.
             "rooms_filter": {"field": "isFit", "equals": True,
-                             "fallback": {"group_by": ["name", "isBreakfastIncluded"],
+                             "fallback": {"group_by": ["name", "id", "isBreakfastIncluded"],
                                           "occupancy": "adults"}},
             # isFit settles occupancy. It does NOT settle supply: Agoda is a
             # marketplace and lists the same room once per supplier, at
@@ -357,6 +357,12 @@ ENGINES: tuple[EngineProfile, ...] = (
             "rooms_dedupe": "cheapest",
             "fields": {
                 "room_name": "name",
+                # Agoda's room id, which a rename leaves alone. On 24 Oct
+                # 2026 ASG's CLASSIC room (275801276) was printed as "Deluxe
+                # Room" -- the name of another of its rooms (262752532) --
+                # and matched by name it was priced as that other room.
+                # Migration 0036 adds this to listings attached before it.
+                "room_id": "id",
                 "rooms_left": "quantity",
                 # BOTH SIDES OF THE TAX, AND EACH IN ITS OWN SLOT.
                 #

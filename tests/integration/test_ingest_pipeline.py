@@ -1138,3 +1138,84 @@ class TestTheTaxComponentsOfAMove:
         # There is no new price, so there are no new components to invent.
         assert change.new_price_exclusive is None
         assert change.new_taxes_fees is None
+
+
+class TestASiteRoomIdOutlivesItsName:
+    """Agoda reused one room's name for another, and the id is what told them apart.
+
+    On 23 Oct 2026 Agoda listed ASG's CLASSIC room as "Deluxe Family Room"
+    (id 275801276) beside a dearer "Deluxe Room" (262752532). On the 24th the
+    CLASSIC room was printed as "Deluxe Room". Matched by name, its rate was
+    filed under the other room and CLASSIC fell out of Repricing.
+    """
+
+    def _rooms(self, session, fixture):
+        from app.db.models import MatchMethod, RoomTypeAlias
+
+        classic = RoomType(hotel_id=fixture["hotel"].id, name="Deluxe Double Room",
+                           canonical_name="deluxe double")
+        session.add(classic)
+        session.flush()
+        session.add(RoomTypeAlias(
+            room_type_id=classic.id, hotel_id=fixture["hotel"].id,
+            source_id=fixture["source"].id, raw_name="Deluxe Family Room",
+            normalized_name="deluxe family", match_method=MatchMethod.MANUAL, confidence=1))
+        session.flush()
+        return classic, fixture["room"]          # the fixture's room is "Deluxe Room"
+
+    def _series_room(self, session, price):
+        return {s.room_type_id for s in session.scalars(select(PriceSeries)).all()
+                if s.current_price == Decimal(price)}
+
+    def test_a_room_renamed_to_another_rooms_name_stays_itself(self, session, hotel_fixture):
+        classic, deluxe = self._rooms(session, hotel_fixture)
+        base = datetime.now(UTC)
+        ingest_fetch_result(session, _result(
+            _offer(name="Deluxe Family Room", price="4725", site_room_id="275801276"),
+            _offer(name="Deluxe Room", price="7200", site_room_id="262752532"),
+        ), _context(hotel_fixture, checked_at=base))
+        session.flush()
+
+        # The next night of fetching: the CLASSIC room under the other's name.
+        ingest_fetch_result(session, _result(
+            _offer(name="Deluxe Room", price="6300", site_room_id="275801276"),
+        ), _context(hotel_fixture, checked_at=base + timedelta(minutes=30)))
+        session.flush()
+
+        series = {s.room_type_id: s for s in session.scalars(select(PriceSeries)).all()}
+        assert series[classic.id].current_price == Decimal("6300.00")
+        assert series[deluxe.id].current_price == Decimal("7200.00")
+
+    def test_a_hand_made_mapping_re_points_the_id(self, session, hotel_fixture):
+        """A person who maps a name has looked at the room; the id follows them."""
+        from app.db.models import MatchMethod, RoomTypeAlias
+
+        classic, deluxe = self._rooms(session, hotel_fixture)
+        base = datetime.now(UTC)
+        # Learned wrong, by name, before anyone looked.
+        ingest_fetch_result(session, _result(
+            _offer(name="Deluxe Room", price="6300", site_room_id="275801276"),
+        ), _context(hotel_fixture, checked_at=base))
+        session.flush()
+
+        session.add(RoomTypeAlias(
+            room_type_id=classic.id, hotel_id=hotel_fixture["hotel"].id,
+            source_id=hotel_fixture["source"].id, raw_name="Classic Deluxe",
+            normalized_name="classic deluxe", match_method=MatchMethod.MANUAL, confidence=1))
+        session.flush()
+        ingest_fetch_result(session, _result(
+            _offer(name="Classic Deluxe", price="6400", site_room_id="275801276"),
+        ), _context(hotel_fixture, checked_at=base + timedelta(minutes=30)))
+        ingest_fetch_result(session, _result(
+            _offer(name="Deluxe Room", price="6500", site_room_id="275801276"),
+        ), _context(hotel_fixture, checked_at=base + timedelta(minutes=60)))
+        session.flush()
+
+        assert self._series_room(session, "6500") == {classic.id}
+
+    def test_an_offer_without_an_id_matches_by_name_as_before(self, session, hotel_fixture):
+        classic, _ = self._rooms(session, hotel_fixture)
+        ingest_fetch_result(session, _result(_offer(name="Deluxe Family Room", price="5600")),
+                            _context(hotel_fixture))
+        session.flush()
+        assert self._series_room(session, "5600") == {classic.id}

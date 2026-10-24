@@ -182,6 +182,7 @@ def ingest_fetch_result(
     summary = IngestSummary(offers_seen=len(result.offers))
 
     aliases = _load_aliases(session, ctx)
+    manual = _load_manual_names(session, ctx)
     candidates = _load_room_types(session, ctx.hotel_id)
     if not candidates and result.offers:
         # A brand-new hotel has no rooms defined, so every offer would land in
@@ -226,7 +227,7 @@ def ingest_fetch_result(
             )
             continue
 
-        room_type_id = _resolve_room(session, offer, ctx, aliases, candidates)
+        room_type_id = _resolve_by_site_id(session, offer, ctx, aliases, manual, candidates)
         if room_type_id is None:
             summary.offers_unmatched += 1
             continue
@@ -329,6 +330,95 @@ def _load_aliases(session: Session, ctx: IngestContext) -> dict[str, int]:
         )
     ).all()
     return {name: room_type_id for name, room_type_id in rows}
+
+
+def _load_manual_names(session: Session, ctx: IngestContext) -> set[str]:
+    """The names a person mapped by hand, for :func:`_resolve_by_site_id`."""
+    return set(session.scalars(
+        select(RoomTypeAlias.normalized_name).where(
+            RoomTypeAlias.source_id == ctx.source_id,
+            RoomTypeAlias.hotel_id == ctx.hotel_id,
+            RoomTypeAlias.match_method == MatchMethod.MANUAL,
+        )
+    ))
+
+
+def site_room_key(site_room_id: str) -> str:
+    """The alias row's ``normalized_name`` for a site's room id.
+
+    The ``#`` keeps it out of the name space: ``normalize_room_name`` never
+    produces one, so an id cannot collide with a room called "275801276".
+    Migration 0036 writes the same key.
+    """
+    return f"#{site_room_id}"[:300]
+
+
+def _resolve_by_site_id(
+    session: Session,
+    offer: NormalizedOffer,
+    ctx: IngestContext,
+    aliases: dict[str, int],
+    manual: set[str],
+    candidates: list[tuple[int, str]],
+) -> int | None:
+    """:func:`_resolve_room`, trusting the site's room id over its room name.
+
+    WHY THE ID
+    ==========
+    A name is the one thing about a room an OTA changes freely. Agoda sold
+    ASG's CLASSIC room as "Deluxe Family Room" until 23 Oct 2026 and as
+    "Deluxe Room" on the 24th -- reusing the name of a different, dearer room
+    it lists beside it. Matched by name, CLASSIC's rate was filed under that
+    other room and CLASSIC dropped out of Repricing; no alias could fix it,
+    because the one name now meant two rooms. The id (275801276) never moved.
+
+    THE ORDER
+    =========
+    1. A name a person mapped by hand. That is a decision about this room,
+       taken after looking at it, and it re-points the id too -- so the
+       next rename follows the person, not the old guess.
+    2. The id, once seen. A rename lands on the room it always was.
+    3. The name, as before -- and what it resolves to is remembered under
+       the id, so this is the last time the name decides.
+    """
+    if not offer.site_room_id:
+        return _resolve_room(session, offer, ctx, aliases, candidates)
+
+    key = site_room_key(offer.site_room_id)
+    normalized = room_matching.normalize_room_name(offer.raw_room_name)
+    if normalized in manual and normalized in aliases:
+        room_type_id = aliases[normalized]
+    elif key in aliases:
+        return aliases[key]
+    else:
+        room_type_id = _resolve_room(session, offer, ctx, aliases, candidates)
+        if room_type_id is None:
+            return None
+
+    if aliases.get(key) != room_type_id:
+        _remember_site_id(session, key, room_type_id, offer, ctx)
+        aliases[key] = room_type_id
+    return room_type_id
+
+
+def _remember_site_id(session: Session, key: str, room_type_id: int,
+                      offer: NormalizedOffer, ctx: IngestContext) -> None:
+    session.execute(
+        pg_insert(RoomTypeAlias)
+        .values(
+            room_type_id=room_type_id,
+            hotel_id=ctx.hotel_id,
+            source_id=ctx.source_id,
+            raw_name=f"{offer.raw_room_name} (site room {offer.site_room_id})"[:300],
+            normalized_name=key,
+            match_method=MatchMethod.EXACT,
+            confidence=1,
+        )
+        .on_conflict_do_update(
+            index_elements=["source_id", "hotel_id", "normalized_name"],
+            set_={"room_type_id": room_type_id},
+        )
+    )
 
 
 def _load_room_types(session: Session, hotel_id: int) -> list[tuple[int, str]]:

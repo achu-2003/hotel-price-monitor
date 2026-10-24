@@ -350,10 +350,14 @@ def dedupe_offers(offers: list, keep: str | None) -> list:
     best: dict[tuple, Any] = {}
     order: list[tuple] = []
     for offer in offers:
+        # The site's room id too, where there is one: two rooms Agoda prints
+        # under one name are still two rooms, and must not be cheapest-ed
+        # into one.
         identity = (
             _norm(offer.raw_room_name),
             _norm(offer.meal_plan),
             offer.refundable,
+            offer.site_room_id,
         )
         price = offer.price_inclusive if offer.price_inclusive is not None else offer.price_exclusive
         incumbent = best.get(identity)
@@ -510,6 +514,8 @@ def offer_from_mapping(
     ``refundable``      truthy/falsy field
     ``available``       truthy/falsy field
     ``rooms_left``      urgency counter, informational only
+    ``room_id``         the site's own id for the room, which outlives
+                        a rename -- see ``NormalizedOffer.site_room_id``
     ==================  =============================================
     """
     raw_name = dig(node, mapping.get("room_name"), None, params=params)
@@ -578,6 +584,12 @@ def offer_from_mapping(
         if flag is not None:
             board = meal_plan.BREAKFAST if _truthy(flag) else meal_plan.ROOM_ONLY
 
+    room_id = (
+        dig(node, mapping["room_id"], None, params=params)
+        if mapping.get("room_id") else None
+    )
+    room_id = str(room_id).strip()[:100] if room_id not in (None, "") else None
+
     return NormalizedOffer(
         raw_room_name=str(raw_name).strip(),
         price_inclusive=inclusive,
@@ -592,6 +604,7 @@ def offer_from_mapping(
         refundable=None if refundable_raw is None else _truthy(refundable_raw),
         is_available=available,
         rooms_left=rooms_left,
+        site_room_id=room_id or None,
         raw_payload=node if isinstance(node, dict) else {"value": node},
     )
 

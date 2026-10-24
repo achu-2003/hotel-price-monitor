@@ -82,6 +82,11 @@ class NormalizedOffer:
     refundable: bool | None = None
     is_available: bool = True
     rooms_left: int | None = None
+    #: The site's own id for the room, where it has one (Agoda's room id).
+    #: Names are marketing copy and get reused: Agoda moved ASG's CLASSIC
+    #: room from "Deluxe Family Room" to "Deluxe Room", the name of a
+    #: different room it still sells. The id stayed. See services/ingest.py.
+    site_room_id: str | None = None
     # Kept verbatim for debugging schema drift; scrubbed before it is stored.
     raw_payload: dict[str, Any] | None = None
 
