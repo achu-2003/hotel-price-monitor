@@ -32,7 +32,9 @@ is exported by name and resolved again on the way in: the booking site by its
 source code, the room by its canonical name. A hotel that already exists on
 the other side (same name, same owner) is REPORTED AND SKIPPED, never merged:
 two setups of one hotel silently blended is worse than one that is plainly
-not copied. A booking site whose source does not exist there is skipped the
+not copied. The one exception is a room match made BY HAND (an OTA renamed a
+room and someone pointed the new name at the old room): those are added to
+the sites the hotel already has, since the server cannot learn them itself. A booking site whose source does not exist there is skipped the
 same way.
 
 USE
@@ -71,7 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import inspect, select  # noqa: E402
 
 from app.db.models import (  # noqa: E402
-    Hotel, HotelSource, MonitorTarget, RoomType, RoomTypeAlias, Source, User,
+    Hotel, HotelSource, MatchMethod, MonitorTarget, RoomType, RoomTypeAlias, Source, User,
 )
 from app.db.session import sync_session  # noqa: E402
 
@@ -224,6 +226,55 @@ def _source_for(session, code: str, exported: dict | None, sources: dict, notes:
     return source
 
 
+def _carry_manual_matches(session, hotel: Hotel, sites: list) -> list[str]:
+    """Hand-made room matches, onto booking sites this hotel already has here.
+
+    A site that exists on both sides is otherwise left alone, and that lost
+    the one thing that cannot be learned again: an OTA renames a room ("Deluxe
+    Double Room" became "Deluxe Family Room"), a person points the new name at
+    the old room, and the server -- which already had the site -- went on
+    filing the new name as a room of its own, with no RMS row and no price.
+    The paired room then vanished from Repricing without a word.
+
+    Only ``manual`` matches cross. Fuzzy ones each machine learns for itself,
+    and overriding them would be a merge by another name. A manual match here
+    that disagrees is a decision somebody made on this side; it is reported,
+    not overwritten.
+    """
+    rooms = {r.canonical_name: r for r in session.scalars(
+        select(RoomType).where(RoomType.hotel_id == hotel.id))}
+    notes: list[str] = []
+    for site, source in sites:
+        here = {a.normalized_name: a for a in session.scalars(select(RoomTypeAlias).where(
+            RoomTypeAlias.hotel_id == hotel.id, RoomTypeAlias.source_id == source.id))}
+        for alias in site["aliases"]:
+            if alias.get("match_method") != "manual":
+                continue
+            room = rooms.get(alias["room"])
+            if room is None:
+                notes.append(f"    - {source.code}: {alias['raw_name']!r} SKIPPED, "
+                             f"no room {alias['room']!r} here")
+                continue
+            current = here.get(alias["normalized_name"])
+            if current is None:
+                session.add(RoomTypeAlias(
+                    **_in(RoomTypeAlias, {k: v for k, v in alias.items() if k != "room"}),
+                    room_type_id=room.id, hotel_id=hotel.id, source_id=source.id))
+                notes.append(f"    - {source.code}: {alias['raw_name']!r} now means {room.name!r}")
+            elif current.room_type_id == room.id:
+                continue
+            elif current.match_method == MatchMethod.MANUAL:
+                notes.append(f"    - {source.code}: {alias['raw_name']!r} LEFT pointing at another "
+                             f"room, set by hand here too")
+            else:
+                current.room_type_id = room.id
+                current.match_method = MatchMethod.MANUAL
+                current.confidence = 1.0
+                notes.append(f"    - {source.code}: {alias['raw_name']!r} re-pointed at {room.name!r}")
+    session.flush()
+    return notes
+
+
 def import_(path: Path, username: str | None, write: bool) -> int:
     data = json.loads(path.read_text(encoding="utf-8"))
     exported_sources = data.get("sources", {})
@@ -254,13 +305,23 @@ def import_(path: Path, username: str | None, write: bool) -> int:
             hotel = existing.get(_key(name))
             if hotel is not None:
                 # ALREADY HERE: only what it is missing is added. A site it
-                # already has is left exactly as it is -- never merged.
+                # already has is left exactly as it is -- never merged --
+                # except for the room matches a person made by hand.
                 have = set(session.scalars(select(HotelSource.source_id)
                                            .where(HotelSource.hotel_id == hotel.id)))
+                matched = _carry_manual_matches(session, hotel, [
+                    (site, source) for site, source in usable if source.id in have])
                 usable = [(site, source) for site, source in usable if source.id not in have]
                 if not usable:
-                    print(f"SKIP {name}: already here with all its booking sites.")
+                    if matched:
+                        verb = "UPDATE" if write else "WOULD UPDATE"
+                        print(f"{verb} {name}: room matches")
+                        print("\n".join(notes + matched))
+                        changed += 1
+                    else:
+                        print(f"SKIP {name}: already here with all its booking sites.")
                     continue
+                notes.extend(matched)
                 verb = "ADD TO" if write else "WOULD ADD TO"
             else:
                 if not usable:
