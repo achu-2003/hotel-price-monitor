@@ -24,6 +24,7 @@ from app.core.errors import AdapterConfigError
 _ADAPTERS: dict[str, str] = {
     "playwright_direct_site": "app.adapters.playwright_direct_site:PlaywrightDirectSiteAdapter",
     "playwright_ota": "app.adapters.playwright_ota:PlaywrightOtaAdapter",
+    "goibibo": "app.adapters.goibibo:GoibiboAdapter",
     "http_json": "app.adapters.http_json:HttpJsonAdapter",
     "aiosell": "app.adapters.aiosell:AiosellAdapter",
     "hotelzify": "app.adapters.hotelzify:HotelzifyAdapter",
@@ -36,6 +37,7 @@ _ADAPTERS: dict[str, str] = {
 _QUEUES: dict[str, str] = {
     "playwright_direct_site": "browser",
     "playwright_ota": "browser",
+    "goibibo": "browser",
     "http_json": "http",
     "aiosell": "http",
     "hotelzify": "http",

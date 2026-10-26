@@ -58,6 +58,12 @@ _ISO_DATE_IN_PATH_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _COMBINED_OCCUPANCY_RE = re.compile(r"^(\d+)-(\d+)$")
 
+#: Goibibo's ``?roomString=1-2-0``: rooms, adults, children. Only the
+#: one-room form is templated -- what a second room looks like in this string
+#: has not been seen, so the room count is kept exactly as pasted.
+_ROOM_STRING_PARAMS: tuple[str, ...] = ("roomstring",)
+_ROOM_STRING_RE = re.compile(r"^1-(\d+)-(\d+)$")
+
 #: Separators seen joining two dates inside ONE parameter. Cleartrip writes
 #: ?c=010926%7C020926 -- check-in and check-out in a single value.
 _COMBINED_DATE_SEPARATORS: tuple[str, ...] = ("|", "~", "_", ",")
@@ -413,6 +419,24 @@ ENGINES: tuple[EngineProfile, ...] = (
               "here is second-class -- prefer the hotel's own engine.",
     ),
     EngineProfile(
+        key="goibibo",
+        display_name="Goibibo (OTA listing)",
+        # Its own adapter rather than playwright_ota with a mapping: the price
+        # shown is picked by a key the payload names, and the page has to be
+        # opened as a visitor. Both are explained in app/adapters/goibibo.py.
+        adapter_key="goibibo",
+        domains=("goibibo.com",),
+        adapter_config={},
+        external_id_pattern=r"[?&]giHotelId=(\d+)",
+        # ONE A MINUTE, across every hotel on Goibibo. The edge scores how
+        # often it is asked: about thirty loads in a few minutes and it
+        # started handing out empty pages, even to the browser that worked.
+        rate_limit_per_min=1,
+        notes="OTA, ToS review required. Read in installed Chrome as a "
+              "visitor; records the price the card shows (after Goibibo's "
+              "default coupon, before tax), never the struck base fare.",
+    ),
+    EngineProfile(
         key="treebo",
         display_name="Treebo (brand site)",
         adapter_key="playwright_direct_site",
@@ -663,6 +687,11 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
             if normalised in _COMBINED_OCCUPANCY_PARAMS and value
             else None
         )
+        room_string = (
+            _ROOM_STRING_RE.match(value)
+            if normalised in _ROOM_STRING_PARAMS and value
+            else None
+        )
         # ALREADY A PLACEHOLDER. This function has to be safe to run twice.
         #
         # It is not only called on a freshly pasted URL: a repair re-runs it
@@ -696,6 +725,10 @@ def parameterise_url(url: str) -> tuple[str, dict[str, str]]:
             substituted[key] = f"{value} -> {{adults}}-{{children}}"
             placeholder_values.add("{adults}-{children}")
             rebuilt.append((key, "{adults}-{children}"))
+        elif room_string:
+            substituted[key] = f"{value} -> 1-{{adults}}-{{children}}"
+            placeholder_values.add("1-{adults}-{children}")
+            rebuilt.append((key, "1-{adults}-{children}"))
         else:
             rebuilt.append((key, value))
 

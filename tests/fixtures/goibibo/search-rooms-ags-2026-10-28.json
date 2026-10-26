@@ -1,0 +1,1140 @@
+{
+ "response": {
+  "exactRooms": [
+   {
+    "roomName": "Classic Room",
+    "roomCode": "2977",
+    "ratePlans": [
+     {
+      "name": "Room With Free Cancellation",
+      "mealPlanCode": "EP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 32,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 7500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2298.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5202.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 600.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5202.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 7500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2481.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5019.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 600.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5019.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 7500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2286.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5214.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 600.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5214.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast only",
+      "mealPlanCode": "CP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 32,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2451.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5549.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5549.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2646.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5354.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5354.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2438.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5562.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5562.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast + Lunch/Dinner",
+      "mealPlanCode": "MAP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 32,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 11000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3233.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 7767.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2024.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 7767.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 11000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3535.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 7465.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2024.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 7465.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 11000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3249.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 7751.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2024.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 7751.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "roomName": "Deluxe Room",
+    "roomCode": "2249",
+    "ratePlans": [
+     {
+      "name": "Room With Free Cancellation",
+      "mealPlanCode": "EP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 40,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2579.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5421.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5421.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2774.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5226.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5226.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2566.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5434.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 640.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5434.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast only",
+      "mealPlanCode": "CP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 40,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2740.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5760.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 680.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5760.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2947.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5553.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 680.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5553.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 8500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2726.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 5774.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 680.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 5774.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast + Lunch/Dinner",
+      "mealPlanCode": "MAP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 40,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3874.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8626.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2300.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8626.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4218.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8282.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2300.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8282.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12500.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3893.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8607.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2300.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8607.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "roomName": "Standard Room with Pool View",
+    "roomCode": "118873",
+    "ratePlans": [
+     {
+      "name": "Room With Free Cancellation",
+      "mealPlanCode": "EP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 8,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3099.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 6901.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 6901.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3374.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 6626.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 6626.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3114.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 6886.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 6886.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "roomName": "Suite Room",
+    "roomCode": "2119",
+    "ratePlans": [
+     {
+      "name": "Room With Free Cancellation",
+      "mealPlanCode": "EP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 14,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2939.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 7061.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 7061.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3214.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 6786.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 6786.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 10000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 2954.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 7046.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 1840.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 7046.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast only",
+      "mealPlanCode": "CP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 14,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3527.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8473.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2208.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8473.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3857.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8143.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2208.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8143.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 12000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 3545.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 8455.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2208.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 8455.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast + Lunch/Dinner",
+      "mealPlanCode": "MAP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 14,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4408.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10592.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10592.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4821.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10179.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10179.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4431.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10569.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10569.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "roomName": "Luxury villa",
+    "roomCode": "860",
+    "ratePlans": [
+     {
+      "name": "Room With Free Cancellation",
+      "mealPlanCode": "EP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 23,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4648.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10352.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10352.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 5061.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 9939.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 9939.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 15000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4671.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10329.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2760.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10329.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     },
+     {
+      "name": "Room With Free Cancellation | Breakfast only",
+      "mealPlanCode": "CP",
+      "cancellationPolicy": {
+       "type": "FC"
+      },
+      "tariffs": [
+       {
+        "defaultPriceKey": "GOSMARTSAVING",
+        "availCount": 23,
+        "occupancydetails": {
+         "numberOfAdults": 2,
+         "numberOfChildren": 0,
+         "roomCount": 1
+        },
+        "priceMap": {
+         "GOICICIFESTEMI": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 16000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4958.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 11042.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2944.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 11042.0
+           }
+          ]
+         },
+         "GOICICIFEST": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 16000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 5399.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 10601.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2944.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 10601.0
+           }
+          ]
+         },
+         "GOSMARTSAVING": {
+          "details": [
+           {
+            "key": "BASE_FARE",
+            "amount": 16000.0
+           },
+           {
+            "key": "TOTAL_DISCOUNT",
+            "amount": 4983.0
+           },
+           {
+            "key": "PRICE_AFTER_DISCOUNT",
+            "amount": 11017.0
+           },
+           {
+            "key": "TAXES",
+            "amount": 2944.0
+           },
+           {
+            "key": "TOTAL_AMOUNT",
+            "amount": 11017.0
+           }
+          ]
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     browser_nav_timeout_ms: int = 45_000
     browser_max_concurrency: int = 3
     browser_user_agent_suffix: str = "HotelPriceMonitor/1.0"
+    # The browser for a site read AS A VISITOR (see BrowserPool.context's
+    # as_visitor). Goibibo refuses Playwright's own Chromium outright and
+    # serves an empty room list to headless Chrome, so this is the installed
+    # Google Chrome, in a window. "" falls back to the bundled Chromium.
+    browser_visitor_channel: str = "chrome"
+    browser_visitor_headless: bool = False
     artifact_dir: Path = Path("/data/artifacts")
     artifact_retention_days: int = 7
 

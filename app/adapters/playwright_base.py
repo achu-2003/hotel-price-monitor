@@ -16,8 +16,13 @@ What this module guarantees for every fetch:
 * **Honesty.** The User-Agent identifies this tool and carries a contact URL.
   We do not disguise ourselves.
 * **A hard stop on refusal.** If a bot wall or CAPTCHA appears we raise
-  ``BlockedError`` and give up. There is no evasion path in this codebase by
-  design, and adding one would violate the project's stated boundaries.
+  ``BlockedError`` and give up. Nothing here solves a challenge.
+
+  The one exception to "honesty" above is ``as_visitor``: a site the owner
+  has decided to read the way a guest's browser does (Goibibo, see
+  app/adapters/goibibo.py) gets installed Chrome, its own user agent and every
+  resource. That is chosen per ADAPTER, never per hotel, and the source still
+  needs its ToS review recorded before anything fetches it.
 * **Evidence on failure.** A screenshot and the HTML are saved so a broken
   selector is a ten-minute fix instead of a two-hour investigation.
 """
@@ -273,6 +278,32 @@ class BrowserPool:
         )
         return self._local.browser
 
+    def _ensure_visitor_browser(self) -> Browser:
+        """The installed Chrome, for ``as_visitor`` contexts. One per thread too.
+
+        A second browser rather than a flag on the first, because the two
+        cannot be one process: the scraper's is headless Chromium, this one is
+        a Chrome window. Started on first use, so a worker that never reads a
+        visitor site never opens a window.
+        """
+        browser = getattr(self._local, "visitor_browser", None)
+        if browser is not None and browser.is_connected():
+            return browser
+
+        settings = get_settings()
+        if self._playwright is None:
+            _ensure_windows_subprocess_support()
+            self._local.playwright = sync_playwright().start()
+
+        # None of the scraper's launch flags. --disable-gpu and
+        # --disable-extensions are exactly the differences from an ordinary
+        # Chrome that a bot score is built from.
+        self._local.visitor_browser = self._local.playwright.chromium.launch(
+            channel=settings.browser_visitor_channel or None,
+            headless=settings.browser_visitor_headless,
+        )
+        return self._local.visitor_browser
+
     @contextmanager
     def context(
         self,
@@ -280,6 +311,7 @@ class BrowserPool:
         locale: str,
         timezone: str,
         as_person: bool = False,
+        as_visitor: bool = False,
         storage_state: dict | None = None,
     ) -> Generator[BrowserContext, None, None]:
         """A fresh context. ``as_person`` makes it look like an ordinary browser.
@@ -292,24 +324,35 @@ class BrowserPool:
         and it should look like one: RMS Cloud answered the announced user
         agent with "Object reference not set to an instance of an object"
         where a plain Chrome string got an ordinary login.
+
+        ``as_visitor`` goes one further, for a site that serves its rooms only
+        to a browser indistinguishable from a guest's: the installed Chrome,
+        with ITS OWN user agent. Overriding it is a tell -- the string says
+        Chrome 131 on Linux while the browser's client hints say otherwise.
+        Nothing is blocked either: on 26 Oct 2026 Goibibo answered every load
+        with an empty room list once images were turned off, and with the
+        full list when they were not.
         """
         settings = get_settings()
-        browser = self._ensure_browser()
+        browser = self._ensure_visitor_browser() if as_visitor else self._ensure_browser()
+        identity: dict[str, Any] = {} if as_visitor else {
+            "user_agent": build_user_agent("" if as_person else settings.browser_user_agent_suffix),
+        }
         ctx = browser.new_context(
             locale=locale,
             timezone_id=timezone,
             viewport={"width": 1366, "height": 900},
-            user_agent=build_user_agent("" if as_person else settings.browser_user_agent_suffix),
             color_scheme="light",
             java_script_enabled=True,
             ignore_https_errors=False,
             # Cookies and local storage from an earlier visit: how a site
             # that trusted this "device" once recognises it again.
             storage_state=storage_state,
+            **identity,
         )
         ctx.set_default_timeout(settings.browser_nav_timeout_ms)
         ctx.set_default_navigation_timeout(settings.browser_nav_timeout_ms)
-        if not as_person:
+        if not (as_person or as_visitor):
             _install_resource_blocking(ctx)
         try:
             yield ctx
@@ -320,25 +363,26 @@ class BrowserPool:
                 pass
 
     def close(self) -> None:
-        """Shut down THIS thread's browser.
+        """Shut down THIS thread's browsers.
 
-        Only the calling thread's instance is touched: closing another
+        Only the calling thread's instances are touched: closing another
         thread's browser from here would be the very cross-thread access this
         design exists to avoid.
         """
-        try:
-            if self._browser is not None:
-                self._browser.close()
-        except PlaywrightError:
-            pass
-        finally:
-            self._local.browser = None
-            if self._playwright is not None:
-                try:
-                    self._playwright.stop()
-                except Exception:  # noqa: BLE001
-                    pass
-                self._local.playwright = None
+        for attr in ("browser", "visitor_browser"):
+            try:
+                browser = getattr(self._local, attr, None)
+                if browser is not None:
+                    browser.close()
+            except PlaywrightError:
+                pass
+            setattr(self._local, attr, None)
+        if self._playwright is not None:
+            try:
+                self._playwright.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._local.playwright = None
 
 
 #: Module-level, therefore one per Celery worker process.
@@ -374,6 +418,7 @@ def open_page(
     wait_until: str = "domcontentloaded",
     artifact_label: str = "fetch",
     as_person: bool = False,
+    as_visitor: bool = False,
     storage_state: dict | None = None,
 ) -> Generator[BrowserFetch, None, None]:
     """Open ``url`` in a fresh, pinned context and hand back the page.
@@ -386,7 +431,8 @@ def open_page(
     started = time.monotonic()
 
     with browser_pool.context(
-        locale=locale, timezone=timezone, as_person=as_person, storage_state=storage_state
+        locale=locale, timezone=timezone, as_person=as_person, as_visitor=as_visitor,
+        storage_state=storage_state,
     ) as ctx:
         page = ctx.new_page()
         captured: list[CapturedResponse] = []
