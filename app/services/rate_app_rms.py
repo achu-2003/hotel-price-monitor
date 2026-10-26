@@ -75,6 +75,11 @@ _OVERRIDE_SAVE = f"{_OVERRIDE_DIALOG} .btn-save"
 _OVERRIDE_CLOSE = f"{_OVERRIDE_DIALOG} .btn-close"
 #: How long a route change or a save is given before it is read.
 _ROUTE_SECONDS = 20
+#: How long RMS's own "Initializing System ..." box is given after sign-in.
+#: On 26 Oct 2026 it took 40 seconds to over 90, and every Preview and Apply
+#: failed at the toolbar while the 20-second route wait ran out behind it.
+_STARTUP_SECONDS = 180
+_STARTING_UP = "Initializing System"
 #: How many day columns the grid shows at its default zoom.
 DAYS_SHOWN = 14
 
@@ -224,11 +229,21 @@ def open_grid(page, *, channel: str) -> None:
 
     # The landing page draws its toolbar after the login verdict is read;
     # the icon is waited for, not looked for once.
+    # While RMS still says it is starting up, the toolbar is not late, it is
+    # not drawn yet; that wait is RMS's, and gets the longer budget.
     link = page.locator(_RATE_MANAGER_LINK).first
-    try:
-        link.wait_for(state="visible", timeout=_ROUTE_SECONDS * 1_000)
-    except Exception:  # noqa: BLE001
-        raise GridError("could not find the Room Rate Manager icon in the top toolbar")
+    deadline = time.monotonic() + _STARTUP_SECONDS
+    while True:
+        try:
+            link.wait_for(state="visible", timeout=_ROUTE_SECONDS * 1_000)
+            break
+        except Exception:  # noqa: BLE001
+            if time.monotonic() < deadline and _still_starting(page):
+                continue
+            if _still_starting(page):
+                raise GridError(f"RMS was still \"{_STARTING_UP} ...\" after "
+                                f"{_STARTUP_SECONDS} seconds; try again in a few minutes")
+            raise GridError("could not find the Room Rate Manager icon in the top toolbar")
     link.click(timeout=10_000)
     if not _settle(page, expect_text="Room Rate Manager"):
         raise GridError("Room Rate Manager did not open")
@@ -248,6 +263,13 @@ def open_grid(page, *, channel: str) -> None:
         listed = ", ".join(_direct_names(page, 1)) or "nothing"
         raise GridError(f"the Channel view listed {listed}, not {channel}")
     _expand(page, channel_row)
+
+
+def _still_starting(page) -> bool:
+    try:
+        return _STARTING_UP in page.inner_text("body", timeout=2_000)
+    except Exception:  # noqa: BLE001 - a page mid-navigation has no body
+        return False
 
 
 def channel_names(page) -> list[str]:

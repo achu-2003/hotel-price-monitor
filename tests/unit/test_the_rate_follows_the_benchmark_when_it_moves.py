@@ -154,6 +154,20 @@ class TestTheRedeliveryGuardDoesNotSwallowATriggeredRun:
         result = task.run_repricing.run(2, "auto", trigger="benchmark", trigger_id="same")
         assert result["repeat"] is True
 
+    def test_a_tick_three_minutes_after_a_preview_runs(self, runner):
+        """26 Oct 2026: the tick carried no id and returned the Preview's result."""
+        runner.last = _done_minutes_ago(3, mode="dry_run")
+        with pytest.raises(_Reached):
+            task.run_repricing.run(2, "auto", trigger="tick", trigger_id="new")
+
+    def test_the_tick_gives_each_run_its_own_id(self, world, monkeypatch):
+        monkeypatch.setattr(task.state, "read", lambda o, k: None)
+        task.auto_tick()
+        task.auto_tick()
+        (_, first, _), (_, second, _) = world.queued
+        assert first["trigger"] == "tick" and first["trigger_id"]
+        assert first["trigger_id"] != second["trigger_id"]
+
     def test_an_untagged_run_inside_the_window_is_still_a_redelivery(self, runner):
         """What the guard was for, unchanged."""
         runner.last = _done_minutes_ago(3)

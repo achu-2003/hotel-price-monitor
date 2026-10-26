@@ -1148,7 +1148,12 @@ def auto_tick() -> dict[str, Any]:
         current = state.read(owner_user_id, KIND)
         if current and current.get("status") == "running":
             continue
-        run_repricing.apply_async(args=[owner_user_id, "auto"], kwargs={"trigger": "tick"},
+        # Its own id, like every other trigger. Without one the redelivery
+        # guard fell back to the clock, and a tick within ten minutes of a
+        # Preview was taken for a second delivery of it and skipped: on 26 Oct
+        # 2026 automatic mode returned the Preview's result and wrote nothing.
+        run_repricing.apply_async(args=[owner_user_id, "auto"],
+                                  kwargs={"trigger": "tick", "trigger_id": uuid4().hex},
                                   queue="browser")
         started.append(owner_user_id)
     return {"started": started, "enabled": len(owners)}
