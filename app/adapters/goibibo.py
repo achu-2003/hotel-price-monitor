@@ -117,9 +117,15 @@ class GoibiboAdapter(PlaywrightOtaAdapter):
 
             offers = offers_from_search_rooms(payload, context) if payload is not None else []
             if not offers:
-                if not says_sold_out:
-                    # Neither rooms nor "sold out": the throttled page. Raised
-                    # inside the page so its screenshot is kept.
+                # SOLD OUT ONLY WHEN GOIBIBO SAID SO IN ITS ROOM LIST. A
+                # throttled page still renders, its room request is what gets
+                # refused, and with no rooms the page prints its own "Sold Out
+                # on Goibibo". On 26 Oct 2026 that marked all nine of
+                # Sterling's rates sold out at the same minute ASG's page was
+                # refused outright. So the text counts only beside a room list
+                # that arrived and was empty.
+                if payload is None or not says_sold_out:
+                    # Raised inside the page so its screenshot is kept.
                     raise RateLimitedError(
                         f"Goibibo sent no room list for {context.hotel_name} on "
                         f"{context.check_in.isoformat()}. That is how it slows a "

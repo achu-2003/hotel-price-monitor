@@ -99,3 +99,55 @@ class TestTheLinkFollowsTheNight:
         assert "checkin={check_in:%Y%m%d}" in d.url_template
         assert "checkout={check_out:%Y%m%d}" in d.url_template
         assert "roomString=1-{adults}-{children}" in d.url_template
+
+
+class _Page:
+    def __init__(self, body: str):
+        self.body = body
+
+    def inner_text(self, _selector: str) -> str:
+        return self.body
+
+    def wait_for_timeout(self, _ms: int) -> None:
+        pass
+
+
+def _fetch_with(monkeypatch, *, body: str, payload):
+    """Run the adapter against a page that shows ``body`` and sent ``payload``."""
+    from contextlib import contextmanager
+
+    from app.adapters import goibibo
+    from app.adapters.playwright_base import BrowserFetch, CapturedResponse
+
+    fetch = BrowserFetch(page=_Page(body), json_responses=(
+        [CapturedResponse(url="https://mapi.goibibo.com/clientbackend-gi/cg/search-rooms/desktop/2",
+                          status=200, payload=payload)] if payload is not None else []))
+
+    @contextmanager
+    def fake_open_page(*_a, **_kw):
+        yield fetch
+
+    monkeypatch.setattr(goibibo, "open_page", fake_open_page)
+    monkeypatch.setattr(goibibo.RobotsChecker, "assert_allowed", lambda self, url: None)
+    monkeypatch.setattr(goibibo, "_cache_or_none", lambda: None)
+    return goibibo.GoibiboAdapter().fetch(
+        FetchContext(hotel_source_id=21, hotel_name="Sterling", url=URL, external_id=None,
+                     stay=StayWindow(date(2026, 10, 26), date(2026, 10, 27)), adults=2,
+                     config={"wait_timeout_ms": 1}))
+
+
+class TestASoldOutNightIsOneGoibiboSaid:
+    def test_sold_out_text_with_no_room_list_is_a_throttle(self, monkeypatch):
+        """26 Oct: the refused room request left the page saying "Sold Out"."""
+        from app.core.errors import RateLimitedError
+        with pytest.raises(RateLimitedError):
+            _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo", payload=None)
+
+    def test_an_empty_room_list_and_the_text_is_sold_out(self, monkeypatch):
+        result = _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
+                             payload={"response": {"exactRooms": []}})
+        assert result.sold_out_detected and result.offers == []
+
+    def test_rooms_are_rooms(self, monkeypatch):
+        result = _fetch_with(monkeypatch, body="AGS Holiday Resorts", payload=PAYLOAD)
+        assert len(result.offers) == 12 and not result.sold_out_detected
