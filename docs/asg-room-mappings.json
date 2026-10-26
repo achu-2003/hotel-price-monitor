@@ -37,6 +37,35 @@
           "theirs": "Mountain View Classic Room"
         }
       }
+    },
+    {
+      "channel": "Goibibo",
+      "benchmark_undercut": "100.00",
+      "benchmark_with_tax": true,
+      "benchmark_meal_plan": "Breakfast",
+      "source": "goibibo",
+      "room_pairs": {
+        "Deluxe Double Room": {
+          "ours": "Classic Room",
+          "theirs": "Classic Room"
+        },
+        "Junior Suite": {
+          "ours": "Luxury villa",
+          "theirs": null
+        },
+        "Standard Double Room": {
+          "ours": "Deluxe Room",
+          "theirs": "Mountain View Classic Room"
+        },
+        "Superior King Room": {
+          "ours": "Standard Room with Pool View",
+          "theirs": null
+        },
+        "Family Suite": {
+          "ours": "Suite Room",
+          "theirs": null
+        }
+      }
     }
   ],
   "mappings": [

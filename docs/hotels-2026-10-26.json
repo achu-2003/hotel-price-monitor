@@ -1,0 +1,799 @@
+{
+  "owner": "ags@123",
+  "sources": {
+    "www-booking-com": {
+      "display_name": "www.booking.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "www.booking.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "hotelzify": {
+      "display_name": "Hotelzify booking engine",
+      "adapter_key": "hotelzify",
+      "base_domain": "booking.sterlingholidays.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "agoda": {
+      "display_name": "Agoda (OTA listing)",
+      "adapter_key": "playwright_ota",
+      "base_domain": "agoda.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-25",
+      "tos_reviewed_by": "ags",
+      "tos_notes": null
+    },
+    "goibibo": {
+      "display_name": "Goibibo (OTA listing)",
+      "adapter_key": "goibibo",
+      "base_domain": "goibibo.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 1,
+      "tos_reviewed_at": "2026-10-26",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": "Owner asked on 26 Oct 2026 for Goibibo to be read like Booking.com and Agoda. Read as a visitor in installed Chrome, 1 load a minute; see app/adapters/goibibo.py."
+    }
+  },
+  "hotels": [
+    {
+      "name": "ASG HOLIDAY RESORTS",
+      "slug": "asg-holiday-resorts",
+      "location": "Bus Stand, near Athanavur, Athanavur, Nagalathu Extension R F, Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": true,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Double Room",
+          "canonical_name": "deluxe double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Junior Suite",
+          "canonical_name": "junior suite",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Standard Double Room",
+          "canonical_name": "double standard",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Superior King Room",
+          "canonical_name": "king superior",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Family Suite",
+          "canonical_name": "family suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Room",
+          "canonical_name": "deluxe",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": true
+        },
+        {
+          "name": "Deluxe Family Room",
+          "canonical_name": "deluxe family",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": true
+        },
+        {
+          "name": "Suite Room",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": true
+        },
+        {
+          "name": "Classic Room",
+          "canonical_name": "classic",
+          "capacity": null,
+          "sort_order": 8,
+          "is_active": true
+        },
+        {
+          "name": "Standard Room with Pool View",
+          "canonical_name": "pool standard view",
+          "capacity": null,
+          "sort_order": 9,
+          "is_active": true
+        },
+        {
+          "name": "Luxury villa",
+          "canonical_name": "luxury villa",
+          "capacity": null,
+          "sort_order": 10,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/ags-holiday-resorts-yelagiri1.en-gb.html?aid=1288252&label=metagha-link-MRIN-hotel-6805954_dev-desktop_los-1_bw-11_dow-Saturday_defdate-0_room-0_gstadt-2_rateid-dg_aud-0_gacid-21411129971_mcid-50_bc-AGfZwg_ppa-0_clrid-0_ad-1_gstkid-0_checkin-20260912_ppt-GB_lp-2356_r-10661018546978415036&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=680595401_430284343_3_42_0&checkin={check_in}&checkout={check_out}&dest_id=6805954&dest_type=hotel&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=680595401_430284343_3_42_0&hpos=1&matching_block_id=680595401_430284343_3_42_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=680595401_430284343_3_42_0__336600&srepoch=1788261705&srpvid=7bd04fe4243f0a2b&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T10:40:17.873934+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 11 rooms, 5/5 prices confirmed against the page, 5 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Double Room",
+              "normalized_name": "deluxe double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite",
+              "normalized_name": "junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "double standard",
+              "raw_name": "Standard Double Room",
+              "normalized_name": "double standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "king superior",
+              "raw_name": "Superior King Room",
+              "normalized_name": "king superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family suite",
+              "raw_name": "Family Suite",
+              "normalized_name": "family suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Family Room",
+              "normalized_name": "deluxe family",
+              "match_method": "manual",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 5,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "agoda",
+          "external_id": "18518106",
+          "url": "https://www.agoda.com/accom/property?propertyId=18518106&countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_id": "id",
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "budget_restored",
+              "last_attempt_at": null
+            },
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "id",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "double standard",
+              "raw_name": "Standard Double Room",
+              "normalized_name": "double standard",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite",
+              "normalized_name": "junior suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room",
+              "normalized_name": "deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Family Room",
+              "normalized_name": "deluxe family",
+              "match_method": "manual",
+              "confidence": "1.000"
+            },
+            {
+              "room": "king superior",
+              "raw_name": "Superior King Room",
+              "normalized_name": "king superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family suite",
+              "raw_name": "Family Suite",
+              "normalized_name": "family suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite Room",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe double",
+              "raw_name": "Deluxe Family Room (site room 275801276)",
+              "normalized_name": "#275801276",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "king superior",
+              "raw_name": "Superior King Room (site room 868588013)",
+              "normalized_name": "#868588013",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "double standard",
+              "raw_name": "Standard Double Room (site room 868588010)",
+              "normalized_name": "#868588010",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family suite",
+              "raw_name": "Family Suite (site room 275801277)",
+              "normalized_name": "#275801277",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite Room (site room 262752547)",
+              "normalized_name": "#262752547",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room (site room 262752532)",
+              "normalized_name": "#262752532",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "junior suite",
+              "raw_name": "Junior Suite (site room 275801280)",
+              "normalized_name": "#275801280",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "goibibo",
+          "external_id": "1264690103492052130",
+          "url": "https://www.goibibo.com/hotels/hotel-details/?checkin={check_in:%Y%m%d}&checkout={check_out:%Y%m%d}&roomString=1-{adults}-{children}&searchText=AGS+Holiday+Resorts&locusId=CTXYG&locusType=city&cityCode=CTXYG&cc=IN&_uCurrency=INR&vcid=CTXYG&giHotelId=1264690103492052130&mmtId=2017031713172679&sType=hotel",
+          "currency": "INR",
+          "adapter_config": {},
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room (site room 2977)",
+              "normalized_name": "#2977",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room",
+              "normalized_name": "deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room (site room 2249)",
+              "normalized_name": "#2249",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "pool standard view",
+              "raw_name": "Standard Room with Pool View (site room 118873)",
+              "normalized_name": "#118873",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite Room",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite Room (site room 2119)",
+              "normalized_name": "#2119",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "luxury villa",
+              "raw_name": "Luxury villa (site room 860)",
+              "normalized_name": "#860",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sterling",
+      "slug": "sterling",
+      "location": "Nilavoor Main Road, near Murugan Temple Road, Yelagiri, Mangalam R.F., Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Classic Room",
+          "canonical_name": "classic",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Classic room with Balcony",
+          "canonical_name": "balcony classic",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Mountain View Classic Room",
+          "canonical_name": "classic mountain view",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "hotelzify",
+          "external_id": "5171",
+          "url": "https://booking.sterlingholidays.com/rooms/5171/{check_in}/{check_out}/2/0?google_source=mapresults&user_list_id=&utm_campaign=&utm_source=free_booking_link&country=IN&price=6361.95&language=en&user_list=&currency=INR&click_type=hotel&device=desktop&raterule_id=",
+          "currency": "INR",
+          "adapter_config": {},
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/yelagiri-marigold-ridge-a-sterling-holidays-resorts.en-gb.html?aid=311984&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=54807301_195167792_2_34_0&checkin={check_in}&checkout={check_out}&dest_id=900052697&dest_type=city&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=54807301_195167792_2_34_0&hpos=1&matching_block_id=54807301_195167792_2_34_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=54807301_195167792_2_34_0__293058&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T12:09:58.637600+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 6 rooms, 3/3 prices confirmed against the page, 3 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "agoda",
+          "external_id": "463100",
+          "url": "https://www.agoda.com/accom/property?propertyId=463100&countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_id": "id",
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "id",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic Room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic Room with Balcony (site room 967575192)",
+              "normalized_name": "#967575192",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room (site room 967576246)",
+              "normalized_name": "#967576246",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic",
+              "raw_name": "Classic Room (site room 3288624)",
+              "normalized_name": "#3288624",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic",
+              "raw_name": "Classic Room (site room 5607717)",
+              "normalized_name": "#5607717",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic Room with Balcony (site room 965073232)",
+              "normalized_name": "#965073232",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room (site room 965073234)",
+              "normalized_name": "#965073234",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "goibibo",
+          "external_id": "3699247576121686599",
+          "url": "https://www.goibibo.com/hotels/hotel-details/?checkin={check_in:%Y%m%d}&checkout={check_out:%Y%m%d}&roomString=1-{adults}-{children}&searchText=Sterling+Yelagiri&locusId=CTXYG&locusType=city&cityCode=CTXYG&cc=IN&_uCurrency=INR&vcid=CTXYG&giHotelId=3699247576121686599&mmtId=201305151858323145&sType=hotel",
+          "currency": "INR",
+          "adapter_config": {},
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "classic",
+              "raw_name": "Classic Room",
+              "normalized_name": "classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic",
+              "raw_name": "Classic Room (site room 39827)",
+              "normalized_name": "#39827",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony",
+              "normalized_name": "balcony classic",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "balcony classic",
+              "raw_name": "Classic room with Balcony (site room 95263)",
+              "normalized_name": "#95263",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room",
+              "normalized_name": "classic mountain view",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "classic mountain view",
+              "raw_name": "Mountain View Classic Room (site room 1264914)",
+              "normalized_name": "#1264914",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
