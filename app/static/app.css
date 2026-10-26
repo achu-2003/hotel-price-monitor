@@ -1682,6 +1682,10 @@ form.target-sensitivity { max-width: none; }
 .repricing-section .grid td { vertical-align: top; }
 .repricing-section .grid details summary { cursor: pointer; white-space: nowrap; }
 .run-note { margin: var(--s2) 0 0; }
+/* The plan under a price. Amber when ours is not the plan we are compared
+   on, which is the one case where the two figures are not like for like. */
+.repricing-section .board { color: var(--muted); font-size: .85em; }
+.repricing-section .board-differs { color: var(--warn); font-weight: 600; }
 .repricing-run-form .actions { flex-wrap: wrap; }
 /* The tag says in one word what the sentence beside it explains. */
 .tag {

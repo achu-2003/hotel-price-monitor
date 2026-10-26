@@ -44,6 +44,17 @@
 </div>
 
 {#
+  THE PLAN A PRICE IS ON, printed under it. ASG's Standard Double is sold
+  room only while Sterling's room is read on breakfast, and without the
+  label the two figures look like-for-like when they are not. ``other`` is
+  the plan on the far side of the comparison: a label that differs from it
+  is marked, so a mismatch is seen rather than worked out.
+#}
+{% macro board_note(plan, other=none) %}
+  {%- if plan %}<br><span class="board{% if other and other != plan %} board-differs{% endif %}">{{ plan|lower }}</span>{% endif -%}
+{% endmacro %}
+
+{#
   ONE ROOM ON ANOTHER WEBSITE'S RULE (Agoda, Goibibo), in that website's
   own section at the bottom of the page. The table at the top is Booking.com
   and nothing else: a website with a rule of its own is shown and applied
@@ -58,10 +69,11 @@
   {% set anchor = ns.anchor %}
   <td class="room"><strong>{{ p.room_name }}</strong>
     {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}</td>
-  <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
+  <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, r.benchmark_meal_plan if p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
   <td class="num market">
     {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
     {% if p.benchmark_entry %}
+      {{ board_note(r.benchmark_meal_plan) }}
       <br><span class="muted">{{ p.benchmark_entry.room }}</span>
       <br><span class="muted">− {{ money(r.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
     {% endif %}
@@ -166,9 +178,10 @@
           {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
         </td>
         <td>{{ p.tier_label }}</td>
-        <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, settings.benchmark_meal_plan if p.benchmark_entry is defined and p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
         <td class="num market">
           {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
+          {% if p.benchmark_entry is defined and p.benchmark_entry %}{{ board_note(settings.benchmark_meal_plan) }}{% endif %}
           {% if p.usual_gap is not none %}
             <br><span class="muted">we usually sit {{ '%+.0f'|format((p.usual_gap - 1) * 100) }}%</span>
             <br><span class="muted">→ {{ money((p.market * p.usual_gap)|round|int) }} keeps it</span>
