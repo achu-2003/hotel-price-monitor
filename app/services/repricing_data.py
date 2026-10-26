@@ -272,7 +272,8 @@ class _AsRoom:
         return getattr(self._series, name)
 
 
-def lane_rows(rows, own_hotel_id: int, lane: Lane) -> list:
+def lane_rows(rows, own_hotel_id: int, lane: Lane,
+              room_names: Mapping[int, str] | None = None) -> list:
     """Tonight's rows as ``lane`` sees them.
 
     OUR SIDE COMES FROM THE LANE'S SITE AND NO OTHER. The rule takes our
@@ -288,6 +289,12 @@ def lane_rows(rows, own_hotel_id: int, lane: Lane) -> list:
     and those rows are read as the mapped room. A mapped room whose site
     name is given takes ONLY that name: another room that happens to share
     its id is not what the owner pointed at.
+
+    AND UNDER OUR NAME, given ``room_names``. Goibibo calls ASG's "Deluxe
+    Double Room" (CLASSIC) "Classic Room"; read as the mapped room but left
+    under Goibibo's name, the row was headed "Classic Room" where Booking.com
+    and Agoda say "Deluxe Double Room" -- and its tier was taken from that
+    name too, so the one room sat in a different tier on each site.
     """
     wanted = {normalize_room_name(name): room_type_id for room_type_id, name in lane.ours.items()}
     out = []
@@ -301,6 +308,7 @@ def lane_rows(rows, own_hotel_id: int, lane: Lane) -> list:
         if as_room is not None:
             if as_room != series.room_type_id:
                 series = _AsRoom(series, as_room)
+                room_name = (room_names or {}).get(as_room, room_name)
         elif series.room_type_id in lane.ours:
             continue
         out.append((series, hotel, room_name))

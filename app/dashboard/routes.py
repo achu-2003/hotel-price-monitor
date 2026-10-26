@@ -2979,7 +2979,8 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             lane_benchmark = repricing_data.with_previous(
                 repricing_data.lane_benchmark(bench_row, lane), previous_rows)
             lane_proposals = repricing_rule.propose(
-                repricing_data.lane_rows(all_rows, own.id, lane), own_hotel_id=own.id,
+                repricing_data.lane_rows(all_rows, own.id, lane, {r.id: r.name for r in rooms}),
+                own_hotel_id=own.id,
                 rule=repricing_rule.Rule.from_row(settings),
                 room_type_ids={rt for rt, m in mappings.items() if m.is_enabled} or None,
                 night=check_in, benchmark=lane_benchmark,

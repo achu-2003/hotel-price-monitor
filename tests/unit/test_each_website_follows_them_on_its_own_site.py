@@ -114,6 +114,13 @@ class TestOurRoomUnderTheSitesName:
         ours = [s for s, h, _ in rows if h is OURS]
         assert [s.room_type_id for s in ours] == [DELUXE_DOUBLE]
 
+    def test_and_is_shown_under_our_name_when_we_give_it(self):
+        """Goibibo's "Classic Room" is our "Deluxe Double Room": headed, and tiered, as ours."""
+        rows = data.lane_rows(_night(), OURS.id, _lane(), {DELUXE_DOUBLE: "Deluxe Double Room"})
+        assert [n for _, h, n in rows if h is OURS] == ["Deluxe Double Room"]
+        p = _propose(rows)[DELUXE_DOUBLE]
+        assert p.room_name == "Deluxe Double Room" and p.tier_label == "Deluxe"
+
     def test_the_row_itself_is_not_touched(self):
         """A live ORM row would carry the new id into the next commit."""
         night = _night()

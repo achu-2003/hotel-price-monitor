@@ -166,7 +166,10 @@ def compute(session, owner_user_id: int, check_in, check_out,
         return [], settings, mappings
     if lane is None:
         lane = data.main_lane(settings)
-    rows = data.lane_rows(priced_rows(session, owner_user_id, check_in, check_out), own, lane)
+    names = dict(session.execute(
+        select(RoomType.id, RoomType.name).where(RoomType.hotel_id == own)
+    ).all()) if lane.ours else None
+    rows = data.lane_rows(priced_rows(session, owner_user_id, check_in, check_out), own, lane, names)
     own_rule = rule.Rule.from_row(settings)
     if lane.main:
         benchmark = benchmark_for(session, owner_user_id, settings, check_in, check_out)
