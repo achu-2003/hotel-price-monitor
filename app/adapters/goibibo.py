@@ -45,6 +45,8 @@ Booking.com profiles document.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -58,6 +60,7 @@ from app.config import get_settings
 from app.core.errors import RateLimitedError, SchemaDriftError
 from app.core.logging import get_logger
 from app.services import meal_plan
+from app.services.dates import StayWindow
 
 log = get_logger("adapter.goibibo")
 
@@ -123,8 +126,22 @@ class GoibiboAdapter(PlaywrightOtaAdapter):
                 # on Goibibo". On 26 Oct 2026 that marked all nine of
                 # Sterling's rates sold out at the same minute ASG's page was
                 # refused outright. So the text counts only beside a room list
-                # that arrived and was empty.
-                if payload is None or not says_sold_out:
+                # that arrived and was empty...
+                #
+                # ...OR WHEN GOIBIBO IS SERVING ROOM LISTS RIGHT NOW. A night
+                # that really is sold out shows exactly the same page, with no
+                # room list, so on 28 Oct Sterling's sold-out evening was
+                # retried as a throttle every 15 minutes and never recorded.
+                # The same hotel one night later tells the two apart: a
+                # throttle refuses that page as well, a sold-out night leaves
+                # it alone. Should the next night be sold out too, it is still
+                # backed off as a throttle -- the old behaviour, no worse.
+                if (payload is None and says_sold_out
+                        and self._next_night_has_a_room_list(context, config)):
+                    log.info("goibibo_sold_out_next_night_served",
+                             hotel=context.hotel_name,
+                             check_in=context.check_in.isoformat())
+                elif payload is None or not says_sold_out:
                     # Raised inside the page so its screenshot is kept.
                     raise RateLimitedError(
                         f"Goibibo sent no room list for {context.hotel_name} on "
@@ -133,8 +150,9 @@ class GoibiboAdapter(PlaywrightOtaAdapter):
                         retry_after_seconds=_BACK_OFF_SECONDS,
                         context={"url": url, "room_list_seen": payload is not None},
                     )
-                log.info("goibibo_sold_out", hotel=context.hotel_name,
-                         check_in=context.check_in.isoformat())
+                else:
+                    log.info("goibibo_sold_out", hotel=context.hotel_name,
+                             check_in=context.check_in.isoformat())
 
         return FetchResult(
             offers=offers,
@@ -142,6 +160,26 @@ class GoibiboAdapter(PlaywrightOtaAdapter):
             duration_ms=int((time.monotonic() - started) * 1000),
             source_url=url,
         )
+
+    def _next_night_has_a_room_list(self, context: FetchContext, config: dict) -> bool:
+        """Whether Goibibo sends this hotel's room list for the following night.
+
+        One extra load, and only for a "Sold Out" page that came without a
+        room list. Anything that goes wrong on it counts as "no": the night is
+        then backed off as a throttle, which is what happened before this check.
+        """
+        day = timedelta(days=1)
+        later = replace(context, stay=StayWindow(context.check_in + day, context.check_out + day))
+        try:
+            with open_page(self._resolve_url(later, config), locale=context.locale,
+                           timezone=context.timezone,
+                           artifact_label=f"hs{context.hotel_source_id}-next-night",
+                           as_visitor=True) as fetch:
+                payload = _wait_for_rooms(fetch, int(config.get("wait_timeout_ms", _WAIT_MS)))
+        except Exception as exc:  # noqa: BLE001 -- see docstring
+            log.info("goibibo_next_night_failed", hotel=context.hotel_name, error=str(exc))
+            return False
+        return payload is not None
 
 
 def _wait_for_rooms(fetch: BrowserFetch, timeout_ms: int) -> Any | None:

@@ -112,26 +112,36 @@ class _Page:
         pass
 
 
-def _fetch_with(monkeypatch, *, body: str, payload):
-    """Run the adapter against a page that shows ``body`` and sent ``payload``."""
+def _fetch_with(monkeypatch, *, body: str, payload, next_night=None, opened=None):
+    """Run the adapter against a page that shows ``body`` and sent ``payload``.
+
+    ``next_night`` is the room list the following night's page sends, if the
+    adapter asks for it; every URL opened is appended to ``opened``.
+    """
     from contextlib import contextmanager
 
     from app.adapters import goibibo
     from app.adapters.playwright_base import BrowserFetch, CapturedResponse
 
-    fetch = BrowserFetch(page=_Page(body), json_responses=(
-        [CapturedResponse(url="https://mapi.goibibo.com/clientbackend-gi/cg/search-rooms/desktop/2",
-                          status=200, payload=payload)] if payload is not None else []))
+    def page(sent):
+        return BrowserFetch(page=_Page(body), json_responses=(
+            [CapturedResponse(url="https://mapi.goibibo.com/clientbackend-gi/cg/search-rooms/desktop/2",
+                              status=200, payload=sent)] if sent is not None else []))
+
+    pages = [page(payload), page(next_night)]
+    urls = [] if opened is None else opened
 
     @contextmanager
-    def fake_open_page(*_a, **_kw):
-        yield fetch
+    def fake_open_page(url, *_a, **_kw):
+        urls.append(url)
+        yield pages[len(urls) - 1]
 
     monkeypatch.setattr(goibibo, "open_page", fake_open_page)
     monkeypatch.setattr(goibibo.RobotsChecker, "assert_allowed", lambda self, url: None)
     monkeypatch.setattr(goibibo, "_cache_or_none", lambda: None)
     return goibibo.GoibiboAdapter().fetch(
-        FetchContext(hotel_source_id=21, hotel_name="Sterling", url=URL, external_id=None,
+        FetchContext(hotel_source_id=21, hotel_name="Sterling", url=detect(URL).url_template,
+                     external_id=None,
                      stay=StayWindow(date(2026, 10, 26), date(2026, 10, 27)), adults=2,
                      config={"wait_timeout_ms": 1}))
 
@@ -151,3 +161,25 @@ class TestASoldOutNightIsOneGoibiboSaid:
     def test_rooms_are_rooms(self, monkeypatch):
         result = _fetch_with(monkeypatch, body="AGS Holiday Resorts", payload=PAYLOAD)
         assert len(result.offers) == 12 and not result.sold_out_detected
+
+    def test_sold_out_while_the_next_night_is_served_is_sold_out(self, monkeypatch):
+        """28 Oct: Sterling's sold-out evening, until now retried as a throttle."""
+        opened = []
+        result = _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
+                             payload=None, next_night=PAYLOAD, opened=opened)
+        assert result.sold_out_detected and result.offers == []
+        assert "checkin=20261027" in opened[1] and "checkout=20261028" in opened[1]
+
+    def test_sold_out_while_the_next_night_is_refused_too_is_a_throttle(self, monkeypatch):
+        from app.core.errors import RateLimitedError
+        with pytest.raises(RateLimitedError):
+            _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
+                        payload=None, next_night=None)
+
+    def test_a_refused_page_does_not_spend_a_second_load(self, monkeypatch):
+        from app.core.errors import RateLimitedError
+        opened = []
+        with pytest.raises(RateLimitedError):
+            _fetch_with(monkeypatch, body="200 - OK", payload=None,
+                        next_night=PAYLOAD, opened=opened)
+        assert len(opened) == 1
