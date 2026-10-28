@@ -51,12 +51,10 @@ USER appuser
 #                           child process is the cheap, reliable fix
 #   -Ofair                  do not pre-assign tasks to a busy worker; page load
 #                           times vary wildly between sites
-#   xvfb-run -a             a virtual screen for Goibibo's Chrome window; -a
-#                           picks a free display number
-CMD ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", \
-     "celery", "-A", "app.workers.celery_app", "worker", \
-     "-Q", "browser", \
-     "-c", "3", \
-     "--max-tasks-per-child", "20", \
-     "-Ofair", \
-     "--loglevel", "INFO"]
+#   Xvfb :99                a virtual screen for Goibibo's Chrome window. Started
+#                           by hand, not with xvfb-run: as the container's PID 1
+#                           xvfb-run waits forever for Xvfb's ready signal and
+#                           never starts the worker. Chrome opens only when the
+#                           first Goibibo check arrives, long after Xvfb is up.
+ENV DISPLAY=:99
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & exec celery -A app.workers.celery_app worker -Q browser -c 3 --max-tasks-per-child 20 -Ofair --loglevel INFO"]
