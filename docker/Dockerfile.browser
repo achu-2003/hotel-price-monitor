@@ -24,6 +24,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # the image self-consistent if the pinned version ever moves.
 RUN playwright install chromium --with-deps
 
+# Goibibo serves its rooms only to an installed Google Chrome with a window
+# (settings.browser_visitor_channel / browser_visitor_headless): bundled
+# Chromium gets ERR_HTTP2_PROTOCOL_ERROR and headless Chrome an empty room
+# list. A container has no screen, so the worker runs inside Xvfb (see CMD)
+# and Chrome opens its window there.
+RUN playwright install chrome \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY alembic.ini .
 COPY alembic/ ./alembic/
 COPY app/ ./app/
@@ -41,7 +51,10 @@ USER appuser
 #                           child process is the cheap, reliable fix
 #   -Ofair                  do not pre-assign tasks to a busy worker; page load
 #                           times vary wildly between sites
-CMD ["celery", "-A", "app.workers.celery_app", "worker", \
+#   xvfb-run -a             a virtual screen for Goibibo's Chrome window; -a
+#                           picks a free display number
+CMD ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", \
+     "celery", "-A", "app.workers.celery_app", "worker", \
      "-Q", "browser", \
      "-c", "3", \
      "--max-tasks-per-child", "20", \
