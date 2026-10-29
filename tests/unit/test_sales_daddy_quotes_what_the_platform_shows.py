@@ -247,3 +247,36 @@ class TestTheReadEndpoint:
     def test_without_the_setting_the_route_is_not_there(self, api):
         api.settings.price_feed_api_key = None
         assert api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "feed-key"}).status_code == 404
+
+
+class TestWhatTheFirstLiveCallShowed:
+    """29 Oct, the first GET against the server."""
+
+    def series(self, **kw):
+        base = dict(room_type_id=25, meal_plan="Room Only", current_price=Decimal("4676"),
+                    last_price_inclusive=None, last_price_exclusive=Decimal("4676"),
+                    last_taxes_fees=Decimal("234"), currency="INR", is_available=True, last_checked_at=SEEN)
+        return SimpleNamespace(**{**base, **kw})
+
+    def test_booking_s_separate_tax_line_is_added_in(self):
+        """Booking.com went out at 4,676 while the guest saw 4,910."""
+        [r] = price_feed.to_rows([(self.series(), "Deluxe Double Room", "www-booking-com", "www.booking.com (auto-discovered)")])
+        assert r.price_with_tax == Decimal("4910")
+
+    def test_a_published_all_in_figure_is_used_as_is(self):
+        [r] = price_feed.to_rows([(self.series(last_price_inclusive=Decimal("4418.82"), last_taxes_fees=None),
+                                   "Deluxe Double Room", "agoda", "Agoda (OTA listing)")])
+        assert r.price_with_tax == Decimal("4418.82")
+
+    def test_no_tax_published_is_no_with_tax_figure(self):
+        [r] = price_feed.to_rows([(self.series(last_taxes_fees=None), "Classic Room", "x", "X")])
+        assert r.price_with_tax is None
+
+    @pytest.mark.parametrize("code, label, name", [
+        ("www-booking-com", "www.booking.com (auto-discovered)", "Booking.com"),
+        ("agoda", "Agoda (OTA listing)", "Agoda"),
+        ("goibibo", "Goibibo (OTA listing)", "Goibibo"),
+        ("some-site", "www.sterlingholidays.com (auto-discovered)", "sterlingholidays.com"),
+    ])
+    def test_the_platform_is_named_as_a_guest_would(self, code, label, name):
+        assert price_feed.channel_name(code, label) == name

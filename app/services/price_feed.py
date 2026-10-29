@@ -27,6 +27,7 @@ from typing import Any, Iterable
 from sqlalchemy import select
 
 from app.db.models import Hotel, PriceSeries, RoomType, Source
+from app.services.price_display import all_in_price
 
 #: Adults the dashboard and the repricer price a room for. The feed quotes the
 #: same offers, so its numbers are the ones on those pages.
@@ -71,14 +72,40 @@ def rows_stmt(hotel_id: int, night: date):
 def to_rows(results: Iterable[tuple]) -> list[Row]:
     return [
         Row(
-            room_type_id=series.room_type_id, room=room, source_code=code, channel=channel,
+            room_type_id=series.room_type_id, room=room, source_code=code, channel=channel_name(code, channel),
             meal_plan=series.meal_plan, price=series.current_price,
-            price_with_tax=series.last_price_inclusive, currency=series.currency,
+            # Booking.com prints the tax as its own line and no all-in figure,
+            # so last_price_inclusive is empty there: on the first live call
+            # its Deluxe Double went out at 4,676 while the guest saw 4,910.
+            # The dashboard's rule -- the published total, else the two
+            # published components added -- is the guest's number.
+            price_with_tax=all_in_price(series.last_price_inclusive, series.last_price_exclusive,
+                                        series.last_taxes_fees),
+            currency=series.currency,
             available=series.is_available and series.current_price is not None,
             seen_at=series.last_checked_at,
         )
         for series, room, code, channel in results
     ]
+
+
+#: What a guest calls the platforms this system reads by source code.
+_CHANNELS = {"www-booking-com": "Booking.com", "booking-com": "Booking.com", "booking": "Booking.com",
+             "agoda": "Agoda", "goibibo": "Goibibo", "makemytrip": "MakeMyTrip", "mmt": "MakeMyTrip"}
+
+
+def channel_name(code: str, display_name: str) -> str:
+    """The platform as a guest would name it.
+
+    A source's display name is an operator's label -- "Agoda (OTA listing)",
+    "www.booking.com (auto-discovered)" -- and the assistant repeats whatever
+    it is given to the guest. Known platforms by code; anything else loses
+    the bracketed note and a leading "www.".
+    """
+    if code in _CHANNELS:
+        return _CHANNELS[code]
+    name = display_name.split(" (")[0].strip()
+    return name[4:] if name.lower().startswith("www.") else name
 
 
 def items(hotel_id: int, rows: Iterable[Row]) -> list[dict[str, Any]]:
