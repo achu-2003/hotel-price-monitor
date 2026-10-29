@@ -41,7 +41,7 @@ from app.core.ratelimit import (
     penalise_source,
     take_token,
 )
-from app.db.models import CheckRun, CheckRunStatus, MonitorTarget, PriceBasis
+from app.db.models import CheckRun, CheckRunStatus, Hotel, MonitorTarget, PriceBasis
 from app.db.session import sync_session
 from app.services import monitoring
 from app.services.dates import StayWindow, local_today, rollover_window
@@ -573,6 +573,20 @@ def _ingest(
             and watched_as_benchmark(session, payload["hotel_id"])
         )
 
+        # TONIGHT'S READING OF OUR OWN HOTEL: Sales Daddy's AI quotes it.
+        # Every reading, not only a confirmed change -- the AI must quote what
+        # the platform shows now, and the task skips a list already sent.
+        from app.workers.tasks_price_feed import enabled as price_feed_enabled
+
+        own_tonight = (
+            price_feed_enabled()
+            and requested_stay.check_out == requested_stay.check_in + timedelta(days=1)
+            and requested_stay.check_in == local_today(get_settings().timezone)
+            and bool(session.scalar(
+                select(Hotel.is_own_property).where(Hotel.id == payload["hotel_id"])
+            ))
+        )
+
     logger.info(
         "fetch_complete",
         offers=offers_found,
@@ -616,6 +630,11 @@ def _ingest(
         benchmark_moved.apply_async(
             args=[payload["hotel_id"], requested_stay.check_in.isoformat()], queue="http",
         )
+
+    if own_tonight:
+        from app.workers.tasks_price_feed import push_prices
+
+        push_prices.apply_async(args=[payload["hotel_id"]], queue="notify")
 
     return {
         "status": "success",

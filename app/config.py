@@ -251,6 +251,17 @@ class Settings(BaseSettings):
     salesdaddy_api_key: SecretStr | None = None
     salesdaddy_webhook_secret: SecretStr | None = None
 
+    # ── tonight's prices, fed to Sales Daddy's WhatsApp AI ───────────
+    # The AI quotes only from Sales Daddy's own product list, so our hotel's
+    # prices on each platform are PUT there whenever a fetch changes them --
+    # see workers/tasks_price_feed.py. The partner API (/v1/ext/*) has a key of
+    # its own; without it nothing is sent.
+    salesdaddy_partner_api_key: SecretStr | None = None
+    salesdaddy_products_path: str = "/v1/ext/products"
+    # An unchanged list is sent again after this long, so Sales Daddy can hide
+    # any product that stopped being refreshed (a room renamed on a platform).
+    price_feed_resend_hours: int = 6
+
     # ── notification throttling ──────────────────────────────────────
     digest_window_seconds: int = 60
     recipient_max_msgs_per_hour: int = 10

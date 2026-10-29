@@ -81,6 +81,7 @@ celery_app.conf.update(
         "notify.dispatch_changes": {"queue": "notify"},
         "notify.send": {"queue": "notify"},
         "notify.release_quiet_hours": {"queue": "notify"},
+        "price_feed.push": {"queue": "notify"},
         "monitor.dispatch_due_checks": {"queue": "http"},
         "maintenance.*": {"queue": "http"},
     },
@@ -179,6 +180,7 @@ celery_app.autodiscover_tasks(
         "app.workers.tasks_maintenance",
         "app.workers.tasks_repair",
         "app.workers.tasks_repricing",
+        "app.workers.tasks_price_feed",
     ],
     force=True,
 )
