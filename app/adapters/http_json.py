@@ -33,6 +33,7 @@ from typing import Any
 
 import httpx
 
+from app.adapters import every_address
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.mapping import (
     booking_conditions,
@@ -149,7 +150,7 @@ class HttpJsonAdapter:
         entirely rather than being treated as a transient blip.
         """
         try:
-            with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+            with every_address.client(_TIMEOUT) as client:
                 response = client.request(
                     method, url, params=params or None, json=json_body, headers=headers
                 )

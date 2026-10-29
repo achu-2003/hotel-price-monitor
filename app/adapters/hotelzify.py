@@ -77,6 +77,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.adapters import every_address
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.playwright_base import build_user_agent
 from app.adapters.robots import RobotsChecker
@@ -102,6 +103,7 @@ _PROMOTIONS = f"{_API_ROOT}/hotel/v2/promotions/get-promotion"
 #: reason a Hotelzify rate can be shown inclusive of tax at all -- the
 #: availability response quotes "plus taxes" and carries no amount.
 _TAXES = f"{_API_ROOT}/payments/v1/tax/list"
+# Connecting is capped separately, per address: see every_address.
 _TIMEOUT = 20.0
 
 #: How long a fetched tax table is reused. A hotel's GST bands change when the
@@ -408,7 +410,7 @@ class HotelzifyAdapter:
     # -- transport ---------------------------------------------------
     def _request(self, url: str, params: dict[str, str], user_agent: str) -> Any:
         try:
-            with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+            with every_address.client(_TIMEOUT) as client:
                 response = client.get(
                     url,
                     params=params,

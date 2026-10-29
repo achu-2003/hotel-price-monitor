@@ -42,6 +42,7 @@ from typing import Any
 
 import httpx
 
+from app.adapters import every_address
 from app.adapters.base import FetchContext, FetchResult, NormalizedOffer
 from app.adapters.playwright_base import build_user_agent
 from app.config import get_settings
@@ -139,7 +140,7 @@ class GotoYelagiriAdapter:
             "Accept": "application/json",
         }
         try:
-            with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+            with every_address.client(_TIMEOUT) as client:
                 response = client.get(_ENDPOINT, headers=headers)
         except httpx.TimeoutException as exc:
             raise TimeoutError_("Timed out calling gotoyelagiri",
