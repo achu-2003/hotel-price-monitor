@@ -127,3 +127,112 @@ def test_a_redirect_is_followed_from_the_name_not_the_address():
         response = c.get(URL)
     assert response.url.host == "api.hotelzify.com"
     assert hops == [("15.252.110.200", "api.hotelzify.com")] * 2
+
+
+def test_every_connection_asks_for_segments_that_get_through():
+    """The cause, not the symptom: full-size packets from AWS never arrived.
+
+    Measured on 29 Oct from the worker: 6/6 handshakes timed out at the
+    default segment size and 6/6 finished in 0.06 s at 1,200.
+    """
+    import socket
+
+    from app.adapters import every_address
+
+    if not every_address.segment_cap():
+        pytest.skip("this platform cannot cap a socket's segment size (the server's can)")
+    assert every_address.segment_cap() == [(socket.IPPROTO_TCP, socket.TCP_MAXSEG, 1200)]
+    pool = EveryAddressTransport()._inner._pool
+    assert isinstance(pool._network_backend, every_address.CappedSegmentsBackend)
+
+
+def test_the_cap_is_on_the_socket_before_it_connects(monkeypatch):
+    """The MSS is announced in the SYN. httpx's socket_options land after
+    connect() and so change nothing the server sees -- which is why the
+    backend exists at all."""
+    import socket
+
+    from app.adapters import every_address
+
+    calls = []
+    CAP = (socket.IPPROTO_TCP, 2, 1200)
+
+    class Recording:
+        def __init__(self, *args):
+            pass
+
+        def settimeout(self, value):
+            calls.append(("timeout", value))
+
+        def setsockopt(self, *option):
+            calls.append(("opt", option))
+
+        def connect(self, address):
+            calls.append(("connect", address))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(every_address, "segment_cap", lambda: [CAP])
+    monkeypatch.setattr(socket, "socket", Recording)
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("65.1.31.207", 443))])
+    every_address.CappedSegmentsBackend().connect_tcp("65.1.31.207", 443, timeout=5.0)
+    assert calls.index(("opt", CAP)) < calls.index(("connect", ("65.1.31.207", 443)))
+
+
+def test_a_socket_that_will_not_connect_is_a_connect_timeout(monkeypatch):
+    """So EveryAddressTransport moves on, exactly as it does for httpcore's own."""
+    import socket
+
+    import httpcore
+
+    from app.adapters import every_address
+
+    class Stalling:
+        def __init__(self, *args):
+            pass
+
+        def settimeout(self, value):
+            pass
+
+        def setsockopt(self, *option):
+            pass
+
+        def connect(self, address):
+            raise socket.timeout("timed out")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(every_address, "segment_cap", lambda: [])
+    monkeypatch.setattr(socket, "socket", Stalling)
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("65.1.31.207", 443))])
+    with pytest.raises(httpcore.ConnectTimeout):
+        every_address.CappedSegmentsBackend().connect_tcp("65.1.31.207", 443, timeout=5.0)
+
+
+def test_a_platform_that_refuses_the_cap_still_connects(monkeypatch):
+    """Windows defines TCP_MAXSEG and refuses it; that must not fail every request."""
+    import socket
+
+    from app.adapters import every_address
+
+    class Refusing:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def setsockopt(self, *args):
+            raise OSError(10042, "unsupported option")
+
+    every_address.segment_cap.cache_clear()
+    monkeypatch.setattr(socket, "TCP_MAXSEG", 2, raising=False)
+    monkeypatch.setattr(socket, "socket", lambda *a, **k: Refusing())
+    try:
+        assert every_address.segment_cap() == []
+    finally:
+        every_address.segment_cap.cache_clear()

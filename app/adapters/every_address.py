@@ -23,13 +23,33 @@ nothing from anybody.
 
 The certificate is still checked against the host's NAME: the attempt is sent
 to the IP with the name as its SNI and Host header.
+
+AND THE CAUSE: FULL-SIZE PACKETS DO NOT ARRIVE
+==============================================
+Measured from the worker container the same day: a TLS handshake to either
+Hotelzify address timed out six times in six with the default segment size,
+and finished in 0.06 s six times in six when the socket asked for 1,200-byte
+segments. The path from that VPS to AWS drops full-size packets and the
+"fragmentation needed" reply never comes back -- a path-MTU black hole. The
+handshake is the first thing big enough to hit it (the certificate chain),
+which is why the TCP connect always succeeded.
+
+So every connection advertises a smaller MSS (:data:`MSS`). Two hundred-odd
+bytes of header room per packet is nothing next to a JSON answer, and it
+holds wherever the server is moved, unlike a Docker network setting Coolify
+owns. The address rotation above stays for a balancer node that really is
+down.
 """
 from __future__ import annotations
 
 import socket
+from functools import lru_cache
 from typing import Any
 
+import httpcore
 import httpx
+from httpcore._backends.sync import SyncStream
+from httpcore._exceptions import map_exceptions
 
 from app.core.logging import get_logger
 
@@ -42,6 +62,69 @@ CONNECT_SECONDS = 5.0
 #: Attempts per request when the host has fewer addresses than this: the same
 #: addresses are tried again, because a stall is not always the same address.
 MIN_ATTEMPTS = 3
+#: The largest TCP segment we ask a server to send. 1,200 is what got through
+#: every time on 29 Oct; the default (1,460 on a 1,500 MTU) never did.
+MSS = 1200
+
+
+@lru_cache(maxsize=1)
+def segment_cap() -> list[tuple[int, int, int]]:
+    """Cap the segment size where the platform lets a socket do so.
+
+    Asked of a spare socket, not assumed: Windows defines TCP_MAXSEG and
+    then refuses to set it (WinError 10042), which would fail every request.
+    """
+    option = getattr(socket, "TCP_MAXSEG", None)
+    if option is None:
+        return []
+    try:
+        with socket.socket() as probe:
+            probe.setsockopt(socket.IPPROTO_TCP, option, MSS)
+    except OSError:
+        return []
+    return [(socket.IPPROTO_TCP, option, MSS)]
+
+
+class CappedSegmentsBackend(httpcore.SyncBackend):
+    """httpcore's connector, with the segment cap set BEFORE ``connect()``.
+
+    The MSS is announced in the SYN, so the cap only counts if it is on the
+    socket first. httpx's own ``socket_options`` are applied after
+    ``socket.create_connection`` returns -- too late to change what the
+    server was told -- so they cannot do this job.
+    """
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        with map_exceptions({socket.timeout: httpcore.ConnectTimeout, OSError: httpcore.ConnectError}):
+            last: OSError | None = None
+            for family, kind, proto, _, address in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+                sock = socket.socket(family, kind, proto)
+                try:
+                    sock.settimeout(timeout)
+                    for option in segment_cap():
+                        sock.setsockopt(*option)
+                    if local_address is not None:
+                        sock.bind((local_address, 0))
+                    sock.connect(address)
+                except OSError as exc:
+                    sock.close()
+                    last = exc
+                    continue
+                for option in socket_options or []:
+                    sock.setsockopt(*option)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                return SyncStream(sock)
+            raise last or OSError(f"no address for {host}")
+
+
+def capped_transport() -> httpx.HTTPTransport:
+    """``httpx.HTTPTransport`` whose connections ask for :data:`MSS`-sized segments."""
+    transport = httpx.HTTPTransport()
+    if segment_cap():
+        # httpx has no parameter for the network backend; the pool hands this
+        # one to every connection it opens.
+        transport._pool._network_backend = CappedSegmentsBackend()
+    return transport
 
 
 def resolve(host: str, port: int) -> list[str]:
@@ -74,7 +157,7 @@ class EveryAddressTransport(httpx.BaseTransport):
     def __init__(self, inner: httpx.BaseTransport | None = None, *,
                  connect_seconds: float = CONNECT_SECONDS, min_attempts: int = MIN_ATTEMPTS,
                  resolver=resolve) -> None:
-        self._inner = inner or httpx.HTTPTransport()
+        self._inner = inner or capped_transport()
         self._connect = connect_seconds
         self._min_attempts = min_attempts
         self._resolve = resolver
