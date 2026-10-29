@@ -266,15 +266,12 @@ async def _render(
         )
     ).all()
     attention = {
-        "errors": await session.scalar(
-            select(func.count(MonitoringError.id)).where(
-                MonitoringError.resolved_at.is_(None),
-                or_(
-                    MonitoringError.hotel_id.is_(None),
-                    MonitoringError.hotel_id.in_(mine),
-                ),
-            )
-        ) or 0,
+        # Counted by the same rule the Attention page lists by, so the badge
+        # never promises a row the page then hides.
+        "errors": sum(
+            1 for error, target in await _open_errors(session, mine)
+            if monitoring_service.needs_a_person(error, target, now)
+        ),
         "unmatched": await session.scalar(
             select(func.count(UnmatchedOffer.id))
             .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
@@ -2529,6 +2526,30 @@ def _popup_payload(change, hotel_name, room_name, check_in, check_out) -> dict:
 
 
 # -- attention -------------------------------------------------------
+async def _open_errors(session, hotel_ids, *, with_hotel: bool = False) -> list[tuple]:
+    """Unresolved errors on these hotels, newest first, each with its target.
+
+    Unattributed errors stay: they name no property, and they are how a
+    source that breaks before it resolves to a hotel gets noticed at all.
+    """
+    columns = [MonitoringError, MonitorTarget] + ([Hotel.name] if with_hotel else [])
+    statement = (
+        select(*columns)
+        .outerjoin(MonitorTarget, MonitoringError.monitor_target_id == MonitorTarget.id)
+        .where(
+            MonitoringError.resolved_at.is_(None),
+            or_(MonitoringError.hotel_id.is_(None), MonitoringError.hotel_id.in_(hotel_ids)),
+        )
+        .order_by(MonitoringError.occurred_at.desc())
+        # A ceiling, not a page: open errors are a handful, and a backlog
+        # past this is a problem the first five hundred already show.
+        .limit(500)
+    )
+    if with_hotel:
+        statement = statement.outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
+    return [tuple(row) for row in (await session.execute(statement)).all()]
+
+
 @router.get("/attention", response_class=HTMLResponse)
 async def attention_page(request: Request, user: DashUser, session: DbSession):
     """Everything waiting on a person, in one place.
@@ -2584,24 +2605,11 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
         ).all():
             rooms_by_hotel.setdefault(room.hotel_id, []).append(room)
 
-    errors = (
-        await session.execute(
-            select(MonitoringError, Hotel.name)
-            .outerjoin(Hotel, MonitoringError.hotel_id == Hotel.id)
-            .where(
-                MonitoringError.resolved_at.is_(None),
-                # Unattributed errors stay: they name no property, and they
-                # are how a source that breaks before it resolves to a hotel
-                # gets noticed at all.
-                or_(
-                    MonitoringError.hotel_id.is_(None),
-                    MonitoringError.hotel_id.in_(owned_hotel_ids(user)),
-                ),
-            )
-            .order_by(MonitoringError.occurred_at.desc())
-            .limit(100)
-        )
-    ).all()
+    errors = [
+        (error, name)
+        for error, target, name in await _open_errors(session, owned_hotel_ids(user), with_hotel=True)
+        if monitoring_service.needs_a_person(error, target, now)
+    ][:100]
 
     by_class: dict[str, int] = {}
     for error, _ in errors:

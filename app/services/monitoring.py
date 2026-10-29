@@ -57,6 +57,31 @@ log = get_logger("monitoring")
 FAILURE_THRESHOLD = 5
 #: How long an open circuit stays open before a single probe is allowed.
 CIRCUIT_COOLDOWN = timedelta(hours=1)
+#: Intervals a "retries by itself" error is given to do so before Attention
+#: shows it. One short of "gone quiet" (three), so the evidence is on screen
+#: by the time the silence is.
+TRANSIENT_PATIENCE_INTERVALS = 2
+
+
+def needs_a_person(error: MonitoringError, target: MonitorTarget | None, now: datetime) -> bool:
+    """Whether an open error belongs on Attention yet.
+
+    A transient error -- a throttle, a timeout -- is resolved by the next
+    successful check of its target (record_success), so until that check is
+    overdue it is a retry in progress, not a problem. On 29 Oct Goibibo
+    throttled one load in three for ASG and Sterling, each followed by a good
+    reading within the half hour, and every one sat on Attention in red
+    meanwhile. Shown once the target has gone TRANSIENT_PATIENCE_INTERVALS
+    without a success; anything a person must act on (a block, drift, a config
+    fault) is shown at once, as is an error that names no target.
+    """
+    if not error.is_transient or target is None:
+        return True
+    baseline = target.last_success_at or target.created_at
+    if baseline is None:
+        return True
+    patience = timedelta(minutes=target.interval_minutes * TRANSIENT_PATIENCE_INTERVALS)
+    return now - baseline > patience
 
 
 @dataclass(frozen=True, slots=True)
