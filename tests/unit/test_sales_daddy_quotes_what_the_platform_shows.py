@@ -50,6 +50,7 @@ class TestOneProductPerRoomPerPlatform:
             "price_with_tax": 5880,
             "meal_plan": None,
             "currency": "INR",
+            "description": "Tonight on Booking.com, 2 adults, room only: ₹5,880 including taxes.",
             "seen_at": SEEN.isoformat(),
         }
 
@@ -78,13 +79,13 @@ class TestOneProductPerRoomPerPlatform:
 
 class TestFingerprint:
     def test_a_new_check_at_the_same_prices_is_not_a_change(self):
-        hotel = SimpleNamespace(name="ASG")
+        hotel = SimpleNamespace(id=7, name="ASG")
         a = price_feed.payload(hotel, NIGHT, price_feed.items(7, [row()]))
         b = price_feed.payload(hotel, NIGHT, price_feed.items(7, [row(seen_at=datetime(2026, 10, 29, 9, tzinfo=UTC))]))
         assert price_feed.fingerprint(a) == price_feed.fingerprint(b)
 
     def test_a_price_move_is(self):
-        hotel = SimpleNamespace(name="ASG")
+        hotel = SimpleNamespace(id=7, name="ASG")
         a = price_feed.payload(hotel, NIGHT, price_feed.items(7, [row()]))
         b = price_feed.payload(hotel, NIGHT, price_feed.items(7, [row(price="5500")]))
         assert price_feed.fingerprint(a) != price_feed.fingerprint(b)
@@ -120,8 +121,8 @@ def wired(monkeypatch):
 
     redis = FakeRedis()
     settings = SimpleNamespace(
-        salesdaddy_partner_api_key=SecretStr("sd_partner_key"), salesdaddy_base_url="https://api.salesdaddy.in",
-        salesdaddy_products_path="/v1/ext/products", price_feed_resend_hours=6, timezone="Asia/Kolkata",
+        price_feed_push_key=SecretStr("sd_partner_key"), price_feed_push_url=URL,
+        price_feed_resend_hours=6, timezone="Asia/Kolkata",
     )
     monkeypatch.setattr(tasks_price_feed, "get_settings", lambda: settings)
     monkeypatch.setattr(tasks_price_feed, "sync_session", session)
@@ -171,9 +172,78 @@ class TestPush:
         assert wired.redis.data == {}
 
     def test_without_the_key_nothing_is_sent(self, wired):
-        wired.settings.salesdaddy_partner_api_key = None
+        wired.settings.price_feed_push_key = None
         assert tasks_price_feed.push_prices.run(7) == {"status": "off"}
 
     def test_a_competitor_is_never_sent(self, wired):
         wired.hotel.is_own_property = False
         assert tasks_price_feed.push_prices.run(7) == {"status": "not_own"}
+
+
+class TestTheContract:
+    """docs/SALESDADDY_PRICE_FEED.md: what the receiver is promised."""
+
+    def test_the_list_says_its_version_and_that_it_is_complete(self):
+        body = price_feed.payload(SimpleNamespace(id=7, name="ASG"), NIGHT, price_feed.items(7, [row()]))
+        assert (body["version"], body["complete"], body["hotel_id"]) == (1, True, 7)
+
+    def test_each_product_carries_a_sentence_the_ai_can_repeat(self):
+        [item] = price_feed.items(7, [row(meal_plan="breakfast")])
+        assert item["description"] == "Tonight on Booking.com, 2 adults, breakfast: ₹5,880 including taxes."
+
+    def test_a_sold_out_product_says_so(self):
+        [item] = price_feed.items(7, [row(available=False)])
+        assert item["description"] == "Sold out tonight on Booking.com."
+
+    def test_without_a_tax_figure_the_price_does_not_claim_one(self):
+        [item] = price_feed.items(7, [row(with_tax=None)])
+        assert item["description"].endswith("₹5,600 (taxes may be extra).")
+
+
+class TestTheReadEndpoint:
+    """GET /api/v1/price-feed: the same list, fetched instead of pushed."""
+
+    @pytest.fixture
+    def api(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from app.api.deps import db_session
+        from app.api.v1 import price_feed as module
+        from app.main import create_app
+
+        hotel = SimpleNamespace(id=7, name="ASG")
+        rows = [row(), row(code="agoda", channel="Agoda", price="5500")]
+
+        class Session:
+            async def scalars(self, _stmt):
+                return SimpleNamespace(all=lambda: [hotel])
+
+            async def execute(self, _stmt):
+                return SimpleNamespace(all=lambda: [])
+
+        async def _session():
+            yield Session()
+
+        settings = SimpleNamespace(price_feed_api_key=SecretStr("feed-key"), timezone="Asia/Kolkata")
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+        monkeypatch.setattr(module, "local_today", lambda _tz: NIGHT)
+        monkeypatch.setattr(module.price_feed, "to_rows", lambda _r: rows)
+        app = create_app()
+        app.dependency_overrides[db_session] = _session
+        return SimpleNamespace(client=TestClient(app, raise_server_exceptions=False), settings=settings)
+
+    def test_the_right_key_gets_the_list(self, api):
+        response = api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "feed-key"})
+        assert response.status_code == 200
+        body = response.json()
+        assert (body["version"], body["night"]) == (1, "2026-10-29")
+        [hotel] = body["hotels"]
+        assert [i["channel"] for i in hotel["items"]] == ["Booking.com", "Agoda"]
+
+    def test_a_wrong_or_missing_key_is_refused(self, api):
+        assert api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "nope"}).status_code == 401
+        assert api.client.get("/api/v1/price-feed").status_code == 401
+
+    def test_without_the_setting_the_route_is_not_there(self, api):
+        api.settings.price_feed_api_key = None
+        assert api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "feed-key"}).status_code == 404

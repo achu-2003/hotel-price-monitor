@@ -55,7 +55,7 @@ def _remember(hotel_id: int, mark: str) -> None:
 
 
 def enabled() -> bool:
-    return get_settings().salesdaddy_partner_api_key is not None
+    return get_settings().price_feed_push_key is not None
 
 
 @shared_task(
@@ -65,7 +65,7 @@ def enabled() -> bool:
 )
 def push_prices(hotel_id: int) -> dict[str, Any]:
     settings = get_settings()
-    if settings.salesdaddy_partner_api_key is None:
+    if settings.price_feed_push_key is None:
         return {"status": "off"}
     night = local_today(settings.timezone)
     with sync_session() as session:
@@ -80,10 +80,10 @@ def push_prices(hotel_id: int) -> dict[str, Any]:
     if _already_sent(hotel_id, mark):
         return {"status": "unchanged"}
 
-    url = settings.salesdaddy_base_url.rstrip("/") + settings.salesdaddy_products_path
+    url = settings.price_feed_push_url
     response = httpx.put(
         url, json=body, timeout=_TIMEOUT,
-        headers={"X-Api-Key": settings.salesdaddy_partner_api_key.get_secret_value()},
+        headers={"X-Api-Key": settings.price_feed_push_key.get_secret_value()},
     )
     if response.status_code == 429 or response.status_code >= 500:
         log.warning("price_feed_retry", hotel_id=hotel_id, status=response.status_code)

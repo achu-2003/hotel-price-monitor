@@ -254,13 +254,18 @@ class Settings(BaseSettings):
     # ── tonight's prices, fed to Sales Daddy's WhatsApp AI ───────────
     # The AI quotes only from Sales Daddy's own product list, so our hotel's
     # prices on each platform are PUT there whenever a fetch changes them --
-    # see workers/tasks_price_feed.py. The partner API (/v1/ext/*) has a key of
-    # its own; without it nothing is sent.
-    salesdaddy_partner_api_key: SecretStr | None = None
-    salesdaddy_products_path: str = "/v1/ext/products"
+    # see workers/tasks_price_feed.py and docs/SALESDADDY_PRICE_FEED.md.
+    # Settings of its own, NOT salesdaddy_base_url / salesdaddy_api_key: those
+    # carry the WhatsApp alerts, and re-pointing the feed must not move them.
+    # Without the key nothing is sent.
+    price_feed_push_url: str = "https://api.salesdaddy.in/v1/ext/products"
+    price_feed_push_key: SecretStr | None = None
     # An unchanged list is sent again after this long, so Sales Daddy can hide
     # any product that stopped being refreshed (a room renamed on a platform).
     price_feed_resend_hours: int = 6
+    # The same list, fetched rather than pushed: GET /api/v1/price-feed with
+    # this in X-Api-Key. Without it the endpoint answers 404, as if absent.
+    price_feed_api_key: SecretStr | None = None
 
     # ── notification throttling ──────────────────────────────────────
     digest_window_seconds: int = 60

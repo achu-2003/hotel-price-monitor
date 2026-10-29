@@ -106,14 +106,28 @@ def items(hotel_id: int, rows: Iterable[Row]) -> list[dict[str, Any]]:
             "price_with_tax": _money(row.price_with_tax) if row.available else None,
             "meal_plan": row.meal_plan,
             "currency": row.currency,
+            "description": _description(row),
             "seen_at": row.seen_at.isoformat(),
         }
         for row in best.values()
     ]
 
 
+#: Bumped when a field changes meaning or goes away -- never for an addition.
+#: The receiver is somebody else's code; docs/SALESDADDY_PRICE_FEED.md is the contract.
+VERSION = 1
+
+
 def payload(hotel: Hotel, night: date, products: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"source": "rms", "hotel": hotel.name, "night": night.isoformat(), "items": products}
+    """One hotel's list for one night.
+
+    ``complete``: these are ALL of the hotel's products under ``source`` -- an
+    ``external_id`` the receiver holds that is not here is gone (a room renamed
+    on a platform) and should stop being quoted. Always true today; the field
+    exists so a partial send can never be mistaken for a full one later.
+    """
+    return {"version": VERSION, "source": "rms", "hotel_id": hotel.id, "hotel": hotel.name,
+            "night": night.isoformat(), "complete": True, "items": products}
 
 
 def fingerprint(body: dict[str, Any]) -> str:
@@ -125,6 +139,16 @@ def fingerprint(body: dict[str, Any]) -> str:
     """
     stable = {**body, "items": [{k: v for k, v in i.items() if k != "seen_at"} for i in body["items"]]}
     return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
+
+
+def _description(row: Row) -> str:
+    """The product in a sentence a chat assistant can repeat without guessing."""
+    board = row.meal_plan or "room only"
+    if not row.available:
+        return f"Sold out tonight on {row.channel}."
+    with_tax = (f"₹{_money(row.price_with_tax):,} including taxes"
+                if row.price_with_tax is not None else f"₹{_money(row.price):,} (taxes may be extra)")
+    return f"Tonight on {row.channel}, 2 adults, {board}: {with_tax}."
 
 
 def _cheaper(row: Row, kept: Row) -> bool:
