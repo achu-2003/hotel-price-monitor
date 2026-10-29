@@ -224,7 +224,7 @@ class TestTheReadEndpoint:
         async def _session():
             yield Session()
 
-        settings = SimpleNamespace(price_feed_api_key=SecretStr("feed-key"), timezone="Asia/Kolkata")
+        settings = SimpleNamespace(price_feed_api_key=SecretStr("feed-key"), price_feed_public=False, timezone="Asia/Kolkata")
         monkeypatch.setattr(module, "get_settings", lambda: settings)
         monkeypatch.setattr(module, "local_today", lambda _tz: NIGHT)
         monkeypatch.setattr(module.price_feed, "to_rows", lambda _r: rows)
@@ -247,6 +247,15 @@ class TestTheReadEndpoint:
     def test_without_the_setting_the_route_is_not_there(self, api):
         api.settings.price_feed_api_key = None
         assert api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "feed-key"}).status_code == 404
+
+    def test_public_needs_no_key(self, api):
+        api.settings.price_feed_public = True
+        assert api.client.get("/api/v1/price-feed").status_code == 200
+        assert api.client.get("/api/v1/price-feed", headers={"X-Api-Key": "anything"}).status_code == 200
+
+    def test_public_works_with_no_key_configured_at_all(self, api):
+        api.settings.price_feed_public, api.settings.price_feed_api_key = True, None
+        assert api.client.get("/api/v1/price-feed").status_code == 200
 
 
 class TestWhatTheFirstLiveCallShowed:

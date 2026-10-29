@@ -7,8 +7,10 @@ to catch up without waiting for the next change. docs/SALESDADDY_PRICE_FEED.md
 is the contract.
 
 Not a user endpoint: no login, one shared key (Settings.price_feed_api_key)
-in ``X-Api-Key``. Without that setting the route answers 404, so a deployment
-that never turned the feed on does not advertise it.
+in ``X-Api-Key`` -- or none at all with Settings.price_feed_public, since
+these are prices every platform visitor already sees. With neither set the
+route answers 404, so a deployment that never turned the feed on does not
+advertise it.
 """
 from __future__ import annotations
 
@@ -35,10 +37,11 @@ async def read_price_feed(
 ) -> dict[str, Any]:
     settings = get_settings()
     expected = settings.price_feed_api_key
-    if expected is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
-    if not x_api_key or not hmac.compare_digest(x_api_key.encode(), expected.get_secret_value().encode()):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_key")
+    if not settings.price_feed_public:
+        if expected is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+        if not x_api_key or not hmac.compare_digest(x_api_key.encode(), expected.get_secret_value().encode()):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_key")
 
     night = local_today(settings.timezone)
     statement = select(Hotel).where(Hotel.is_own_property.is_(True), Hotel.is_active.is_(True)).order_by(Hotel.id)

@@ -266,6 +266,11 @@ class Settings(BaseSettings):
     # The same list, fetched rather than pushed: GET /api/v1/price-feed with
     # this in X-Api-Key. Without it the endpoint answers 404, as if absent.
     price_feed_api_key: SecretStr | None = None
+    # Open the endpoint to anyone with the URL, no key. These are the prices
+    # the platforms already show every visitor; asked for on 29 Oct so the
+    # Sales Daddy team can call it without handling a secret. Explicit, so a
+    # deployment that merely left the key empty stays closed.
+    price_feed_public: bool = False
 
     # ── notification throttling ──────────────────────────────────────
     digest_window_seconds: int = 60

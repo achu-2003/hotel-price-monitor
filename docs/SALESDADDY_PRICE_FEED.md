@@ -133,8 +133,11 @@ ones that send our WhatsApp alerts, so changing them cannot affect those.
 
 ```
 GET https://hpm.103.178.166.6.sslip.io/api/v1/price-feed
-X-Api-Key: <the key we give you>
 ```
+
+No key is needed while our side runs it **open** (`PRICE_FEED_PUBLIC=true`).
+If we close it again, send `X-Api-Key: <the key we give you>`; sending the
+header while it is open does no harm.
 
 Optional: `?hotel_id=9` for one hotel.
 
@@ -151,12 +154,13 @@ Answer `200`:
 | Status | Meaning |
 |---|---|
 | `200` | the lists |
-| `401` | missing or wrong `X-Api-Key` |
+| `401` | missing or wrong `X-Api-Key` (only when the endpoint is not open) |
 | `404` | the feed is not switched on here, or no such `hotel_id` |
 
 Always tonight's data, read fresh from our database on every call — calling
-every few minutes is fine. To switch it on, our side sets
-`PRICE_FEED_API_KEY` (in Coolify) to a long random secret and shares it with you.
+every few minutes is fine. To switch it on, our side sets either
+`PRICE_FEED_PUBLIC=true` (open, no key) or `PRICE_FEED_API_KEY` to a long
+random secret that it shares with you (in Coolify).
 
 ---
 
