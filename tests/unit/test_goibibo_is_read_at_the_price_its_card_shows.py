@@ -162,19 +162,16 @@ class TestASoldOutNightIsOneGoibiboSaid:
         result = _fetch_with(monkeypatch, body="AGS Holiday Resorts", payload=PAYLOAD)
         assert len(result.offers) == 12 and not result.sold_out_detected
 
-    def test_sold_out_while_the_next_night_is_served_is_sold_out(self, monkeypatch):
-        """28 Oct: Sterling's sold-out evening, until now retried as a throttle."""
-        opened = []
-        result = _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
-                             payload=None, next_night=PAYLOAD, opened=opened)
-        assert result.sold_out_detected and result.offers == []
-        assert "checkin=20261027" in opened[1] and "checkout=20261028" in opened[1]
-
-    def test_sold_out_while_the_next_night_is_refused_too_is_a_throttle(self, monkeypatch):
+    def test_sold_out_while_the_next_night_would_be_served_is_still_a_throttle(self, monkeypatch):
+        """29 Oct: a served next night "proved" ASG sold out at 12:32, between
+        two readings of twelve rooms. Goibibo refuses one load and serves the
+        next, so nothing is learned from a second page -- and none is opened."""
         from app.core.errors import RateLimitedError
+        opened = []
         with pytest.raises(RateLimitedError):
             _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
-                        payload=None, next_night=None)
+                        payload=None, next_night=PAYLOAD, opened=opened)
+        assert len(opened) == 1
 
     def test_a_refused_page_does_not_spend_a_second_load(self, monkeypatch):
         from app.core.errors import RateLimitedError
