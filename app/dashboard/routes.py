@@ -3087,7 +3087,8 @@ def _lane_rms(rule_row, p, m, channel_rms, lane_ratio, round_to) -> SimpleNamesp
     has that row, otherwise the first plan it does sell (Agoda has no EP row
     for CLASSIC), read off what the last Preview found under the channel.
     """
-    out = SimpleNamespace(anchor=None, cur=None, base=None, rms_new=None, bounded=None, settled=False)
+    out = SimpleNamespace(anchor=None, cur=None, base=None, rms_new=None, bounded=None,
+                          settled=False, idle=None)
     if m is None:
         return out
     channel = rule_row.channel
@@ -3106,6 +3107,8 @@ def _lane_rms(rule_row, p, m, channel_rms, lane_ratio, round_to) -> SimpleNamesp
             floor=m.floor_amount, ceiling=m.ceiling_amount)
     if p.target is not None and p.our_price:
         out.settled = repricing_rule.settled(p.our_price, p.target, round_to=round_to)
+    if not out.settled:
+        out.idle = repricing_rule.nothing_to_write(out.cur, out.base, out.rms_new, round_to=round_to)
     return out
 
 

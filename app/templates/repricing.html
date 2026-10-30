@@ -55,6 +55,23 @@
 {% endmacro %}
 
 {#
+  A ROW WITH NOTHING TO WRITE, said as such. The rule still disagrees with
+  the prices, but the rate it lands on is already in the cell, so every run
+  -- automatic or pressed -- finds it there and writes nothing. A green
+  "will apply" here read as though the automatic switch were not working.
+  See rule.nothing_to_write for the two ways a row gets here.
+#}
+{% macro idle_status(idle, cur, p, channel) %}
+  <span class="tag settled">no change needed</span>
+  {% if idle == "written" %}
+    <span class="muted">already applied: RMS holds {{ money(cur) }}; waiting for {{ channel }} to show the new price</span>
+  {% else %}
+    {% if p.with_tax and rule.in_gst_gap(p.target) %}<span class="muted">no price with tax exists between ₹7,875 and ₹8,851 (the GST slab), so {{ money(p.target) }} cannot be shown; {{ money(p.our_price) }} is the closest under it</span>
+    {% else %}<span class="muted">RMS already holds {{ money(cur) }}, the rate this proposal comes to</span>{% endif %}
+  {% endif %}
+{% endmacro %}
+
+{#
   ONE ROOM ON ANOTHER WEBSITE'S RULE (Agoda, Goibibo), in that website's
   own section at the bottom of the page. The table at the top is Booking.com
   and nothing else: a website with a rule of its own is shown and applied
@@ -87,7 +104,7 @@
     {#- This room on this website alone: the same job as the section's Apply,
         narrowed to one room. Nothing typed or ticked for Booking.com rides
         along -- the worker drops it for a channel run. -#}
-    {% if m and m.is_enabled and p.our_price and p.target is not none and not ns.settled %}
+    {% if m and m.is_enabled and p.our_price and p.target is not none and not ns.settled and not ns.idle %}
       <br><button type="button" class="apply-lane-room"
               data-room-type-id="{{ p.room_type_id }}" data-room="{{ p.room_name }}"
               data-channel="{{ r.channel }}" data-price="{{ p.target|int }}"
@@ -97,9 +114,9 @@
   <td class="num rms">
     {% if ns.cur is not none %}
       <span class="plan">{{ anchor }}</span>
-      {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
+      {% if ns.settled or ns.idle %}{{ money(ns.cur) }} <span class="muted">{{ 'applied' if ns.idle == 'written' else 'stays' }}</span>
       {% else %}{{ money(ns.cur) }} → <strong>{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}
-      {% if ns.bounded and not ns.settled %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
+      {% if ns.bounded and not ns.settled and not ns.idle %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
       <br><span class="muted">the other plans keep today's supplement</span>
     {% elif m %}<span class="muted">read the grid first (Preview)</span>
     {% else %}—{% endif %}
@@ -115,6 +132,7 @@
     {% if p.held %}<span class="tag held">held</span> <span class="muted">{{ p.held }}</span>
     {% elif ns.settled %}<span class="tag settled">no change needed</span>
       <span class="muted">already {{ money(r.benchmark_undercut) }} under {{ p.benchmark }}</span>
+    {% elif ns.idle %}{{ idle_status(ns.idle, ns.cur, p, r.channel) }}
     {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
       <span class="muted">{{ money(p.short_by) }} short; {{ p.capped }}</span>
       {% else %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
@@ -228,7 +246,7 @@
           room that is not mapped, or has no price of ours to take the
           ratio from, cannot be applied, so it gets no box.
         #}
-        {% set ns = namespace(cur=none, base=none, rms_new=none, bounded=none, settled=false) %}
+        {% set ns = namespace(cur=none, base=none, rms_new=none, bounded=none, settled=false, idle=none) %}
         {% if m and m.anchor_for(p.board or settings.benchmark_meal_plan) and (m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan))) in latest_rms %}
           {% set ns.cur = latest_rms[(m.rms_room, m.rate_type_for(m.anchor_for(p.board or settings.benchmark_meal_plan)))] %}
         {% endif %}
@@ -259,6 +277,7 @@
               asked it of a memory, and a memory said "no change needed" on a
               row sitting 2,950 above them. -#}
           {% set ns.settled = rule.settled(p.our_price, p.target, round_to=settings.round_to) %}
+          {% if not ns.settled %}{% set ns.idle = rule.nothing_to_write(ns.cur, ns.base, ns.rms_new, round_to=settings.round_to) %}{% endif %}
         {% endif %}
         <td class="num proposed">
           {% if m and m.is_enabled and p.our_price %}
@@ -339,10 +358,10 @@
           {% if ns.cur is not none %}
             {% set anchor_plan = m.anchor_for(p.board or settings.benchmark_meal_plan) %}
             <span class="rms-plan"><span class="plan">{{ anchor_plan }}</span>
-              {% if ns.settled %}{{ money(ns.cur) }} <span class="muted">stays</span>
+              {% if ns.settled or ns.idle %}{{ money(ns.cur) }} <span class="muted">{{ 'applied' if ns.idle == 'written' else 'stays' }}</span>
               <span class="rms-new" hidden>{{ money(ns.rms_new) }}</span>
               {% else %}{{ money(ns.cur) }} → <strong class="rms-new">{{ money(ns.rms_new) if ns.rms_new is not none else '—' }}</strong>{% endif %}</span>
-            {% if ns.bounded and not ns.settled %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
+            {% if ns.bounded and not ns.settled and not ns.idle %}<br><span class="muted">{{ ns.bounded }}</span>{% endif %}
             {#
               THE OTHER PLANS, WITH THEIR NUMBERS. Apply writes CLASSIC's EP
               and MAP as well as its CP -- it always did -- but the cell said
@@ -396,6 +415,7 @@
           {% elif ns.settled %}<span class="tag settled">no change needed</span>
             <span class="muted">already {{ money(settings.benchmark_undercut) }} under {{ p.benchmark }};
             a proposal returns when they move</span>
+          {% elif ns.idle %}{{ idle_status(ns.idle, ns.cur, p, 'Booking.com') }}
           {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
             <span class="muted">{{ money(p.short_by) }} short of {{ p.benchmark }} − {{ money(settings.benchmark_undercut) }};
             {{ p.capped }}</span>

@@ -1141,6 +1141,37 @@ def settled(current: Decimal | None, proposed: Decimal | None, *, round_to: int)
     return abs(int(current) - int(proposed)) < max(int(round_to), 1)
 
 
+def nothing_to_write(cur: Decimal | None, base: Decimal | None, rms_new: Decimal | None, *,
+                     round_to: int) -> str | None:
+    """Why a row the rule still disagrees with has no rate to write, or ``None``.
+
+    "WILL APPLY" OVER A RATE ALREADY IN THE CELL. The prices say we are not
+    where the rule wants us (so :func:`settled` is false), yet the rate the
+    sum lands on is the one RMS already holds. The run reads the live cell,
+    finds it there and writes nothing -- and the row kept a green "will
+    apply" through every automatic run, as though the switch were not on.
+    Two ways to get there:
+
+    ``"written"`` -- our own last write. The cell holds the new rate and the
+    site still shows the price the old one made (``base`` is the old rate,
+    see ratio_base in the route), so the sum comes out at what is already
+    there. Nothing to do but wait for the site to catch up.
+
+    ``"stuck"`` -- no write of ours behind it: the rate that would carry the
+    target is the rate in the cell. The GST slab does this (see
+    :func:`in_gst_gap`), and so does a room already sitting on its floor.
+    """
+    if cur is None or rms_new is None or not settled(cur, rms_new, round_to=round_to):
+        return None
+    return "written" if base is not None and base != cur else "stuck"
+
+
+def in_gst_gap(guest: Decimal | None) -> bool:
+    """A with-tax price no tariff can show a guest (see :func:`before_gst`)."""
+    return (guest is not None
+            and GST_SLAB_LIMIT * (1 + GST_LOW) < guest < (GST_SLAB_LIMIT + 1) * (1 + GST_HIGH))
+
+
 def rms_bounds(amount: Decimal, *, floor: Decimal | None, ceiling: Decimal | None) -> str | None:
     """Why an RMS rate may not be written, or ``None`` when it may.
 
