@@ -50,7 +50,7 @@ SEND_URL = "https://wa.mydreamstechnology.in/api/sendtemplate.php"
 
 TO = Destination(name="Achuthan", email=None, phone_e164="+919876543210")
 
-API_KEY = "TzEtLuRZhaX4fK7yBJ6QSAw8v"
+API_KEY = "test-api-key-0000"
 
 
 def _settings(**overrides):
@@ -59,7 +59,7 @@ def _settings(**overrides):
         whatsapp_provider="mydreams",
         whatsapp_template_name="price_change_alert",
         mydreams_base_url="https://wa.mydreamstechnology.in/api",
-        mydreams_license_number="28825309344",
+        mydreams_license_number="10000000001",
         mydreams_api_key=SecretStr(API_KEY),
     )
     base.update(overrides)
@@ -227,7 +227,7 @@ def test_the_request_carries_the_licence_template_and_bare_number(configured):
         assert configured.send(TO, _message()).ok
 
     query = _sent_query(route)
-    assert query["LicenseNumber"] == "28825309344"
+    assert query["LicenseNumber"] == "10000000001"
     assert query["APIKey"] == API_KEY
     # The reseller documents 91XXXXXXXXXX -- E.164's '+' is not accepted.
     assert query["Contact"] == "919876543210"
@@ -418,13 +418,13 @@ def test_the_api_key_never_reaches_an_error_detail(configured):
     with respx.mock:
         respx.get(SEND_URL).mock(
             side_effect=httpx.ConnectError(
-                f"failed connecting to {SEND_URL}?LicenseNumber=28825309344&APIKey={API_KEY}"
+                f"failed connecting to {SEND_URL}?LicenseNumber=10000000001&APIKey={API_KEY}"
             )
         )
         result = configured.send(TO, _message())
 
     assert API_KEY not in (result.error_detail or "")
-    assert "28825309344" not in (result.error_detail or "")
+    assert "10000000001" not in (result.error_detail or "")
 
 
 def test_scrub_leaves_the_rest_of_the_message_readable():
