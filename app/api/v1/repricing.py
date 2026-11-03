@@ -102,10 +102,12 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
         await _own_competitor(session, user, payload.benchmark_hotel_id)
     if payload.source_id is not None:
         await get_object_or_404(session, Source, payload.source_id, "Source")
-    for room_type_id in payload.benchmark_room_pairs:
+    for room_type_id, pair in payload.benchmark_room_pairs.items():
         # Same reason as the benchmark hotel: an id taken on trust would let
-        # one account point its rule at another's room.
+        # one account point its rule at another's room -- or another's hotel.
         await _own_room(session, user, room_type_id)
+        if not isinstance(pair, str) and pair.hotel_id is not None:
+            await _own_competitor(session, user, pair.hotel_id)
     row = await _settings(session, user)
     before = _settings_out(row).model_dump(mode="json", exclude={"updated_at"})
     for field, value in payload.model_dump().items():
@@ -115,7 +117,7 @@ async def replace_settings(payload: RepricingSettingsIn, request: Request, sessi
             continue
         # JSONB keys are strings on the way in; the rule coerces on the way out.
         if field == "benchmark_room_pairs":
-            value = {str(k): v for k, v in value.items()}
+            value = {str(k): v for k, v in value.items()}  # names, or {"theirs", "hotel_id"}
         setattr(row, field, value)
     await record_audit(
         session, user=user, action="update", entity="repricing_settings", entity_id=user.id,
@@ -210,8 +212,10 @@ async def put_channel_rule(channel: str, payload: ChannelRuleIn, request: Reques
             f"{channel} is the main channel; its rule is the one above, not a channel rule.",
         )
     await get_object_or_404(session, Source, payload.source_id, "Source")
-    for room_type_id in payload.room_pairs:
+    for room_type_id, pair in payload.room_pairs.items():
         await _own_room(session, user, room_type_id)
+        if pair.hotel_id is not None:
+            await _own_competitor(session, user, pair.hotel_id)
 
     row = await session.scalar(select(RepricingChannelRule).where(
         RepricingChannelRule.owner_user_id == user.id, RepricingChannelRule.channel == channel,

@@ -20,6 +20,15 @@ class AutomaticIn(ORMModel):
     enabled: bool
 
 
+class TheirRoom(ORMModel):
+    """One room of ours, paired with another hotel's room or on another board."""
+
+    theirs: str = Field(min_length=1, max_length=200)
+    hotel_id: int | None = Field(default=None, gt=0)
+    #: Compare this room on another board than the rule's, both sides.
+    board: str | None = Field(default=None, max_length=60)
+
+
 class RepricingSettingsIn(ORMModel):
     #: OMITTED MEANS "LEAVE IT ALONE", and that is not a convenience.
     #:
@@ -50,9 +59,10 @@ class RepricingSettingsIn(ORMModel):
     benchmark_with_tax: bool = True
     #: One of services.meal_plan's plans, or None for "whatever is cheapest".
     benchmark_meal_plan: str | None = Field(default=None, max_length=60)
-    #: ``{our room_type_id: their room name}``. Every key is checked against
-    #: the caller's own property in the route.
-    benchmark_room_pairs: dict[int, str] = Field(default_factory=dict, max_length=50)
+    #: ``{our room_type_id: their room name}``, or for a room that follows
+    #: another hotel ``{our room_type_id: {"theirs": name, "hotel_id": id}}``.
+    #: Every key and hotel is checked against the caller's own in the route.
+    benchmark_room_pairs: dict[int, str | TheirRoom] = Field(default_factory=dict, max_length=50)
     #: The site the main channel's prices are read from. OMITTED MEANS
     #: "LEAVE IT ALONE", like ``auto_enabled``: this is a full replace, and
     #: a caller written before the field existed must not reset it to "any
@@ -77,6 +87,11 @@ class RoomPair(ORMModel):
     ours: str | None = Field(default=None, max_length=200)
     #: The benchmark's room it competes with there. Blank: not paired.
     theirs: str | None = Field(default=None, max_length=200)
+    #: The hotel ``theirs`` belongs to, when it is not the benchmark: a room
+    #: that follows a hotel of its own. Blank: the benchmark.
+    hotel_id: int | None = Field(default=None, gt=0)
+    #: Compare this room on another board than the rule's, both sides.
+    board: str | None = Field(default=None, max_length=60)
 
     @field_validator("ours", "theirs")
     @classmethod

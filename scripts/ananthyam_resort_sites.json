@@ -1,0 +1,453 @@
+{
+  "owner": "ags@123",
+  "sources": {
+    "www-booking-com": {
+      "display_name": "www.booking.com (auto-discovered)",
+      "adapter_key": "playwright_direct_site",
+      "base_domain": "www.booking.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-01",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": null
+    },
+    "agoda": {
+      "display_name": "Agoda (OTA listing)",
+      "adapter_key": "playwright_ota",
+      "base_domain": "agoda.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 6,
+      "tos_reviewed_at": "2026-09-25",
+      "tos_reviewed_by": "ags",
+      "tos_notes": null
+    },
+    "goibibo": {
+      "display_name": "Goibibo (OTA listing)",
+      "adapter_key": "goibibo",
+      "base_domain": "goibibo.com",
+      "requires_auth": false,
+      "is_enabled": true,
+      "rate_limit_per_min": 1,
+      "tos_reviewed_at": "2026-10-26",
+      "tos_reviewed_by": "AGS",
+      "tos_notes": "Owner asked on 26 Oct 2026 for Goibibo to be read like Booking.com and Agoda. Read as a visitor in installed Chrome, 1 load a minute; see app/adapters/goibibo.py."
+    }
+  },
+  "hotels": [
+    {
+      "name": "Ananthyam Resort",
+      "slug": "ananthyam-resort",
+      "location": "Nilavur Road, near Murugan Temple Road, Yelagiri, Mangalam R.F., Tamil Nadu 635853",
+      "latitude": null,
+      "longitude": null,
+      "is_own_property": false,
+      "is_active": true,
+      "notes": null,
+      "rooms": [
+        {
+          "name": "Deluxe Double Room (2 Adults + 1 Child)",
+          "canonical_name": "1 2 adults child deluxe double",
+          "capacity": null,
+          "sort_order": 0,
+          "is_active": true
+        },
+        {
+          "name": "Superior Double Room",
+          "canonical_name": "double superior",
+          "capacity": null,
+          "sort_order": 1,
+          "is_active": true
+        },
+        {
+          "name": "Villa with Garden View",
+          "canonical_name": "garden view villa",
+          "capacity": null,
+          "sort_order": 2,
+          "is_active": true
+        },
+        {
+          "name": "Family Room",
+          "canonical_name": "family",
+          "capacity": null,
+          "sort_order": 3,
+          "is_active": true
+        },
+        {
+          "name": "Suite",
+          "canonical_name": "suite",
+          "capacity": null,
+          "sort_order": 4,
+          "is_active": true
+        },
+        {
+          "name": "Bed:",
+          "canonical_name": "bed",
+          "capacity": null,
+          "sort_order": 5,
+          "is_active": false
+        },
+        {
+          "name": "Bedroom:",
+          "canonical_name": "bedroom",
+          "capacity": null,
+          "sort_order": 6,
+          "is_active": false
+        },
+        {
+          "name": "Beds:",
+          "canonical_name": "beds",
+          "capacity": null,
+          "sort_order": 7,
+          "is_active": false
+        },
+        {
+          "name": "Deluxe",
+          "canonical_name": "deluxe",
+          "capacity": null,
+          "sort_order": 8,
+          "is_active": true
+        },
+        {
+          "name": "Superior",
+          "canonical_name": "superior",
+          "capacity": null,
+          "sort_order": 9,
+          "is_active": true
+        }
+      ],
+      "sites": [
+        {
+          "source_code": "www-booking-com",
+          "external_id": null,
+          "url": "https://www.booking.com/hotel/in/ananthyam-resort-by-anukulas.html?aid=356980&label=gog235jc-10CAsobEIcYW5hbnRoeWFtLXJlc29ydC1ieS1hbnVrdWxhc0gzWANobIgBAZgBM7gBF8gBDNgBA-gBAfgBAYgCAagCAbgC0bva1AbAAgHSAiQ3N2YxMWVlMi1lMzUyLTQzNzYtOWEwNy1mNjk3YmI2NmYwNDbYAgHgAgE&sid=68750fe296060a5c07e712d176e19d06&all_sr_blocks=1252861903_442984411_2_2_0&checkin={check_in}&checkout={check_out}&dest_id=900052697&dest_type=city&dist=0&group_adults=2&group_children=0&hapos=1&highlighted_blocks=1252861903_442984411_2_2_0&hpos=1&matching_block_id=1252861903_442984411_2_2_0&no_rooms=1&req_adults=2&req_children=0&room1=A%2CA&sb_price_type=total&sr_order=popularity&sr_pri_blocks=1252861903_442984411_2_2_0__550000&srepoch=1788255715&srpvid=949a4429ae8e02eb&type=total&ucfs=1",
+          "currency": "INR",
+          "adapter_config": {
+            "wait_for": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "room_card": "tr.js-rt-block-row.e2e-hprt-table-row.hprt-table-last-row",
+            "selectors": {
+              "price": "span.prco-valign-middle-helper",
+              "room_name": "span.hprt-roomtype-icon-link"
+            },
+            "auto_repair": {
+              "attempts": 0,
+              "last_outcome": "repaired",
+              "last_attempt_at": "2026-09-24T10:43:08.403786+00:00"
+            },
+            "discovery_note": "Auto-repaired 2026-09-24: 5 rooms, 5/5 prices confirmed against the page, 5 of them printed with a currency.",
+            "wait_timeout_ms": 45000,
+            "discovery_version": 4
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "1 2 adults child deluxe double",
+              "raw_name": "Deluxe Double Room (2 Adults + 1 Child)",
+              "normalized_name": "1 2 adults child deluxe double",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "double superior",
+              "raw_name": "Superior Double Room",
+              "normalized_name": "double superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View",
+              "normalized_name": "garden view villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room",
+              "normalized_name": "family",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bed",
+              "raw_name": "Bed:",
+              "normalized_name": "bed",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "bedroom",
+              "raw_name": "Bedroom:",
+              "normalized_name": "bedroom",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "beds",
+              "raw_name": "Beds:",
+              "normalized_name": "beds",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "agoda",
+          "external_id": "59460797",
+          "url": "https://www.agoda.com/en-in/accom/property?propertyId=59460797&countryId=35&finalPriceView=1&isShowMobileAppPrice=false&cid=1917614&numberOfBedrooms=&familyMode=false&adults={adults}&children={children}&rooms={rooms}&maxRooms=0&checkIn={check_in}&isCalendarCallout=false&childAges=&numberOfGuest=0&missingChildAges=false&travellerType=1&showReviewSubmissionEntry=false&currencyCode=INR&isFreeOccSearch=false&los=1&searchrequestid=a1db244c-7732-4ca5-8d4d-d93e35f75f14&ds=V7Nwwf3xPPYEiQNR",
+          "currency": "INR",
+          "adapter_config": {
+            "fields": {
+              "room_id": "id",
+              "room_name": "name",
+              "rooms_left": "quantity",
+              "price_exclusive": "perNightPrice.display",
+              "price_inclusive": "inclusivePriceWithoutExtraBed.display",
+              "breakfast_included": "isBreakfastIncluded"
+            },
+            "rooms_path": "roomGridData.masterRooms[*].rooms",
+            "rooms_dedupe": "cheapest",
+            "rooms_filter": {
+              "field": "isFit",
+              "equals": true,
+              "fallback": {
+                "group_by": [
+                  "name",
+                  "id",
+                  "isBreakfastIncluded"
+                ],
+                "occupancy": "adults"
+              }
+            },
+            "wait_timeout_ms": 45000,
+            "json_url_contains": [
+              "/BelowFoldParams/GetSecondaryData"
+            ]
+          },
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe (site room 990199053)",
+              "normalized_name": "#990199053",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe (site room 960522939)",
+              "normalized_name": "#960522939",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "superior",
+              "raw_name": "Superior (site room 990199304)",
+              "normalized_name": "#990199304",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "superior",
+              "raw_name": "Superior (site room 960522940)",
+              "normalized_name": "#960522940",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View",
+              "normalized_name": "garden view villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View (site room 896263149)",
+              "normalized_name": "#896263149",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View (site room 898413989)",
+              "normalized_name": "#898413989",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room",
+              "normalized_name": "family",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room (site room 990199597)",
+              "normalized_name": "#990199597",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room (site room 960522938)",
+              "normalized_name": "#960522938",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite",
+              "normalized_name": "suite",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite (site room 992978841)",
+              "normalized_name": "#992978841",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "suite",
+              "raw_name": "Suite (site room 986089945)",
+              "normalized_name": "#986089945",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        },
+        {
+          "source_code": "goibibo",
+          "external_id": "8603356019478962155",
+          "url": "https://www.goibibo.com/hotels/hotel-details/?checkin={check_in:%Y%m%d}&checkout={check_out:%Y%m%d}&roomString=1-{adults}-{children}&searchText=Ananthyam+Resort+by+Anukulas&locusId=CTXYG&locusType=city&cityCode=CTXYG&cc=IN&_uCurrency=INR&vcid=CTXYG&giHotelId=8603356019478962155&mmtId=202407231607217262&sType=hotel",
+          "currency": "INR",
+          "adapter_config": {},
+          "is_active": true,
+          "aliases": [
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room",
+              "normalized_name": "deluxe",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "deluxe",
+              "raw_name": "Deluxe Room (site room 2249)",
+              "normalized_name": "#2249",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "superior",
+              "raw_name": "Superior Room",
+              "normalized_name": "superior",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "superior",
+              "raw_name": "Superior Room (site room 252)",
+              "normalized_name": "#252",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View",
+              "normalized_name": "garden view villa",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "garden view villa",
+              "raw_name": "Villa with Garden View (site room 65237)",
+              "normalized_name": "#65237",
+              "match_method": "exact",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room",
+              "normalized_name": "family",
+              "match_method": "fuzzy",
+              "confidence": "1.000"
+            },
+            {
+              "room": "family",
+              "raw_name": "Family Room (site room 28)",
+              "normalized_name": "#28",
+              "match_method": "exact",
+              "confidence": "1.000"
+            }
+          ],
+          "targets": [
+            {
+              "adults": 2,
+              "children": 0,
+              "rooms": 1,
+              "meal_plan_filter": null,
+              "date_strategy": "rolling",
+              "fixed_check_in": null,
+              "fixed_check_out": null,
+              "lead_time_days": 0,
+              "length_of_stay_nights": 1,
+              "interval_minutes": 30,
+              "is_enabled": true,
+              "min_delta_abs": null,
+              "min_delta_pct": null,
+              "confirm_checks": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

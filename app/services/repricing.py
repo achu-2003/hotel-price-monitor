@@ -171,6 +171,9 @@ class Proposal:
     #: prompt) reads the rule's own choice instead of repeating the
     #: selection and risking a different answer.
     benchmark_entry: Competitor | None = None
+    #: The board THEIR price was read on, when it is not the lane's: a pair
+    #: with a board of its own (:attr:`Benchmark.room_boards`).
+    their_board: str | None = None
     #: The board ``our_price`` is quoted on. Normally the one the rule was
     #: told to use, but a room the site sells only room-only falls back to
     #: what it does sell, and then this is what says so -- and what the page
@@ -313,6 +316,26 @@ class Benchmark:
     #: so nothing has been said about what it competes with, and inventing a
     #: comparison is how a rate moves for a reason nobody chose.
     room_pairs: Mapping[int, str] = field(default_factory=dict)
+    #: The rooms of ours that follow ANOTHER hotel than this one:
+    #: ``{our room_type_id: (hotel_id, hotel name)}``. Every other paired
+    #: room follows :attr:`hotel`.
+    #:
+    #: Because one hotel cannot be the match for every room. Sterling sells
+    #: only Classic rooms; ASG's Family Suite (two bedrooms, two bathrooms, a
+    #: kitchen) has nothing there to compete with, and the owner chose
+    #: Ananthyam's Family Room for it on 3 Nov 2026 while the doubles stayed
+    #: on Sterling. The gap, board and limits stay the lane's: only WHO is
+    #: followed changes per room.
+    room_hotels: Mapping[int, tuple[int, str]] = field(default_factory=dict)
+    #: The rooms of ours compared on ANOTHER board than :attr:`meal_plan`,
+    #: both sides: ``{our room_type_id: board}``.
+    #:
+    #: Because the hotel a room follows may not sell the lane's board.
+    #: Booking.com's rule compares breakfast against Sterling, but Ananthyam
+    #: sells its Family Room there room-only, with breakfast as an add-on, so
+    #: on breakfast the Family Suite had nothing to follow at all. The owner
+    #: chose room-only against room-only for that one room (3 Nov 2026).
+    room_boards: Mapping[int, str] = field(default_factory=dict)
     #: Their price at the reading BEFORE the latest, per offer key, on the
     #: same basis as the run (``with_tax``). Each of their rooms is read at
     #: the lower of that and the latest.
@@ -326,6 +349,15 @@ class Benchmark:
     #: one reading late, and follows a drop at once -- so we are never priced
     #: off a figure Sterling showed only once.
     previous: Mapping[str, Decimal] = field(default_factory=dict)
+
+    def followed(self, room_type_id: int) -> tuple[int, str]:
+        """``(hotel_id, name)`` of the hotel this room of ours follows."""
+        return self.room_hotels.get(room_type_id) or (self.hotel_id, self.hotel)
+
+    @property
+    def hotel_ids(self) -> tuple[int, ...]:
+        """Every hotel this benchmark reads: its own and each room's own."""
+        return tuple(dict.fromkeys([self.hotel_id, *(h for h, _ in self.room_hotels.values())]))
 
 
 #: How far back :func:`usual_gaps` looks, and how many of those nights must
@@ -765,11 +797,22 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     if board and spare_board and spare_board != board:
         nights[spare_board] = _night(rows, own_hotel_id, with_tax=with_tax,
                                      meal_plan=spare_board, previous=previous)
+    room_boards = benchmark.room_boards if benchmark else {}
+    for a_board in dict.fromkeys(room_boards.values()):
+        if a_board not in nights:
+            nights[a_board] = _night(rows, own_hotel_id, with_tax=with_tax,
+                                     meal_plan=a_board, previous=previous)
 
     order: dict[int, str | None] = {}
+    # A room with a board of its own is read on it, and only on it: falling
+    # back to the lane's board would compare it on two different boards.
+    for room_type_id, a_board in room_boards.items():
+        if room_type_id in nights[a_board][0]:
+            order[room_type_id] = a_board
     for a_board in nights:
         for room_type_id in nights[a_board][0]:
-            order.setdefault(room_type_id, a_board)
+            if room_type_id not in room_boards:
+                order.setdefault(room_type_id, a_board)
 
     proposals = []
     for room_type_id, used_board in order.items():
@@ -806,12 +849,13 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             # whoever sets it by hand rather than quietly given a rate from
             # a comparison the owner never chose.
             their_room = None
+            hotel_id, hotel = benchmark.followed(room_type_id)
             if benchmark.room_pairs:
                 their_room = benchmark.room_pairs.get(room_type_id)
                 if their_room is None:
                     proposals.append(Proposal(
-                        **base, market=None, target=None, benchmark=benchmark.hotel,
-                        held=f"not paired with a room of {benchmark.hotel}'s",
+                        **base, market=None, target=None, benchmark=hotel,
+                        held=f"not paired with a room of {hotel}'s",
                     ))
                     continue
 
@@ -819,11 +863,12 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             # of ours that dropped to the fallback. The owner's rule is "a
             # hundred under Sterling's breakfast rate", and Sterling selling
             # breakfast does not stop because we do not.
-            their_rates = nights[board][1]
+            their_board = room_boards.get(room_type_id, board)
+            their_rates = nights[their_board][1]
             entry = (
-                _benchmark_room(their_rates, benchmark.hotel_id, our_source, their_room)
+                _benchmark_room(their_rates, hotel_id, our_source, their_room)
                 if their_room is not None
-                else _benchmark_entry(their_rates.get(tier, {}), benchmark.hotel_id, our_source)
+                else _benchmark_entry(their_rates.get(tier, {}), hotel_id, our_source)
             )
             if entry is None:
                 # Deliberately one reason and not two. "No room of that tier"
@@ -837,12 +882,13 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                 # -- usually sold out, since sites drop a full room from the
                 # list -- and so nothing moves. Not "sold out" outright: the
                 # same room on sale without breakfast lands here too.
-                on_board = f" with {board.lower()}" if board else ""
-                gone = (f"{benchmark.hotel}'s \"{their_room}\" is not on sale tonight{on_board}"
+                on_board = (f" {their_board.lower()}" if (their_board or "").lower() == "room only"
+                            else f" with {their_board.lower()}" if their_board else "")
+                gone = (f"{hotel}'s \"{their_room}\" is not on sale tonight{on_board}"
                         if their_room else
-                        f"{benchmark.hotel} has no {label_for(tier)} room on sale tonight{on_board}")
+                        f"{hotel} has no {label_for(tier)} room on sale tonight{on_board}")
                 proposals.append(Proposal(
-                    **base, market=None, target=None, benchmark=benchmark.hotel,
+                    **base, market=None, target=None, benchmark=hotel,
                     held=f"{gone} on the site our own price comes from, so there is "
                          f"nothing to follow: the rate stays as it is",
                 ))
@@ -860,9 +906,9 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             # several hundred wearing the number the owner typed. The marker
             # is the only warning there is, so it stops the proposal.
             if benchmark.with_tax and (entry.note or our_note):
-                whose = benchmark.hotel if entry.note else "our own listing"
+                whose = hotel if entry.note else "our own listing"
                 proposals.append(Proposal(
-                    **base, market=entry.price, target=None, benchmark=benchmark.hotel,
+                    **base, market=entry.price, target=None, benchmark=hotel,
                     benchmark_entry=entry,
                     held=f"{whose} did not publish its tax tonight, so the two prices "
                          f"are not on the same footing to take {benchmark.undercut:,.0f} off",
@@ -890,8 +936,9 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             # written. A second run half an hour later therefore does nothing
             # at all unless THEIR price actually moved.
             proposals.append(Proposal(**base, market=entry.price, target=target, held=held,
-                                      capped=capped, wanted=wanted, benchmark=benchmark.hotel,
-                                      benchmark_entry=entry, exact=True))
+                                      capped=capped, wanted=wanted, benchmark=hotel,
+                                      benchmark_entry=entry, exact=True,
+                                      their_board=room_boards.get(room_type_id)))
             continue
 
         if len(competitors) < rule.min_competitors:
@@ -954,10 +1001,10 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                 tier_label=label_for(tier),
                 our_price=fallback[0], our_note=fallback[1], board=fallback[2],
                 competitors=(), sold_out=(), market=None, target=None, with_tax=with_tax,
-                benchmark=benchmark.hotel if paired else None,
+                benchmark=benchmark.followed(room_type_id)[1] if paired else None,
                 held=f"we sell this room on neither {board.lower()} nor "
                      f"{(spare_board or '').lower() or 'any other board'} tonight"
-                     + (f", so there is nothing to compare with {benchmark.hotel}'s "
+                     + (f", so there is nothing to compare with {benchmark.followed(room_type_id)[1]}'s "
                         f'"{paired}"' if paired else "")
                      + (f" (showing our {fallback[2].lower()} rate)" if fallback[2] else ""),
             ))

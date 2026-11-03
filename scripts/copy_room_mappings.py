@@ -157,9 +157,52 @@ def _settings_out(session, owner_id: int) -> dict | None:
             text("select name from room_types where id = :r"), {"r": int(room_id)}
         ).scalar()
         if name:
-            pairs[name] = their_room
+            pairs[name] = _pair_out(session, their_room)
     out["benchmark_room_pairs"] = pairs
     return out
+
+
+def _pair_out(session, pair):
+    """A stored pair with its hotel id, if it has one, turned into the hotel's name.
+
+    A pair is a bare name (their room at the benchmark), or a dict that may
+    name the hotel the room follows instead of the benchmark -- and that hotel
+    is an id, per database like every other.
+    """
+    if not isinstance(pair, dict) or not pair.get("hotel_id"):
+        return pair
+    out = {k: v for k, v in pair.items() if k != "hotel_id"}
+    out["hotel"] = session.execute(
+        text("select name from hotels where id = :h"), {"h": int(pair["hotel_id"])}
+    ).scalar()
+    return out
+
+
+def _pair_in(session, owner_id: int, pair, label: str, unresolved: list[str]):
+    """:func:`_pair_out` the other way. ``None`` when the hotel is not a competitor here."""
+    if not isinstance(pair, dict) or not pair.get("hotel"):
+        return pair
+    hid = session.execute(
+        text("select id from hotels where name = :n and owner_user_id = :o "
+             "and is_active and not is_own_property"),
+        {"n": pair["hotel"], "o": owner_id},
+    ).scalar()
+    if hid is None:
+        unresolved.append(f"{label}: hotel {pair['hotel']!r} (not an active competitor here)")
+        return None
+    return {**{k: v for k, v in pair.items() if k != "hotel"}, "hotel_id": hid}
+
+
+def _pair_text(pair) -> str:
+    """How a pair reads in the printed summary."""
+    if not isinstance(pair, dict):
+        return str(pair)
+    text_ = pair.get("theirs") or "(not paired)"
+    if pair.get("hotel"):
+        text_ += f" at {pair['hotel']}"
+    if pair.get("board"):
+        text_ += f", compared {pair['board'].lower()}"
+    return text_
 
 
 def _settings_in(session, owner_id: int, wanted: dict) -> tuple[dict, list[str]]:
@@ -189,7 +232,9 @@ def _settings_in(session, owner_id: int, wanted: dict) -> tuple[dict, list[str]]
         if rid is None:
             unresolved.append(f"room pair {our_room!r}")
             continue
-        pairs[str(rid)] = their_room
+        their_room = _pair_in(session, owner_id, their_room, f"room pair {our_room!r}", unresolved)
+        if their_room is not None:
+            pairs[str(rid)] = their_room
     params["benchmark_room_pairs"] = json.dumps(pairs)
 
     params["source_id"] = None
@@ -245,7 +290,7 @@ def _channel_rules_out(session, owner_id: int) -> list[dict]:
                 text("select name from room_types where id = :r"), {"r": int(room_id)}
             ).scalar()
             if name:
-                pairs[name] = pair
+                pairs[name] = _pair_out(session, pair)
         rule["room_pairs"] = pairs
         out.append(rule)
     return out
@@ -266,7 +311,10 @@ def _channel_rules_in(session, owner_id: int, wanted: list[dict]) -> tuple[list[
             if rid is None:
                 unresolved.append(f"{rule['channel']} room pair {our_room!r}")
                 continue
-            pairs[str(rid)] = pair
+            pair = _pair_in(session, owner_id, pair, f"{rule['channel']} room pair {our_room!r}",
+                            unresolved)
+            if pair is not None:
+                pairs[str(rid)] = pair
         params["room_pairs"] = json.dumps(pairs)
         planned.append(params)
     return planned, unresolved
@@ -325,7 +373,7 @@ def export(path: Path, username: str | None) -> int:
               f"; step {settings['max_step_pct']}%, floor {settings['floor_pct']}%, "
               f"ceiling {settings['ceiling_pct']}%")
         for ours, theirs in (settings["benchmark_room_pairs"] or {}).items():
-            print(f"        {ours} competes with their {theirs}")
+            print(f"        {ours} competes with their {_pair_text(theirs)}")
     _print_channel_rules(channel_rules)
 
     print(f"\n{len(rows)} mapping(s) for {owner_name} written to {path}.")
@@ -340,7 +388,7 @@ def _print_channel_rules(rules: list[dict]) -> None:
               f"{', on ' + r['benchmark_meal_plan'] if r['benchmark_meal_plan'] else ''}")
         for ours, pair in (r.get("room_pairs") or {}).items():
             called = f" (called {pair['ours']})" if pair.get("ours") else ""
-            print(f"        {ours}{called} competes with their {pair.get('theirs') or '(not paired)'}")
+            print(f"        {ours}{called} competes with their {_pair_text(pair)}")
 
 
 def import_(path: Path, username: str | None, write: bool, with_settings: bool) -> int:
@@ -401,7 +449,7 @@ def import_(path: Path, username: str | None, write: bool, with_settings: bool) 
                   f"; step {w.get('max_step_pct')}%, floor {w.get('floor_pct')}%, "
                   f"ceiling {w.get('ceiling_pct')}%")
             for ours, theirs in (w.get("benchmark_room_pairs") or {}).items():
-                print(f"         {ours} competes with their {theirs}")
+                print(f"         {ours} competes with their {_pair_text(theirs)}")
             print("         (the automatic switch is never copied; turn it on "
                   "from the page)")
             missing.extend(rule_unresolved)

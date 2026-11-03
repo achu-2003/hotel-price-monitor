@@ -679,6 +679,11 @@
         if (!sel.value) return;
         const id = sel.dataset.roomTypeId;
         (map[id] = map[id] || {})[sel.dataset.side] = sel.value;
+        // A room of another competitor than the benchmark: say whose.
+        const hotel = sel.selectedOptions[0] && sel.selectedOptions[0].dataset.hotelId;
+        if (sel.dataset.side === "theirs" && hotel) map[id].hotel_id = Number(hotel);
+        // A board of its own, set for this pair: kept as it was.
+        if (sel.dataset.side === "theirs" && sel.dataset.board) map[id].board = sel.dataset.board;
       });
       field.value = JSON.stringify(map);
     }

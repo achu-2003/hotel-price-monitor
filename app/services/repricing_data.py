@@ -67,8 +67,12 @@ def pinned_board_stmt(owner_user_id: int) -> Select:
     )
 
 
-def previous_readings_stmt(hotel_id: int, check_in: date, check_out: date) -> Select:
+def previous_readings_stmt(hotel_ids, check_in: date, check_out: date) -> Select:
     """The benchmark's last two readings of every offer for the night.
+
+    ``hotel_ids`` is one id or several -- :attr:`Benchmark.hotel_ids`, when
+    some rooms follow a hotel of their own. Offer keys are per hotel, so the
+    readings of several never collide.
 
     Ranked newest first per offer key; :func:`with_previous` keeps the second.
     One night of one hotel is a few dozen rows, so this reads them whole
@@ -88,7 +92,7 @@ def previous_readings_stmt(hotel_id: int, check_in: date, check_out: date) -> Se
         )
         .join(PriceSeries, PriceSeries.offer_key == PriceObservation.offer_key)
         .where(
-            PriceSeries.hotel_id == hotel_id,
+            PriceSeries.hotel_id.in_(_ids(hotel_ids)),
             PriceSeries.check_in == check_in,
             PriceSeries.check_out == check_out,
         )
@@ -119,6 +123,71 @@ def with_previous(benchmark: Benchmark | None, rows) -> Benchmark | None:
         if shown.amount is not None:
             previous[row.offer_key] = shown.amount
     return replace(benchmark, previous=previous)
+
+
+def _ids(hotel_ids) -> list[int]:
+    return [hotel_ids] if isinstance(hotel_ids, int) else list(hotel_ids)
+
+
+def pair_parts(value) -> tuple[str | None, int | None]:
+    """One stored pair as ``(their room name, hotel id or None)``.
+
+    A pair is stored either as the name alone -- every pair before rooms
+    could follow a hotel of their own, and still the usual case -- or as
+    ``{"theirs": name, "hotel_id": id, "board": plan}`` for a room that
+    follows another hotel than the lane's benchmark, or is compared on
+    another board than the lane's (both optional). See :func:`pair_board`.
+    """
+    if isinstance(value, str):
+        return (value.strip() or None), None
+    if isinstance(value, dict):
+        name = (value.get("theirs") or "").strip() or None
+        hotel_id = value.get("hotel_id")
+        return name, (int(hotel_id) if hotel_id else None)
+    return None, None
+
+
+def pair_board(value) -> str | None:
+    """The board one stored pair is compared on, when it is not the lane's."""
+    return ((value.get("board") or "").strip() or None) if isinstance(value, dict) else None
+
+
+def pair_hotels_stmt(owner_user_id: int, hotel_ids) -> Select:
+    """The hotels named by single rooms, if this owner may still price against them.
+
+    The same re-check as :func:`benchmark_stmt`, for the same reasons: an id
+    stored in a pair was valid when it was written and proves nothing now.
+    """
+    return select(Hotel.id, Hotel.name).where(
+        Hotel.id.in_(_ids(hotel_ids) or [0]),
+        Hotel.owner_user_id == owner_user_id,
+        Hotel.is_active.is_(True),
+        Hotel.is_own_property.is_(False),
+    )
+
+
+def with_pair_hotels(benchmark: Benchmark | None, hotels: Mapping[int, int],
+                     rows) -> Benchmark | None:
+    """``benchmark`` with each room's own hotel, from :func:`pair_hotels_stmt` rows.
+
+    A room whose hotel no longer passes the re-check LOSES ITS PAIR rather
+    than falling back to the lane's hotel: the owner paired it with a room of
+    that hotel, and the same name at another hotel is not what they chose.
+    Unpaired, the rule holds it and says so.
+    """
+    if benchmark is None or not hotels:
+        return benchmark
+    names = {row.id: row.name for row in rows}
+    room_hotels, pairs = {}, dict(benchmark.room_pairs)
+    for room_type_id, hotel_id in hotels.items():
+        if hotel_id == benchmark.hotel_id:
+            continue
+        if hotel_id in names:
+            room_hotels[room_type_id] = (hotel_id, names[hotel_id])
+        else:
+            pairs.pop(room_type_id, None)
+    return replace(benchmark, room_hotels=room_hotels, room_pairs=pairs,
+                   room_boards={k: v for k, v in benchmark.room_boards.items() if k in pairs})
 
 
 def benchmark_stmt(owner_user_id: int, hotel_id: int | None) -> Select:
@@ -153,8 +222,8 @@ def benchmark_for(row, settings) -> Benchmark | None:
                      # wants the rooms that have it compared on it, not the
                      # rooms that do not left unpriced.
                      fallback_board=(ROOM_ONLY if settings.benchmark_meal_plan else None),
-                     room_pairs={int(k): v for k, v in
-                                 (settings.benchmark_room_pairs or {}).items()})
+                     room_pairs=main_lane(settings).pairs,
+                     room_boards=main_lane(settings).boards)
 
 
 def on_channel(channel: str, *, main: bool = True):
@@ -212,30 +281,54 @@ class Lane:
     meal_plan: str | None = None
     #: ``{our room_type_id: their room name}``, as :class:`Benchmark` wants.
     pairs: Mapping[int, str] = field(default_factory=dict)
+    #: ``{our room_type_id: hotel id}`` for the paired rooms that follow
+    #: another hotel than the benchmark. See :attr:`Benchmark.room_hotels`.
+    hotels: Mapping[int, int] = field(default_factory=dict)
+    #: ``{our room_type_id: board}`` for the pairs compared on another board
+    #: than :attr:`meal_plan`. See :attr:`Benchmark.room_boards`.
+    boards: Mapping[int, str] = field(default_factory=dict)
     #: ``{our room_type_id: our room's name on this site}``, where it is not
     #: the room's own name. See :func:`lane_rows`.
     ours: Mapping[int, str] = field(default_factory=dict)
 
 
+def _split_pairs(stored) -> tuple[dict[int, str], dict[int, int], dict[int, str]]:
+    pairs: dict[int, str] = {}
+    hotels: dict[int, int] = {}
+    boards: dict[int, str] = {}
+    for key, value in (stored or {}).items():
+        name, hotel_id = pair_parts(value)
+        if name:
+            pairs[int(key)] = name
+            if hotel_id:
+                hotels[int(key)] = hotel_id
+            if pair_board(value):
+                boards[int(key)] = pair_board(value)
+    return pairs, hotels, boards
+
+
+def pair_hotel_ids(stored) -> list[int]:
+    """The hotels single rooms follow, from one stored pairs map."""
+    return list(_split_pairs(stored)[1].values())
+
+
 def main_lane(settings) -> Lane:
+    pairs, hotels, boards = _split_pairs(settings.benchmark_room_pairs)
     return Lane(
         channel=settings.channel, source_id=getattr(settings, "source_id", None), main=True,
         auto=bool(getattr(settings, "auto_enabled", False)),
         undercut=Decimal(settings.benchmark_undercut),
         with_tax=bool(settings.benchmark_with_tax),
         meal_plan=settings.benchmark_meal_plan or None,
-        pairs={int(k): v for k, v in (settings.benchmark_room_pairs or {}).items()},
+        pairs=pairs, hotels=hotels, boards=boards,
     )
 
 
 def extra_lane(rule_row) -> Lane:
-    pairs: dict[int, str] = {}
+    stored = {k: v for k, v in (rule_row.room_pairs or {}).items() if isinstance(v, dict)}
+    pairs, hotels, boards = _split_pairs(stored)
     ours: dict[int, str] = {}
-    for key, pair in (rule_row.room_pairs or {}).items():
-        if not isinstance(pair, dict):
-            continue
-        if (pair.get("theirs") or "").strip():
-            pairs[int(key)] = pair["theirs"].strip()
+    for key, pair in stored.items():
         if (pair.get("ours") or "").strip():
             ours[int(key)] = pair["ours"].strip()
     return Lane(
@@ -244,7 +337,7 @@ def extra_lane(rule_row) -> Lane:
         undercut=Decimal(rule_row.benchmark_undercut),
         with_tax=bool(rule_row.benchmark_with_tax),
         meal_plan=rule_row.benchmark_meal_plan or None,
-        pairs=pairs, ours=ours,
+        pairs=pairs, hotels=hotels, boards=boards, ours=ours,
     )
 
 
@@ -322,7 +415,7 @@ def lane_benchmark(row, lane: Lane) -> Benchmark | None:
     return Benchmark(hotel_id=row.id, hotel=row.name, undercut=lane.undercut,
                      with_tax=lane.with_tax, meal_plan=lane.meal_plan,
                      fallback_board=(ROOM_ONLY if lane.meal_plan else None),
-                     room_pairs=dict(lane.pairs))
+                     room_pairs=dict(lane.pairs), room_boards=dict(lane.boards))
 
 
 # -- the repricer's log, as the pages read it -------------------------

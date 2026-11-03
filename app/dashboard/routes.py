@@ -716,6 +716,20 @@ async def _default_night(session, user, adults: int) -> tuple[date, date, str]:
     return weekend.check_in, weekend.check_out, "Defaults to the coming weekend."
 
 
+async def _complete_benchmark(session, owner_user_id: int, benchmark, lane, check_in, check_out):
+    """``benchmark`` with each room's own hotel and every followed hotel's
+    previous reading -- what the worker's ``_complete`` does, on this page's
+    async session, so the page and the run price off the same hotels."""
+    if benchmark is None:
+        return None
+    benchmark = repricing_data.with_pair_hotels(benchmark, lane.hotels, (await session.execute(
+        repricing_data.pair_hotels_stmt(owner_user_id, lane.hotels.values())
+    )).all() if lane.hotels else [])
+    return repricing_data.with_previous(benchmark, (await session.execute(
+        repricing_data.previous_readings_stmt(benchmark.hotel_ids, check_in, check_out)
+    )).all())
+
+
 async def _priced_rows(session, user, check_in: date, check_out: date, adults: int):
     """``(series, hotel, room_name)`` for one night, for this account's hotels.
 
@@ -778,6 +792,8 @@ async def _repricing_boards(session, owner_user_id: int) -> dict[int, str]:
                                Hotel.is_own_property.is_(True), Hotel.is_active.is_(True))
     ))
     ids.add(settings.benchmark_hotel_id)
+    # A hotel one room follows on its own is priced on the same board.
+    ids |= set(repricing_data.main_lane(settings).hotels.values())
     return dict.fromkeys(ids, settings.benchmark_meal_plan)
 
 
@@ -2856,10 +2872,8 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             )).first() if settings.benchmark_hotel_id else None,
             settings,
         )
-        if rule_benchmark is not None:
-            rule_benchmark = repricing_data.with_previous(rule_benchmark, (await session.execute(
-                repricing_data.previous_readings_stmt(rule_benchmark.hotel_id, check_in, check_out)
-            )).all())
+        rule_benchmark = await _complete_benchmark(
+            session, user.id, rule_benchmark, repricing_data.main_lane(settings), check_in, check_out)
         history = [] if rule_benchmark else repricing_data.one_night((await session.execute(
             repricing_data.history_stmt(user.id, check_in)
         )).all())
@@ -2978,14 +2992,12 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         bench_row = ((await session.execute(
             repricing_data.benchmark_stmt(user.id, settings.benchmark_hotel_id)
         )).first() if settings.benchmark_hotel_id else None)
-        previous_rows = ((await session.execute(
-            repricing_data.previous_readings_stmt(bench_row.id, check_in, check_out)
-        )).all() if bench_row else [])
         since = check_in - timedelta(days=repricing_rule.HISTORY_NIGHTS)
         for rule_row in channel_rules:
             lane = repricing_data.extra_lane(rule_row)
-            lane_benchmark = repricing_data.with_previous(
-                repricing_data.lane_benchmark(bench_row, lane), previous_rows)
+            lane_benchmark = await _complete_benchmark(
+                session, user.id, repricing_data.lane_benchmark(bench_row, lane), lane,
+                check_in, check_out)
             lane_proposals = repricing_rule.propose(
                 repricing_data.lane_rows(all_rows, own.id, lane, {r.id: r.name for r in rooms}),
                 own_hotel_id=own.id,
@@ -3020,6 +3032,11 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                      for p in lane_proposals},
                 our_names=await names_on_site(own.id),
                 their_names=await names_on_site(bench_row.id) if bench_row else [],
+                # Rooms of the other competitors on this site, for a room
+                # that follows a hotel of its own (see Benchmark.room_hotels).
+                other_names=[(c, names) for c in competitors
+                             if not bench_row or c.id != bench_row.id
+                             if (names := await names_on_site(c.id))],
             ))
     lane_sources = (await session.scalars(
         select(Source).where(Source.is_enabled.is_(True)).order_by(Source.display_name)

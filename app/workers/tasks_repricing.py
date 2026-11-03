@@ -115,11 +115,20 @@ def benchmark_for(session, owner_user_id: int, settings, check_in, check_out) ->
     row = session.execute(
         data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)
     ).first()
-    benchmark = data.benchmark_for(row, settings)
+    return _complete(session, owner_user_id, data.benchmark_for(row, settings),
+                     data.main_lane(settings), check_in, check_out)
+
+
+def _complete(session, owner_user_id: int, benchmark, lane: data.Lane,
+              check_in, check_out) -> rule.Benchmark | None:
+    """``benchmark`` with each room's own hotel and every followed hotel's previous reading."""
     if benchmark is None:
         return None
+    benchmark = data.with_pair_hotels(benchmark, lane.hotels, session.execute(
+        data.pair_hotels_stmt(owner_user_id, lane.hotels.values())
+    ).all() if lane.hotels else [])
     return data.with_previous(benchmark, session.execute(
-        data.previous_readings_stmt(benchmark.hotel_id, check_in, check_out)
+        data.previous_readings_stmt(benchmark.hotel_ids, check_in, check_out)
     ).all())
 
 
@@ -138,12 +147,8 @@ def lane_benchmark_for(session, owner_user_id: int, settings, lane: data.Lane,
     if not settings.benchmark_hotel_id:
         return None
     row = session.execute(data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)).first()
-    benchmark = data.lane_benchmark(row, lane)
-    if benchmark is None:
-        return None
-    return data.with_previous(benchmark, session.execute(
-        data.previous_readings_stmt(benchmark.hotel_id, check_in, check_out)
-    ).all())
+    return _complete(session, owner_user_id, data.lane_benchmark(row, lane), lane,
+                     check_in, check_out)
 
 
 def extra_lanes(session, owner_user_id: int) -> list[data.Lane]:
@@ -299,12 +304,15 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
     # Loaded once for the whole run, not per room: the usual gap over the
     # benchmark, and how the benchmark has moved. Same rows the rule read.
     history: list = []
-    benchmark_gaps: dict[int, tuple] = {}
+    gaps_by_hotel: dict[int, dict] = {}
     if benchmark is not None:
         history = data.one_night(session.execute(data.history_stmt(owner_user_id, check_in)).all())
-        benchmark_gaps = rule.usual_gaps_against(
-            history, own_hotel_id=own, benchmark_hotel_id=benchmark.hotel_id
-        )
+        # One measurement per hotel followed: a room following Ananthyam has
+        # its usual gap over Ananthyam, not over Sterling.
+        gaps_by_hotel = {
+            hid: rule.usual_gaps_against(history, own_hotel_id=own, benchmark_hotel_id=hid)
+            for hid in benchmark.hotel_ids
+        }
 
     written = 0
     for p in proposals:
@@ -314,6 +322,7 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
 
         benchmark_gap = None
         benchmark_recent: tuple = ()
+        followed_id, followed = benchmark.followed(p.room_type_id) if benchmark else (None, None)
         if benchmark is not None:
             # THE RULE'S OWN CHOICE, not a second narrowing of the competitor
             # list. propose() already picked the row -- cheapest bookable of
@@ -332,15 +341,15 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
                     our_price=p.our_price, market_price=p.market,
                     competitors=[c.as_json() for c in p.competitors],
                     rule_position_pct=own_rule.position_pct, rule_target=p.target,
-                    error=p.held or f"{benchmark.hotel} has nothing to price against tonight",
+                    error=p.held or f"{followed} has nothing to price against tonight",
                 ))
                 written += 1
                 continue
             theirs = (p.benchmark_entry,)
-            gap = benchmark_gaps.get(p.room_type_id)
+            gap = gaps_by_hotel[followed_id].get(p.room_type_id)
             benchmark_gap = gap[0] if gap else None
             benchmark_recent = rule.benchmark_history(
-                history, own_hotel_id=own, benchmark_hotel_id=benchmark.hotel_id, tier=p.tier,
+                history, own_hotel_id=own, benchmark_hotel_id=followed_id, tier=p.tier,
             )
         else:
             # The median rule. A room it could not price has nothing for a
@@ -360,8 +369,8 @@ def shadow_advice(session, owner_user_id: int, proposals, settings, *, check_in,
             rule_position_pct=own_rule.position_pct,
             usual_gap=p.usual_gap,
             our_recent=_recent_prices(session, p.room_type_id),
-            notes=_notes(p, theirs, benchmark.hotel if benchmark else None),
-            benchmark=benchmark.hotel if benchmark else None,
+            notes=_notes(p, theirs, followed),
+            benchmark=followed,
             benchmark_gap=benchmark_gap,
             benchmark_recent=benchmark_recent,
         )
@@ -749,7 +758,11 @@ def _run(owner_user_id: int, mode: str = "manual",
                     # breakfast the figure being scaled is the CP rate, and
                     # scaling the EP row by it writes a number that produces
                     # neither price.
-                    anchor = m.anchor_for(board)
+                    # A pair with a board of its own (the Family Suite on
+                    # Booking.com is room-only against Ananthyam) is written on
+                    # that board's row. Every other room: the lane's board, as
+                    # it always was.
+                    anchor = m.anchor_for(p.their_board or board)
                     if anchor is None:
                         _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode, status="held",
                                 reason="no rate row is mapped for this room")
@@ -986,7 +999,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                     continue
                 for rid in rooms:
                     p, m = by_room.get(rid), mappings[rid]
-                    anchor = m.anchor_for(settings.benchmark_meal_plan)
+                    anchor = m.anchor_for((p.their_board if p else None) or settings.benchmark_meal_plan)
                     if p is None or anchor is None:
                         continue
                     state.write(owner_user_id, "running", KIND, message=f"Reading {ch} / {m.rms_room}…")
@@ -1159,14 +1172,35 @@ def auto_tick() -> dict[str, Any]:
     return {"started": started, "enabled": len(owners)}
 
 
-def watched_as_benchmark(session, hotel_id: int) -> bool:
-    """Whether some owner with automatic repricing on prices against this hotel."""
-    return session.scalar(
+def owners_following(session, hotel_id: int) -> list[int]:
+    """Owners with automatic repricing on who follow this hotel for any room.
+
+    As the benchmark, or as the hotel one paired room follows on its own
+    (``Lane.hotels``) on any channel. A room following Ananthyam must move
+    when Ananthyam does, not at the next half-hour tick.
+    """
+    owners = list(session.scalars(
         select(RepricingSettings.owner_user_id).where(
             RepricingSettings.benchmark_hotel_id == hotel_id,
             _any_automatic(),
-        ).limit(1)
-    ) is not None
+        )
+    ))
+    for owner_user_id in session.scalars(
+        select(RepricingSettings.owner_user_id).where(_any_automatic())
+    ):
+        if owner_user_id in owners:
+            continue
+        settings = settings_for(session, owner_user_id)
+        hotels = [*data.pair_hotel_ids(getattr(settings, "benchmark_room_pairs", None)),
+                  *(h for lane in extra_lanes(session, owner_user_id) for h in lane.hotels.values())]
+        if hotel_id in hotels:
+            owners.append(owner_user_id)
+    return owners
+
+
+def watched_as_benchmark(session, hotel_id: int) -> bool:
+    """Whether some owner with automatic repricing on follows this hotel."""
+    return bool(owners_following(session, hotel_id))
 
 
 def rooms_whose_benchmark_moved(proposals, mapped, last_market: dict[int, Any]) -> list[str]:
@@ -1234,13 +1268,7 @@ def benchmark_moved(hotel_id: int, check_in: str) -> dict[str, Any]:
         return {"started": []}
     moved: list[tuple[int, list[str]]] = []
     with sync_session() as session:
-        owners = list(session.scalars(
-            select(RepricingSettings.owner_user_id).where(
-                RepricingSettings.benchmark_hotel_id == hotel_id,
-                _any_automatic(),
-            )
-        ))
-        for owner_user_id in owners:
+        for owner_user_id in owners_following(session, hotel_id):
             settings = settings_for(session, owner_user_id)
             # ``None`` is the main channel, computed exactly as it always was.
             lanes = ([(None, settings.channel)] if settings.auto_enabled else []) + [

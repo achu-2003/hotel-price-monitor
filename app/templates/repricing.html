@@ -86,11 +86,11 @@
   {% set anchor = ns.anchor %}
   <td class="room"><strong>{{ p.room_name }}</strong>
     {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}</td>
-  <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, r.benchmark_meal_plan if p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
+  <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, (p.their_board or r.benchmark_meal_plan) if p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
   <td class="num market">
     {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
     {% if p.benchmark_entry %}
-      {{ board_note(r.benchmark_meal_plan) }}
+      {{ board_note(p.their_board or r.benchmark_meal_plan) }}
       <br><span class="muted">{{ p.benchmark_entry.room }}</span>
       <br><span class="muted">− {{ money(r.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
     {% endif %}
@@ -196,10 +196,10 @@
           {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
         </td>
         <td>{{ p.tier_label }}</td>
-        <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, settings.benchmark_meal_plan if p.benchmark_entry is defined and p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, (p.their_board or settings.benchmark_meal_plan) if p.benchmark_entry is defined and p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
         <td class="num market">
           {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
-          {% if p.benchmark_entry is defined and p.benchmark_entry %}{{ board_note(settings.benchmark_meal_plan) }}{% endif %}
+          {% if p.benchmark_entry is defined and p.benchmark_entry %}{{ board_note(p.their_board or settings.benchmark_meal_plan) }}{% endif %}
           {% if p.usual_gap is not none %}
             <br><span class="muted">we usually sit {{ '%+.0f'|format((p.usual_gap - 1) * 100) }}%</span>
             <br><span class="muted">→ {{ money((p.market * p.usual_gap)|round|int) }} keeps it</span>
@@ -600,11 +600,24 @@
                 {% for n in L.our_names %}{% if n != room.name %}<option value="{{ n }}" {% if pair.ours == n %}selected{% endif %}>{{ n }}</option>{% endif %}{% endfor %}
                 {% if pair.ours and pair.ours not in L.our_names %}<option value="{{ pair.ours }}" selected>{{ pair.ours }} (not seen lately)</option>{% endif %}
               </select></td>
-              <td><select class="lane-pair" data-room-type-id="{{ room.id }}" data-side="theirs">
+              <td><select class="lane-pair" data-room-type-id="{{ room.id }}" data-side="theirs" data-board="{{ pair.board or '' }}">
                 <option value="">not paired — leave this room alone</option>
-                {% for n in L.their_names %}<option value="{{ n }}" {% if pair.theirs == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
-                {% if pair.theirs and pair.theirs not in L.their_names %}<option value="{{ pair.theirs }}" selected>{{ pair.theirs }} (not seen lately)</option>{% endif %}
-              </select></td>
+                {# The benchmark's rooms first; then each other competitor's, for a
+                   room that follows a hotel of its own. The option carries its
+                   hotel, so a name two hotels share is still one choice. #}
+                {% set own_pick = pair.theirs and not pair.hotel_id %}
+                <optgroup label="{{ benchmark.name if benchmark else 'Benchmark' }}">
+                {% for n in L.their_names %}<option value="{{ n }}" {% if own_pick and pair.theirs == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+                {% if own_pick and pair.theirs not in L.their_names %}<option value="{{ pair.theirs }}" selected>{{ pair.theirs }} (not seen lately)</option>{% endif %}
+                </optgroup>
+                {% set ns = namespace(found=false) %}
+                {% for c, names in L.other_names %}
+                <optgroup label="{{ c.name }}">
+                  {% for n in names %}{% set hit = pair.hotel_id == c.id and pair.theirs == n %}{% if hit %}{% set ns.found = true %}{% endif %}<option value="{{ n }}" data-hotel-id="{{ c.id }}" {% if hit %}selected{% endif %}>{{ n }}</option>{% endfor %}
+                </optgroup>
+                {% endfor %}
+                {% if pair.hotel_id and pair.theirs and not ns.found %}<option value="{{ pair.theirs }}" data-hotel-id="{{ pair.hotel_id }}" selected>{{ pair.theirs }} (other hotel, not seen lately)</option>{% endif %}
+              </select>{% if pair.board %}<br><span class="muted">compared on {{ pair.board|lower }}</span>{% endif %}</td>
             </tr>
           {% endfor %}
           </tbody>
