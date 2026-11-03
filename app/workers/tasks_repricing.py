@@ -758,11 +758,13 @@ def _run(owner_user_id: int, mode: str = "manual",
                     # breakfast the figure being scaled is the CP rate, and
                     # scaling the EP row by it writes a number that produces
                     # neither price.
-                    # A pair with a board of its own (the Family Suite on
-                    # Booking.com is room-only against Ananthyam) is written on
-                    # that board's row. Every other room: the lane's board, as
-                    # it always was.
-                    anchor = m.anchor_for(p.their_board or board)
+                    # The row of the board OUR price was read on, as the
+                    # Repricing page picks it. Not the lane's board: on Agoda
+                    # the Family Suite is sold room-only and compared with
+                    # Ananthyam's breakfast rate, and scaling the CP row by a
+                    # room-only price writes a number that produces neither.
+                    # For every room before it the two were the same row.
+                    anchor = m.anchor_for(p.board or board)
                     if anchor is None:
                         _record(session, owner_user_id, p, m, channel=ch, check_in=check_in, mode=mode, status="held",
                                 reason="no rate row is mapped for this room")
@@ -999,7 +1001,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                     continue
                 for rid in rooms:
                     p, m = by_room.get(rid), mappings[rid]
-                    anchor = m.anchor_for((p.their_board if p else None) or settings.benchmark_meal_plan)
+                    anchor = m.anchor_for((p.board if p else None) or settings.benchmark_meal_plan)
                     if p is None or anchor is None:
                         continue
                     state.write(owner_user_id, "running", KIND, message=f"Reading {ch} / {m.rms_room}…")
