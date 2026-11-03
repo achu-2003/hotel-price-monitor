@@ -16,6 +16,9 @@ alembic==1.14.0
 
 # ─── background processing ───────────────────────────────────────────
 celery[redis]==5.4.0
+# Pinned: kombu 5.7.0 (Nov 2026) refuses redis-py < 6.1 and Celery pulls the newest
+# kombu, so a rebuild broke every queued job on the server. 5.6.2 is what dev runs.
+kombu==5.6.2
 redis[hiredis]==5.2.1
 flower==2.0.1
 
