@@ -84,6 +84,10 @@ _BOARDS = {
 
 _SOLD_OUT_MARKERS = ("sold out on goibibo", "no rooms available")
 
+#: search-rooms error codes that mean "no rooms that night"; see
+#: :func:`_says_not_available`.
+_NOT_AVAILABLE_CODES = frozenset({"400847"})
+
 #: Everything a throttled visitor is shown, seen on 26 Oct 2026.
 _REFUSAL_BODY = "200 - OK"
 
@@ -197,6 +201,11 @@ def offers_from_search_rooms(payload: Any, context: FetchContext) -> list[Normal
     One offer per room, board and cancellation terms; where Goibibo lists two
     rate plans that agree on all three, the cheaper is kept, as the card does.
     """
+    if _says_not_available(payload):
+        # Goibibo's own "no rooms" answer, in place of an empty list. It is
+        # neutral here like ``exactRooms: []``: the adapter still believes a
+        # sold-out night only beside the page's own sold-out text.
+        return []
     response = payload.get("response") if isinstance(payload, dict) else None
     if not isinstance(response, dict):
         raise SchemaDriftError(
@@ -229,6 +238,31 @@ def offers_from_search_rooms(payload: Any, context: FetchContext) -> list[Normal
             context={"rooms": len(response["exactRooms"])},
         )
     return dedupe_offers(offers, "cheapest")
+
+
+def _says_not_available(payload: Any) -> bool:
+    """Is this search-rooms answer Goibibo saying the night has no rooms?
+
+    A sold-out night does not come back as an empty ``exactRooms``. It comes
+    back as ``{"correlationKey", "error"}`` with no ``response`` at all. Seen
+    for Ananthyam Resort on 4 Nov 2026, a night Booking.com and Agoda also
+    had sold out, on a full page (photos, rating, "Sold Out on Goibibo from
+    04 Nov - 05 Nov", and other nights offered with prices)::
+
+        {"code": "400847", "message": "You Just Missed It",
+         "alternateMessage": "Not available for selected dates on Goibibo"}
+
+    Read as drift, every sold-out night tripped the circuit breaker and
+    started a self-repair of a source that was working. Any OTHER error is
+    still drift: only this answer is known to mean "no rooms".
+    """
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict) or isinstance(payload.get("response"), dict):
+        return False
+    if str(error.get("code") or "").strip() in _NOT_AVAILABLE_CODES:
+        return True
+    words = f"{error.get('message') or ''} {error.get('alternateMessage') or ''}".lower()
+    return "not available for selected dates" in words
 
 
 def _offer(room: dict, plan: dict, tariff: dict, name: str,

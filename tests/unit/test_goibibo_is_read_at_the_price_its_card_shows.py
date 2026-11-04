@@ -27,6 +27,12 @@ PAYLOAD = json.loads(
     .read_text(encoding="utf-8")
 )
 
+#: Goibibo's search-rooms answer for Ananthyam Resort, 4 Nov 2026, a night it
+#: (and Booking.com and Agoda) had sold out. Verbatim but for the key.
+NOT_AVAILABLE = {"correlationKey": "c0ffee", "error": {
+    "code": "400847", "message": "You Just Missed It",
+    "alternateMessage": "Not available for selected dates on Goibibo"}}
+
 URL = ("https://www.goibibo.com/hotels/hotel-details/?checkin=20261023&checkout=20261024"
        "&roomString=1-2-0&searchText=AGS%20Holiday%20Resorts&locusId=CTXYG&locusType=city"
        "&cityCode=CTXYG&cc=IN&_uCurrency=INR&vcid=CTXYG&giHotelId=1264690103492052130"
@@ -88,6 +94,20 @@ class TestWhatIsNotAPrice:
     def test_a_payload_without_a_response_is_drift(self):
         with pytest.raises(SchemaDriftError):
             offers_from_search_rooms({"error": "nope"}, context())
+
+    def test_goibibos_not_available_answer_is_no_rooms_not_drift(self):
+        """Ananthyam, 4 Nov 2026: a sold-out night came back like this."""
+        assert offers_from_search_rooms(NOT_AVAILABLE, context()) == []
+
+    def test_the_answer_is_known_by_its_words_too(self):
+        payload = {"correlationKey": "x", "error": {
+            "code": "999999", "alternateMessage": "Not available for selected dates on Goibibo"}}
+        assert offers_from_search_rooms(payload, context()) == []
+
+    def test_any_other_error_is_still_drift(self):
+        payload = {"correlationKey": "x", "error": {"code": "500100", "message": "Something went wrong"}}
+        with pytest.raises(SchemaDriftError):
+            offers_from_search_rooms(payload, context())
 
 
 class TestTheLinkFollowsTheNight:
@@ -157,6 +177,18 @@ class TestASoldOutNightIsOneGoibiboSaid:
         result = _fetch_with(monkeypatch, body="This Property is Sold Out on Goibibo",
                              payload={"response": {"exactRooms": []}})
         assert result.sold_out_detected and result.offers == []
+
+    def test_goibibos_not_available_answer_and_the_text_is_sold_out(self, monkeypatch):
+        result = _fetch_with(monkeypatch, payload=NOT_AVAILABLE, body=(
+            "Ananthyam Resort by Anukulas 4.2 / 5 This Property is Sold Out on Goibibo "
+            "from 04 Nov - 05 Nov Available dates: 05 Nov- 06 Nov from ₹4446"))
+        assert result.sold_out_detected and result.offers == []
+
+    def test_goibibos_not_available_answer_without_the_text_is_a_throttle(self, monkeypatch):
+        """The page-text guard still stands: the answer alone sells nothing out."""
+        from app.core.errors import RateLimitedError
+        with pytest.raises(RateLimitedError):
+            _fetch_with(monkeypatch, body="Ananthyam Resort by Anukulas", payload=NOT_AVAILABLE)
 
     def test_rooms_are_rooms(self, monkeypatch):
         result = _fetch_with(monkeypatch, body="AGS Holiday Resorts", payload=PAYLOAD)
