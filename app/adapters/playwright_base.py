@@ -28,9 +28,16 @@ What this module guarantees for every fetch:
 """
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.request
 import uuid
 from contextlib import contextmanager
 from collections.abc import Generator
@@ -211,6 +218,96 @@ def _ensure_windows_subprocess_support() -> None:
                  reason="Playwright needs subprocess support on Windows")
 
 
+#: Every context's window. Pinned: prices vary by device, so a moving viewport
+#: would be measuring ourselves.
+_VIEWPORT = {"width": 1366, "height": 900}
+
+#: How long a freshly started Chrome has to open its DevTools port.
+_DEVTOOLS_WAIT_SECONDS = 30
+
+
+def _visitor_chrome_executable(channel: str, playwright) -> str:
+    """The installed Chrome for ``channel``, or the bundled Chromium for "".
+
+    Found by its standard install path because a Chrome we start ourselves is
+    not located by Playwright. ``playwright install chrome`` puts it at
+    /opt/google/chrome on Linux, which is where the browser image has it.
+    """
+    if not channel:
+        return playwright.chromium.executable_path
+    if channel != "chrome":
+        raise RuntimeError(
+            f"Unsupported browser_visitor_channel {channel!r}; use 'chrome' or ''."
+        )
+    candidates: list[str] = []
+    if sys.platform == "win32":
+        for root in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            if os.environ.get(root):
+                candidates.append(
+                    os.path.join(os.environ[root], "Google", "Chrome", "Application", "chrome.exe")
+                )
+    elif sys.platform == "darwin":
+        candidates.append("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    else:
+        candidates += [
+            "/opt/google/chrome/chrome",
+            shutil.which("google-chrome") or "",
+            shutil.which("google-chrome-stable") or "",
+        ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    raise RuntimeError(
+        "Google Chrome is not installed (looked in: "
+        + ", ".join(c for c in candidates if c) + ")."
+    )
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _wait_for_devtools(port: int, process: subprocess.Popen) -> None:
+    """Return once Chrome answers on its DevTools port; raise if it never does."""
+    deadline = time.monotonic() + _DEVTOOLS_WAIT_SECONDS
+    url = f"http://127.0.0.1:{port}/json/version"
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"Chrome exited with code {process.returncode} before opening DevTools."
+            )
+        try:
+            with urllib.request.urlopen(url, timeout=2):
+                return
+        except OSError:
+            time.sleep(0.25)
+    raise RuntimeError(
+        f"Chrome did not open DevTools on port {port} within {_DEVTOOLS_WAIT_SECONDS}s."
+    )
+
+
+def _die_with_parent() -> dict[str, Any]:
+    """Popen options that end Chrome if the worker dies without closing it.
+
+    The shutdown signal closes the pool on a normal recycle; this covers a
+    worker that is killed outright. Linux only: PR_SET_PDEATHSIG has no
+    Windows twin, and there the worker runs in a session somebody can see.
+    """
+    if not sys.platform.startswith("linux"):
+        return {}
+
+    def _set_pdeathsig() -> None:
+        import ctypes
+        import signal
+
+        pr_set_pdeathsig = 1
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(pr_set_pdeathsig, signal.SIGTERM)
+
+    return {"preexec_fn": _set_pdeathsig}
+
+
 class BrowserPool:
     """One browser per worker process, many contexts.
 
@@ -278,31 +375,109 @@ class BrowserPool:
         )
         return self._local.browser
 
-    def _ensure_visitor_browser(self) -> Browser:
+    def _ensure_visitor_browser(self, locale: str, timezone: str) -> Browser:
         """The installed Chrome, for ``as_visitor`` contexts. One per thread too.
 
         A second browser rather than a flag on the first, because the two
         cannot be one process: the scraper's is headless Chromium, this one is
         a Chrome window. Started on first use, so a worker that never reads a
         visitor site never opens a window.
+
+        Locale and timezone belong to the Chrome itself (``--lang`` and ``TZ``)
+        rather than to a context's emulation, so the thread's first visitor
+        fetch sets them for the browser's lifetime. Every hotel pins the same
+        pair today.
         """
         browser = getattr(self._local, "visitor_browser", None)
         if browser is not None and browser.is_connected():
             return browser
+        # A browser that disconnected took nothing with it: the Chrome it was
+        # attached to may still be running, and is ended before another starts.
+        self._stop_visitor_chrome()
 
         settings = get_settings()
         if self._playwright is None:
             _ensure_windows_subprocess_support()
             self._local.playwright = sync_playwright().start()
 
-        # None of the scraper's launch flags. --disable-gpu and
+        # STARTED BY US AND ATTACHED TO, NOT LAUNCHED BY PLAYWRIGHT.
+        #
+        # From the morning of 5 Nov 2026 Goibibo answered every load from a
+        # Playwright-launched Chrome with its "200 - OK" refusal, on the server
+        # and on a home connection alike, while the same installed Chrome on
+        # the same connection, started as an ordinary program and attached to
+        # over DevTools, was served the room list. Alternated load by load:
+        # launched 0 of ~12, attached 5 of 7 -- the two misses minutes after
+        # other loads, which is the edge's frequency scoring. Dropping
+        # --enable-automation or adding
+        # --disable-blink-features=AutomationControlled to a launch did not
+        # help, so it is not one flag; it is the launch.
+        #
+        # None of the scraper's launch flags either. --disable-gpu and
         # --disable-extensions are exactly the differences from an ordinary
         # Chrome that a bot score is built from.
-        self._local.visitor_browser = self._local.playwright.chromium.launch(
-            channel=settings.browser_visitor_channel or None,
-            headless=settings.browser_visitor_headless,
+        executable = _visitor_chrome_executable(
+            settings.browser_visitor_channel, self._local.playwright
         )
+        profile = tempfile.mkdtemp(prefix="hpm-visitor-")
+        # --lang alone is ignored on Windows, where the language comes from the
+        # profile; written into the throwaway profile it holds everywhere.
+        os.makedirs(os.path.join(profile, "Default"))
+        with open(os.path.join(profile, "Default", "Preferences"), "w", encoding="utf-8") as prefs:
+            json.dump({"intl": {"accept_languages": f"{locale},{locale.split('-')[0]}"}}, prefs)
+        port = _free_port()
+        args = [
+            executable,
+            f"--remote-debugging-port={port}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={profile}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--window-size={_VIEWPORT['width']},{_VIEWPORT['height']}",
+            f"--lang={locale}",
+        ]
+        if settings.browser_visitor_headless:
+            args.append("--headless=new")
+        if sys.platform.startswith("linux"):
+            # The container's Chrome has never had a sandbox: Playwright's own
+            # launch passes --no-sandbox by default, and an unprivileged user
+            # in Docker cannot create the namespaces the sandbox needs. A small
+            # /dev/shm is handled by the compose file's shm_size.
+            args.append("--no-sandbox")
+        process = subprocess.Popen(
+            args,
+            env={**os.environ, "TZ": timezone, "LANGUAGE": locale.replace("-", "_")},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_die_with_parent(),
+        )
+        self._local.visitor_process = process
+        self._local.visitor_profile = profile
+        try:
+            _wait_for_devtools(port, process)
+            self._local.visitor_browser = self._local.playwright.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{port}"
+            )
+        except Exception:
+            self._stop_visitor_chrome()
+            raise
+        log.info("visitor_chrome_started", pid=process.pid, port=port)
         return self._local.visitor_browser
+
+    def _stop_visitor_chrome(self) -> None:
+        """End the Chrome this thread started, and delete its throwaway profile."""
+        process = getattr(self._local, "visitor_process", None)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        self._local.visitor_process = None
+        profile = getattr(self._local, "visitor_profile", None)
+        if profile:
+            shutil.rmtree(profile, ignore_errors=True)
+        self._local.visitor_profile = None
 
     @contextmanager
     def context(
@@ -334,22 +509,29 @@ class BrowserPool:
         full list when they were not.
         """
         settings = get_settings()
-        browser = self._ensure_visitor_browser() if as_visitor else self._ensure_browser()
-        identity: dict[str, Any] = {} if as_visitor else {
-            "user_agent": build_user_agent("" if as_person else settings.browser_user_agent_suffix),
-        }
-        ctx = browser.new_context(
-            locale=locale,
-            timezone_id=timezone,
-            viewport={"width": 1366, "height": 900},
-            color_scheme="light",
-            java_script_enabled=True,
-            ignore_https_errors=False,
-            # Cookies and local storage from an earlier visit: how a site
-            # that trusted this "device" once recognises it again.
-            storage_state=storage_state,
-            **identity,
-        )
+        if as_visitor:
+            # A PLAIN context: no locale, timezone or viewport overrides. The
+            # first two are set on the Chrome itself (_ensure_visitor_browser).
+            # On 5 Nov 2026 the plain context of an attached Chrome is what was
+            # served; given all three overrides it was refused both times.
+            ctx = self._ensure_visitor_browser(locale, timezone).new_context(
+                storage_state=storage_state,
+            )
+        else:
+            ctx = self._ensure_browser().new_context(
+                locale=locale,
+                timezone_id=timezone,
+                viewport=_VIEWPORT,
+                color_scheme="light",
+                java_script_enabled=True,
+                ignore_https_errors=False,
+                # Cookies and local storage from an earlier visit: how a site
+                # that trusted this "device" once recognises it again.
+                storage_state=storage_state,
+                user_agent=build_user_agent(
+                    "" if as_person else settings.browser_user_agent_suffix
+                ),
+            )
         ctx.set_default_timeout(settings.browser_nav_timeout_ms)
         ctx.set_default_navigation_timeout(settings.browser_nav_timeout_ms)
         if not (as_person or as_visitor):
@@ -377,6 +559,9 @@ class BrowserPool:
             except PlaywrightError:
                 pass
             setattr(self._local, attr, None)
+        # Closing an ATTACHED browser only disconnects from it; the Chrome
+        # process is ours to end.
+        self._stop_visitor_chrome()
         if self._playwright is not None:
             try:
                 self._playwright.stop()
