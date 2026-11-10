@@ -40,6 +40,49 @@
     return result.body.detail || result.body.title || "Request failed";
   }
 
+  /*
+   * ONE FAILED POLL IS NOT A FINISHED RUN.
+   *
+   * The run lives on the worker; these pages only ask, every two seconds,
+   * how it is going. On 10 Nov 2026 one of twenty such questions came back
+   * 502 from the proxy -- the app never saw it -- and the page took that as
+   * the answer: "Request failed (502)", buttons back on, polling stopped,
+   * while the login test carried on and finished unwatched.
+   *
+   * So a gateway or network failure is skipped and asked again on the next
+   * tick, and only a run of them gives up. An answer from the app itself
+   * (401, 404, ...) still ends the poll at once: asking again gets the same.
+   */
+  const POLL_MISSES_ALLOWED = 5;  // ten seconds of silence at one poll per 2s
+
+  /** A status reader for one poller: the result, or null for "skip this tick". */
+  function statusPoller() {
+    let misses = 0;
+    return async function (path) {
+      let result;
+      try {
+        result = await api(path, "GET");
+      } catch (e) {
+        result = { ok: false, status: 0, body: null };  // no answer at all
+      }
+      if (result.ok) { misses = 0; return result; }
+      const transient = result.status === 0 || result.status >= 500;
+      if (!transient) return result;
+      misses += 1;
+      if (misses < POLL_MISSES_ALLOWED) return null;
+      misses = 0;
+      result.lost = true;
+      return result;
+    };
+  }
+
+  /** What a poll that lost the server says: the run did not stop with it. */
+  function pollFailureText(result) {
+    if (!result.lost) return problemText(result);
+    return "Lost contact with the server (" + (result.status || "no answer") + "). " +
+      "The run carries on without this page: reload in a minute to see how it ended.";
+  }
+
   // -- login ---------------------------------------------------------
   const loginForm = document.getElementById("login-form");
   if (loginForm) {
@@ -231,9 +274,11 @@
       }
     }
 
+    const readStatus = statusPoller();
     async function poll() {
-      const result = await api(endpoint + "/status", "GET");
-      if (!result.ok) { note(problemText(result), "error"); finish(); return; }
+      const result = await readStatus(endpoint + "/status");
+      if (result === null) return;
+      if (!result.ok) { note(pollFailureText(result), "error"); finish(); return; }
       apply(result.body);
     }
 
@@ -533,9 +578,11 @@
       if (state.status === "running") { note(state.message || "Working…"); return; }
       finish(state);
     }
+    const readStatus = statusPoller();
     async function poll() {
-      const result = await api(endpoint + "/status", "GET");
-      if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
+      const result = await readStatus(endpoint + "/status");
+      if (result === null) return;
+      if (!result.ok) { note(pollFailureText(result), "error"); finish(null); return; }
       apply(result.body);
     }
     async function start(body, ask) {
@@ -649,9 +696,11 @@
       if (state.status === "running") { note(state.message || "Working…"); return; }
       finish(state);
     }
+    const readStatus = statusPoller();
     async function poll() {
-      const result = await api(endpoint + "/status", "GET");
-      if (!result.ok) { note(problemText(result), "error"); finish(null); return; }
+      const result = await readStatus(endpoint + "/status");
+      if (result === null) return;
+      if (!result.ok) { note(pollFailureText(result), "error"); finish(null); return; }
       apply(result.body);
     }
     buttons.forEach(function (button) {
