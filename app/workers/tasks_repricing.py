@@ -753,6 +753,16 @@ def _run(owner_user_id: int, mode: str = "manual",
                         outcome["lines"].append(f"{ch}: could not open it ({exc})")
                         continue
                 for p in job["actionable"]:
+                    # SAVED ROOM BY ROOM, because RMS is. A cell this loop
+                    # wrote is changed the moment write_rate returns, and a run
+                    # killed at the time limit used to roll back every row of
+                    # it: on 10 Nov 2026, after two days of failed logins, each
+                    # run did Booking.com, Agoda and Goibibo in one go, ran
+                    # past ten minutes, and left the rates moved in RMS with no
+                    # record -- "0 rates changed", no readings on the page, and
+                    # no ``prior`` for the next run's ratio guard. Committing
+                    # here keeps every room before the one in hand.
+                    session.commit()
                     m = mappings[p.room_type_id]
                     # The row the site price belongs to. With the board pinned to
                     # breakfast the figure being scaled is the CP rate, and
@@ -958,6 +968,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                                 status="applied" if ok else "failed", plan=plan, rate_type=rate_type,
                                 current_rms=current[plan], proposed_rms=amount, applied_rms=now,
                                 reason=note if ok else f"saved {amount:,.0f} but the grid shows {now}")
+                        session.commit()  # the cell has moved; its record must not wait for the room
                         outcome["applied" if ok else "failed"] += 1
                         outcome["lines"].append(f"{prefix}{m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f}" + ("" if ok else " (not confirmed)"))
             session.commit()
@@ -1000,6 +1011,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                     outcome["failed"] += 0 if dry else len(rooms)
                     continue
                 for rid in rooms:
+                    session.commit()  # room by room, as in the loop above
                     p, m = by_room.get(rid), mappings[rid]
                     anchor = m.anchor_for((p.board if p else None) or settings.benchmark_meal_plan)
                     if p is None or anchor is None:
@@ -1073,6 +1085,7 @@ def _run(owner_user_id: int, mode: str = "manual",
                                 status="applied" if ok else "failed", plan=plan, rate_type=rate_type,
                                 current_rms=current[plan], proposed_rms=amount, applied_rms=now,
                                 reason="ticked by you" if ok else f"saved {amount:,.0f} but the grid shows {now}")
+                        session.commit()  # as above: written, so recorded now
                         outcome["applied" if ok else "failed"] += 1
                         outcome["lines"].append(f"{ch} {m.rms_room} {plan}: {current[plan]:,.0f} → {amount:,.0f}"
                                                 + ("" if ok else " (not confirmed)"))
