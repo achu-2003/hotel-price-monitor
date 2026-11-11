@@ -727,6 +727,11 @@
       selects.forEach(function (sel) {
         if (!sel.value) return;
         const id = sel.dataset.roomTypeId;
+        // Shows the main channel's price: no room of theirs, nothing written.
+        if (sel.dataset.side === "theirs" && sel.value === "__copies_main__") {
+          (map[id] = map[id] || {}).copies_main = true;
+          return;
+        }
         (map[id] = map[id] || {})[sel.dataset.side] = sel.value;
         // A room of another competitor than the benchmark: say whose.
         const hotel = sel.selectedOptions[0] && sel.selectedOptions[0].dataset.hotelId;

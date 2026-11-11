@@ -2999,7 +2999,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         for rule_row in channel_rules:
             lane = repricing_data.extra_lane(rule_row)
             lane_benchmark = await _complete_benchmark(
-                session, user.id, repricing_data.lane_benchmark(bench_row, lane), lane,
+                session, user.id, repricing_data.lane_benchmark(bench_row, lane, settings.channel), lane,
                 check_in, check_out)
             lane_proposals = repricing_rule.propose(
                 repricing_data.lane_rows(all_rows, own.id, lane, {r.id: r.name for r in rooms}),
@@ -3013,7 +3013,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             lane_proposals = repricing_rule.with_unread_rooms(
                 lane_proposals,
                 {r.id: r.name for r in rooms if r.id in {rt for rt, m in mappings.items() if m.is_enabled}},
-                lane.channel)
+                lane.channel, copies_main=lane.copies_main, main_channel=settings.channel)
             # The names to pair with, as this site writes them: ours and the
             # benchmark's, from what it has shown over the last fortnight.
             async def names_on_site(hotel_id: int) -> list[str]:

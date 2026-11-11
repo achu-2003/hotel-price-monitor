@@ -147,7 +147,7 @@ def lane_benchmark_for(session, owner_user_id: int, settings, lane: data.Lane,
     if not settings.benchmark_hotel_id:
         return None
     row = session.execute(data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)).first()
-    return _complete(session, owner_user_id, data.lane_benchmark(row, lane), lane,
+    return _complete(session, owner_user_id, data.lane_benchmark(row, lane, settings.channel), lane,
                      check_in, check_out)
 
 

@@ -349,6 +349,20 @@ class Benchmark:
     #: one reading late, and follows a drop at once -- so we are never priced
     #: off a figure Sterling showed only once.
     previous: Mapping[str, Decimal] = field(default_factory=dict)
+    #: The rooms of ours this website does not price from its own RMS rows:
+    #: it shows the main channel's price, because RMS maps the site's room
+    #: to the main channel's rows. ``main_channel`` names that channel.
+    #:
+    #: Proven for ASG on Agoda on 26 Oct 2026: every Agoda price equalled
+    #: the Booking.com one to the paisa while the Agoda rows sat untouched.
+    #: Writing the Agoda row then moves nothing a guest sees, and the page
+    #: waited "for Agoda to show the new price" for ever. Such a room is
+    #: held here with that reason, so nothing is written to the row the site
+    #: ignores; the main rule is what moves it. The owner says which rooms,
+    #: because only RMS's channel mapping knows and the app cannot read it
+    #: off a price.
+    copies_main: frozenset[int] = frozenset()
+    main_channel: str | None = None
 
     def followed(self, room_type_id: int) -> tuple[int, str]:
         """``(hotel_id, name)`` of the hotel this room of ours follows."""
@@ -831,6 +845,10 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             tier_label=label_for(tier), our_price=our_price, our_note=our_note,
             competitors=competitors, sold_out=gone, board=used_board, with_tax=with_tax,
         )
+        if benchmark is not None and room_type_id in benchmark.copies_main:
+            proposals.append(Proposal(**base, market=None, target=None,
+                                      held=copies_main_reason(benchmark.main_channel)))
+            continue
         if tier == OTHER:
             proposals.append(Proposal(**base, market=None, target=None,
                                       held="the room's name states no tier, so it has no market"))
@@ -1018,8 +1036,17 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     return proposals
 
 
+def copies_main_reason(main_channel: str | None) -> str:
+    """Why a room that copies the main channel's price is not written here."""
+    main = main_channel or "the main website"
+    return (f"this website shows the {main} price for this room (RMS gives it the {main} "
+            f"rows), so the {main} rule above moves it; nothing is written to this row")
+
+
 def with_unread_rooms(proposals: list[Proposal], rooms: Mapping[int, str],
-                      site: str | None = None) -> list[Proposal]:
+                      site: str | None = None,
+                      copies_main: frozenset[int] | set[int] = frozenset(),
+                      main_channel: str | None = None) -> list[Proposal]:
     """``proposals`` plus a held row for each of ``rooms`` that has none.
 
     propose() only sees rooms the site showed tonight, so a mapped room the
@@ -1041,7 +1068,8 @@ def with_unread_rooms(proposals: list[Proposal], rooms: Mapping[int, str],
         extra.append(Proposal(
             room_type_id=room_type_id, room_name=name, tier=tier, tier_label=label_for(tier),
             our_price=None, our_note=None, competitors=(), market=None, target=None,
-            held=f"not on sale tonight{where}: the site showed no price for this room",
+            held=(copies_main_reason(main_channel) if room_type_id in copies_main
+                  else f"not on sale tonight{where}: the site showed no price for this room"),
         ))
     return proposals + sorted(extra, key=lambda p: (p.tier_label, p.room_name))
 

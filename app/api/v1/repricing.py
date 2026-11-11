@@ -214,7 +214,7 @@ async def put_channel_rule(channel: str, payload: ChannelRuleIn, request: Reques
     await get_object_or_404(session, Source, payload.source_id, "Source")
     for room_type_id, pair in payload.room_pairs.items():
         await _own_room(session, user, room_type_id)
-        if pair.hotel_id is not None:
+        if pair.hotel_id is not None and not pair.copies_main:
             await _own_competitor(session, user, pair.hotel_id)
 
     row = await session.scalar(select(RepricingChannelRule).where(
@@ -233,7 +233,9 @@ async def put_channel_rule(channel: str, payload: ChannelRuleIn, request: Reques
     # JSONB keys are strings on the way in; a pair with neither side set
     # says nothing and is not kept.
     row.room_pairs = {
-        str(k): v.model_dump() for k, v in payload.room_pairs.items() if v.ours or v.theirs
+        str(k): (v.model_dump(exclude={"theirs", "hotel_id", "board"}) if v.copies_main
+                 else v.model_dump(exclude={"copies_main"}))
+        for k, v in payload.room_pairs.items() if v.ours or v.theirs or v.copies_main
     }
     await record_audit(
         session, user=user, action="update" if before else "create", entity="repricing_channel_rule",

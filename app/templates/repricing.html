@@ -602,6 +602,9 @@
               </select></td>
               <td><select class="lane-pair" data-room-type-id="{{ room.id }}" data-side="theirs" data-board="{{ pair.board or '' }}">
                 <option value="">not paired — leave this room alone</option>
+                {# For a room this website prices from the main channel's RMS rows:
+                   the main rule moves it, and nothing is written here. #}
+                <option value="__copies_main__" {% if pair.copies_main %}selected{% endif %}>shows our {{ settings.channel }} price</option>
                 {# The benchmark's rooms first; then each other competitor's, for a
                    room that follows a hotel of its own. The option carries its
                    hotel, so a name two hotels share is still one choice. #}
@@ -623,7 +626,7 @@
           </tbody>
         </table>
         <input type="hidden" name="room_pairs" data-json value="{}">
-        <p class="muted">The room names are the ones this website has shown in the last two weeks. A room with no pair is left alone on {{ r.channel }}.</p>
+        <p class="muted">The room names are the ones this website has shown in the last two weeks. A room with no pair is left alone on {{ r.channel }}. Choose "shows our {{ settings.channel }} price" for a room whose {{ r.channel }} price always equals the {{ settings.channel }} one: RMS gives that room the {{ settings.channel }} rows, so writing its {{ r.channel }} row would change nothing a guest sees.</p>
         <button type="submit" class="small">Save {{ r.channel }} settings</button>
         <span class="form-status" role="status"></span>
       </form>

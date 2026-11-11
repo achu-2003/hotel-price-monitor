@@ -290,6 +290,10 @@ class Lane:
     #: ``{our room_type_id: our room's name on this site}``, where it is not
     #: the room's own name. See :func:`lane_rows`.
     ours: Mapping[int, str] = field(default_factory=dict)
+    #: The rooms this site prices from the main channel's RMS rows, not its
+    #: own: stored as ``"copies_main": true`` on the room's pair. See
+    #: :attr:`Benchmark.copies_main`.
+    copies_main: frozenset[int] = frozenset()
 
 
 def _split_pairs(stored) -> tuple[dict[int, str], dict[int, int], dict[int, str]]:
@@ -331,13 +335,18 @@ def extra_lane(rule_row) -> Lane:
     for key, pair in stored.items():
         if (pair.get("ours") or "").strip():
             ours[int(key)] = pair["ours"].strip()
+    # A room that copies the main channel follows no one here, so any name
+    # of theirs left on it is dropped rather than half-applied.
+    copies = frozenset(int(k) for k, pair in stored.items() if pair.get("copies_main"))
+    for key in copies:
+        pairs.pop(key, None); hotels.pop(key, None); boards.pop(key, None)
     return Lane(
         channel=rule_row.channel, source_id=rule_row.source_id, main=False,
         auto=bool(rule_row.auto_enabled),
         undercut=Decimal(rule_row.benchmark_undercut),
         with_tax=bool(rule_row.benchmark_with_tax),
         meal_plan=rule_row.benchmark_meal_plan or None,
-        pairs=pairs, hotels=hotels, boards=boards, ours=ours,
+        pairs=pairs, hotels=hotels, boards=boards, ours=ours, copies_main=copies,
     )
 
 
@@ -408,14 +417,15 @@ def lane_rows(rows, own_hotel_id: int, lane: Lane,
     return out
 
 
-def lane_benchmark(row, lane: Lane) -> Benchmark | None:
+def lane_benchmark(row, lane: Lane, main_channel: str | None = None) -> Benchmark | None:
     """:func:`benchmark_for`, with the gap, board and pairs of one lane."""
     if row is None:
         return None
     return Benchmark(hotel_id=row.id, hotel=row.name, undercut=lane.undercut,
                      with_tax=lane.with_tax, meal_plan=lane.meal_plan,
                      fallback_board=(ROOM_ONLY if lane.meal_plan else None),
-                     room_pairs=dict(lane.pairs), room_boards=dict(lane.boards))
+                     room_pairs=dict(lane.pairs), room_boards=dict(lane.boards),
+                     copies_main=lane.copies_main, main_channel=main_channel)
 
 
 # -- the repricer's log, as the pages read it -------------------------

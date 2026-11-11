@@ -92,6 +92,10 @@ class RoomPair(ORMModel):
     hotel_id: int | None = Field(default=None, gt=0)
     #: Compare this room on another board than the rule's, both sides.
     board: str | None = Field(default=None, max_length=60)
+    #: This site shows the main channel's price for the room (RMS maps it to
+    #: the main channel's rows), so the main rule moves it and nothing is
+    #: written to this channel's row. Clears ``theirs``: it follows no one here.
+    copies_main: bool = False
 
     @field_validator("ours", "theirs")
     @classmethod
