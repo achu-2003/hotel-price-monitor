@@ -1018,6 +1018,34 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     return proposals
 
 
+def with_unread_rooms(proposals: list[Proposal], rooms: Mapping[int, str],
+                      site: str | None = None) -> list[Proposal]:
+    """``proposals`` plus a held row for each of ``rooms`` that has none.
+
+    propose() only sees rooms the site showed tonight, so a mapped room the
+    site did not show (sold out, or listed under another name) used to
+    vanish from its section. Goibibo listing three of five mapped rooms read
+    as the repricer having forgotten two. ``rooms`` is the mapped, enabled
+    rooms by id; the page shows them all, held with the reason.
+
+    Shown, never written: a held proposal is skipped by the run, and the
+    worker does not call this.
+    """
+    have = {p.room_type_id for p in proposals}
+    where = f" on {site}" if site else ""
+    extra = []
+    for room_type_id, name in rooms.items():
+        if room_type_id in have:
+            continue
+        tier = classify(name)
+        extra.append(Proposal(
+            room_type_id=room_type_id, room_name=name, tier=tier, tier_label=label_for(tier),
+            our_price=None, our_note=None, competitors=(), market=None, target=None,
+            held=f"not on sale tonight{where}: the site showed no price for this room",
+        ))
+    return proposals + sorted(extra, key=lambda p: (p.tier_label, p.room_name))
+
+
 def override(proposal: Proposal, price: Decimal) -> Proposal:
     """The proposal with the owner's own guest price in place of the rule's.
 

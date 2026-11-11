@@ -2886,6 +2886,9 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             benchmark=rule_benchmark,
             moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in, settings.channel))),
         )
+        # Every mapped room gets a row, read tonight or not.
+        mapped_rooms = {r.id: r.name for r in rooms if r.id in enabled}
+        proposals = repricing_rule.with_unread_rooms(proposals, mapped_rooms, settings.channel)
 
     # The last RMS reading per rate row, so the page can show the RMS
     # number a proposal would become without opening a browser.
@@ -3007,6 +3010,10 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                 moved_today=set(await session.scalars(
                     repricing_data.moved_stmt(user.id, check_in, lane.channel, main=False))),
             ) if lane_benchmark is not None else []
+            lane_proposals = repricing_rule.with_unread_rooms(
+                lane_proposals,
+                {r.id: r.name for r in rooms if r.id in {rt for rt, m in mappings.items() if m.is_enabled}},
+                lane.channel)
             # The names to pair with, as this site writes them: ours and the
             # benchmark's, from what it has shown over the last fortnight.
             async def names_on_site(hotel_id: int) -> list[str]:
