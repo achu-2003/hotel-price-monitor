@@ -93,6 +93,15 @@ def test_cp_and_map_keep_their_supplement_over_the_new_ep():
     assert follow(Decimal("8020"), Decimal("7500"), Decimal("11000"), round_to=10) == Decimal("11520")
 
 
+def test_a_supplement_is_kept_to_the_rupee_over_an_exact_anchor():
+    """12 Nov 2026: Villa EP 11,500 -> 12,093. CP (+1,500) and MAP (+3,500)
+    were rounded to 13,590 / 15,590, a breakfast of 1,497. Now exact."""
+    assert follow(Decimal("12093"), Decimal("11500"), Decimal("13000"), round_to=10) == Decimal("13593")
+    assert follow(Decimal("12093"), Decimal("11500"), Decimal("15000"), round_to=10) == Decimal("15593")
+    # a CP anchor moving EP below it (CLASSIC: EP is CP - 500)
+    assert follow(Decimal("7435"), Decimal("5500"), Decimal("5000"), round_to=10) == Decimal("6935")
+
+
 def test_the_rooms_rupee_floor_is_on_the_rms_number():
     """A floor of 7,500 is the grid's 7,500, not a site price."""
     assert rms_bounds(Decimal("6750"), floor=Decimal("7500"), ceiling=None) == "below this room's RMS floor of 7,500"

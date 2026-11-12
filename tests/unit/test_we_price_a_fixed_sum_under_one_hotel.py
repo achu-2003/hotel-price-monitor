@@ -690,13 +690,66 @@ class TestARoomWithoutBreakfastDropsToRoomOnly:
         assert p.market == Decimal("6323")
         assert p.benchmark_entry.room == "Mountain View Classic Room"
 
-    def test_their_room_with_no_breakfast_tonight_holds_rather_than_dropping(self):
-        """Their breakfast rate gone, room-only still on sale: we hold, we do
-        not quietly slide back to their room-only rate."""
-        rows = [r for r in self._rows()
-                if not (r[2] == "Mountain View Classic Room" and r[0].meal_plan == "Breakfast")]
+    def _without(self, room, plan):
+        rows = [r for r in self._rows() if not (r[2] == room and r[0].meal_plan == plan)]
+        return {p.room_name: p for p in
+                rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=self.BENCH)}
+
+    def test_neither_has_breakfast_so_room_only_against_room_only(self):
+        """Our Standard Double sells no breakfast, and tonight neither does
+        their Mountain View: both sides room-only, 4,973 - 100."""
+        p = self._without("Mountain View Classic Room", "Breakfast")["Standard Double Room"]
+        assert p.board == "Room Only"
+        assert p.market == Decimal("4973")
+        assert p.target == Decimal("4873")
+        assert p.their_board == "Room Only"
+
+    def test_we_have_breakfast_and_they_do_not_compare_as_it_is(self):
+        """Our Deluxe sells breakfast; their Classic tonight only room-only.
+        Our breakfast price is set 100 under their room-only one."""
+        p = self._without("Classic room", "Breakfast")["Deluxe Double Room"]
+        assert p.board == "Breakfast"
+        assert p.our_price == Decimal("5984")
+        assert p.market == Decimal("4343")
+        assert p.target == Decimal("4243")
+        assert p.their_board == "Room Only"
+
+    def test_both_have_breakfast_their_board_is_the_lanes(self):
+        p = self._all()["Deluxe Double Room"]
+        assert p.their_board is None  # the lane's own board: breakfast
+
+    def test_our_breakfast_sold_out_tonight_drops_us_to_room_only(self):
+        """Our Deluxe breakfast rate is listed but sold out; room-only is on
+        sale. We have no breakfast tonight, they do: our 5,610 room-only
+        against their 5,693 breakfast, as it is."""
+        rows = self._rows()
+        for ser, _hotel, name in rows:
+            if name == "Deluxe Double Room" and ser.meal_plan == "Breakfast":
+                ser.is_available = False
+        p = {p.room_name: p for p in
+             rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=self.BENCH)}["Deluxe Double Room"]
+        assert p.board == "Room Only"
+        assert p.our_price == Decimal("5610")
+        assert p.market == Decimal("5693")
+        assert p.target == Decimal("5593")
+
+    def test_their_room_gone_on_both_boards_holds(self):
+        rows = [r for r in self._rows() if r[2] != "Mountain View Classic Room"]
         p = {p.room_name: p for p in
              rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=self.BENCH)}["Standard Double Room"]
+        assert p.target is None
+        assert "not on sale tonight on the site" in p.held
+
+    def test_a_room_pinned_to_its_own_board_does_not_drop(self):
+        """A per-room board is the owner's choice for that room: no fallback."""
+        bench = rule.Benchmark(
+            hotel_id=10, hotel="Sterling", undercut=Decimal("100"), with_tax=False,
+            meal_plan="Breakfast", fallback_board="Room Only",
+            room_pairs={OUR_DELUXE: "Classic room"}, room_boards={OUR_DELUXE: "Breakfast"},
+        )
+        rows = [r for r in self._rows() if not (r[2] == "Classic room" and r[0].meal_plan == "Breakfast")]
+        p = {p.room_name: p for p in
+             rule.propose(rows, own_hotel_id=9, rule=OPEN, benchmark=bench)}["Deluxe Double Room"]
         assert p.target is None
         assert "with breakfast" in p.held
 

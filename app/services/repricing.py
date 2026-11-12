@@ -295,11 +295,12 @@ class Benchmark:
     #: breakfast left that room with no comparison at all -- and a room the
     #: owner competes with every night is not a room to leave unpriced.
     #:
-    #: OUR SIDE ONLY. The benchmark's room is still read on ``meal_plan``:
-    #: the owner prices against Sterling's breakfast rate whatever board our
-    #: room happens to be sold on. It used to drop both sides together, which
-    #: compared ASG's Standard Double against Sterling's Mountain View
-    #: room-only rate -- not the figure the owner prices against.
+    #: EACH SIDE DROPS ON ITS OWN. Ours drops when our room is not sold on
+    #: ``meal_plan``; theirs drops only when THEIR room is not. So both on
+    #: breakfast compare breakfast, neither compares room-only, and a mixed
+    #: pair is compared as it is -- ASG's room-only Standard Double still
+    #: faces Sterling's Mountain View breakfast rate while Sterling sells
+    #: one. (Owner's rule, 12 Nov 2026; see :func:`propose`.)
     fallback_board: str | None = None
     #: WHICH room of theirs each room of ours competes with:
     #: ``{our room_type_id: their room name}``. Empty keeps the tier
@@ -823,10 +824,17 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
     for room_type_id, a_board in room_boards.items():
         if room_type_id in nights[a_board][0]:
             order[room_type_id] = a_board
-    for a_board in nights:
-        for room_type_id in nights[a_board][0]:
-            if room_type_id not in room_boards:
-                order.setdefault(room_type_id, a_board)
+    # Otherwise the first board it is ON SALE on, then the first it is listed
+    # on: a breakfast rate that sold out tonight while room-only is still
+    # bookable is a room without breakfast tonight, not a room with no price.
+    for on_sale_only in (True, False):
+        for a_board in nights:
+            for room_type_id, entries in nights[a_board][0].items():
+                if room_type_id in room_boards or room_type_id in order:
+                    continue
+                if on_sale_only and _our_entry(entries)[0] is None:
+                    continue
+                order[room_type_id] = a_board
 
     proposals = []
     for room_type_id, used_board in order.items():
@@ -877,17 +885,37 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                     ))
                     continue
 
-            # THEIR SIDE IS ALWAYS READ ON THE PINNED BOARD, even for a room
-            # of ours that dropped to the fallback. The owner's rule is "a
-            # hundred under Sterling's breakfast rate", and Sterling selling
-            # breakfast does not stop because we do not.
+            # EACH SIDE ON BREAKFAST IF IT HAS IT, ROOM-ONLY IF IT DOES NOT,
+            # and compared as they are (the owner's rule, 12 Nov 2026):
+            #
+            #   both sell breakfast     -> breakfast against breakfast
+            #   neither does            -> room-only against room-only
+            #   only one of the two does -> that one's breakfast against
+            #                               the other's room-only
+            #
+            # Our side already took the first board it sells (``order``).
+            # Theirs does the same here: the pinned board first, then the
+            # fallback. It used to stay on the pinned board and hold the
+            # room when that was gone, which left Standard Double unpriced
+            # on every night Sterling's Mountain View had no breakfast rate.
+            #
+            # A room with a board of its own (``room_boards``) is the owner
+            # saying "compare THIS room on THAT board", so it does not drop.
+            def _their(on_board):
+                rates = nights[on_board][1]
+                return (_benchmark_room(rates, hotel_id, our_source, their_room)
+                        if their_room is not None
+                        else _benchmark_entry(rates.get(tier, {}), hotel_id, our_source))
+
             their_board = room_boards.get(room_type_id, board)
-            their_rates = nights[their_board][1]
-            entry = (
-                _benchmark_room(their_rates, hotel_id, our_source, their_room)
-                if their_room is not None
-                else _benchmark_entry(their_rates.get(tier, {}), hotel_id, our_source)
-            )
+            entry = _their(their_board)
+            tried_both = False
+            if (entry is None and room_type_id not in room_boards
+                    and spare_board and spare_board != their_board and spare_board in nights):
+                tried_both = True
+                entry = _their(spare_board)
+                if entry is not None:
+                    their_board = spare_board
             if entry is None:
                 # Deliberately one reason and not two. "No room of that tier"
                 # and "no room of that tier on the site we are priced on" are
@@ -900,7 +928,8 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
                 # -- usually sold out, since sites drop a full room from the
                 # list -- and so nothing moves. Not "sold out" outright: the
                 # same room on sale without breakfast lands here too.
-                on_board = (f" {their_board.lower()}" if (their_board or "").lower() == "room only"
+                on_board = ("" if tried_both
+                            else f" {their_board.lower()}" if (their_board or "").lower() == "room only"
                             else f" with {their_board.lower()}" if their_board else "")
                 gone = (f"{hotel}'s \"{their_room}\" is not on sale tonight{on_board}"
                         if their_room else
@@ -956,7 +985,7 @@ def propose(rows, *, own_hotel_id: int, rule: Rule,
             proposals.append(Proposal(**base, market=entry.price, target=target, held=held,
                                       capped=capped, wanted=wanted, benchmark=hotel,
                                       benchmark_entry=entry, exact=True,
-                                      their_board=room_boards.get(room_type_id)))
+                                      their_board=their_board if their_board != board else None))
             continue
 
         if len(competitors) < rule.min_competitors:
@@ -1200,8 +1229,16 @@ def same_share(current: Decimal, before: Decimal, after: Decimal, *, round_to: i
 
 
 def follow(proposed_ep: Decimal, current_ep: Decimal, current_plan: Decimal, *, round_to: int) -> Decimal:
-    """A CP or MAP rate after the EP moved: the same supplement over the new EP."""
-    return _round_to(proposed_ep + (current_plan - current_ep), round_to)
+    """A CP or MAP rate after the EP moved: the same supplement over the new EP.
+
+    EXACTLY the same supplement, not rounded. The anchor is often written to
+    the rupee (a benchmark follow is never rounded, see :func:`to_rms`), and
+    rounding anchor + supplement then ate into the supplement the owner set:
+    on 12 Nov 2026 the Villa's EP went to 12,093 and its CP to 13,590, a
+    breakfast of 1,497 where RMS held 1,500. ``round_to`` is kept for the
+    callers and ignored: an anchor that was rounded stays rounded anyway.
+    """
+    return proposed_ep + (current_plan - current_ep)
 
 
 def settled(current: Decimal | None, proposed: Decimal | None, *, round_to: int) -> bool:

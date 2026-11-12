@@ -282,7 +282,7 @@ def test_an_agoda_apply_writes_the_agoda_row_and_nothing_else(run):
     assert channels_written(grid) == {"Agoda"}
     # 3,410 from 4,278 at an EP of 8,000 is 6,376; CP keeps its 500 over it.
     assert ("Agoda", "CLASSIC", "Online Rate EP", D("6376")) in grid.writes
-    assert ("Agoda", "CLASSIC", "Online Rate CP", D("6880")) in grid.writes
+    assert ("Agoda", "CLASSIC", "Online Rate CP", D("6876")) in grid.writes
     assert "Agoda CLASSIC EP" in grid.result["message"]
 
 

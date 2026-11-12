@@ -209,9 +209,13 @@ class TestAPairWithABoardOfItsOwn:
             _boarded_night(), own_hotel_id=OURS.id, rule=OPEN,
             room_type_ids={DELUXE_DOUBLE, FAMILY_SUITE}, benchmark=b)}
 
-    def test_on_the_lanes_board_there_is_nothing_to_follow(self):
+    def test_without_a_board_of_its_own_it_is_compared_as_it_is(self):
+        """Ours sells breakfast, theirs only room-only: our breakfast price is
+        set 100 under their room-only one (owner's rule, 12 Nov 2026)."""
         p = self._propose()[FAMILY_SUITE]
-        assert p.target is None and "not on sale tonight with breakfast" in p.held
+        assert p.board == "Breakfast" and p.our_price == D("14000")
+        assert p.market == D("17700") and p.wanted == D("17600")
+        assert p.their_board == "Room Only"
 
     def test_both_sides_are_read_on_its_own_board(self):
         p = self._propose(room_boards={FAMILY_SUITE: "Room Only"})[FAMILY_SUITE]
