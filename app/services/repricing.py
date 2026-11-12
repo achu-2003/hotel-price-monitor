@@ -93,7 +93,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from statistics import median
 
@@ -1304,6 +1304,68 @@ def nothing_to_write(cur: Decimal | None, base: Decimal | None, rms_new: Decimal
     if cur is None or rms_new is None or not settled(cur, rms_new, round_to=round_to):
         return None
     return "written" if base is not None and base != cur else "stuck"
+
+
+#: How old a site's reading may be for an AUTOMATIC run to write from it.
+#: Readings come every 30 minutes; three missed ones is "gone quiet" on
+#: Attention, and by two hours something is plainly wrong with the reading.
+STALE_AFTER = timedelta(hours=2)
+
+
+def stale_reason(read_at: Mapping[str, datetime | None], now: datetime, site: str,
+                 max_age: timedelta = STALE_AFTER) -> str | None:
+    """Why an automatic run must not write from these readings, or ``None``.
+
+    ``read_at`` is each hotel the run compares (ours and the ones followed)
+    by name, with the last time ``site`` was read for it tonight.
+
+    12 Nov 2026: Goibibo stopped answering at 12:15 (no room list, the way it
+    throttles a visitor) and every Goibibo price stayed the one read at noon.
+    The repricer went on writing from them twice an hour until 16:39. A
+    price four hours old is not tonight's market, and our own price four
+    hours old cannot say whether the site took the last write -- so nothing
+    is written until the site is read again.
+    """
+    old = [(name, at) for name, at in read_at.items() if at is None or now - at > max_age]
+    if not old:
+        return None
+    parts = [f"{name} never" if at is None else f"{name} since {at:%d %b %H:%M} UTC"
+             for name, at in sorted(old, key=lambda x: x[0])]
+    return (f"{site} has not been read for {', '.join(parts)}; an automatic run does not "
+            f"write from prices that old. It writes again once {site} is read.")
+
+
+def ratio_base(actions, our_price: Decimal | None) -> Decimal | None:
+    """The RMS rate the site's price was actually made from, or ``None``.
+
+    ``actions`` is one RMS row's actions tonight on one channel, NEWEST FIRST.
+    A target becomes an RMS rate by ``rate * target / our_price``, so ``rate``
+    must be the rate the site was showing ``our_price`` for. Right after a
+    write it is not the cell: the cell holds our new rate and the site still
+    shows the price the old one made.
+
+    WALKED BACK TO THE FIRST WRITE THE SITE NEVER SHOWED, not only the last.
+    On 12 Nov Goibibo showed ASG's Deluxe Double at 4,473 all afternoon while
+    every run wrote the CLASSIC CP row again. Looking back one write, the
+    second run took the first run's NEW rate as the site's -- the site had
+    never shown it -- and scaled it by the same 23 % again: 7,242, 8,945,
+    11,048, 13,646, 16,855 ... 17,230, and DELUXE CP to 23,066, for rooms
+    the rule wanted at 7,403 and 8,245. Every applied write since the site
+    last moved carries the same ``our_price``; the oldest of them holds the
+    rate before any of them, and that is the one the price came from. So a
+    site that never takes the rate gets ONE write per target, however many
+    runs see it unmoved.
+    """
+    if our_price is None:
+        return None
+    base = None
+    for action in actions:
+        if action.status != "applied" or action.current_rms is None:
+            continue
+        if action.our_price != our_price:
+            break
+        base = action.current_rms
+    return base
 
 
 def in_gst_gap(guest: Decimal | None) -> bool:

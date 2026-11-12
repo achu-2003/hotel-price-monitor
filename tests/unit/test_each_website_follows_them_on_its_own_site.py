@@ -211,6 +211,9 @@ class FakeSession:
     def scalar(self, stmt):
         return self.app if "rate_application" in str(stmt) else None
 
+    def scalars(self, stmt):
+        return []
+
 
 def _mapping():
     return RmsRoomMapping(owner_user_id=2, room_type_id=25, rms_room="CLASSIC",
@@ -226,7 +229,7 @@ def _proposal(our, target):
 
 @pytest.fixture
 def run(monkeypatch):
-    def go(mode, *, channel=None, main_auto=True, agoda_auto=False, agoda_ep=True):
+    def go(mode, *, channel=None, main_auto=True, agoda_auto=False, agoda_ep=True, stale=None):
         cells = {
             ("Booking.com", "CLASSIC", "Online Rate EP"): D("9430"),
             ("Booking.com", "CLASSIC", "Online Rate CP"): D("9930"),
@@ -252,6 +255,7 @@ def run(monkeypatch):
         monkeypatch.setattr(task, "extra_lanes", lambda s, o: [agoda])
         monkeypatch.setattr(task, "settings_for", lambda s, o: settings)
         monkeypatch.setattr(task, "shadow_advice", lambda *a, **k: 0)
+        monkeypatch.setattr(task, "stale_for", lambda *a, **k: stale)  # None: tonight's readings are fresh
         monkeypatch.setattr(task, "sync_session", lambda: FakeSession(app))
         monkeypatch.setattr(task, "decrypt", lambda v: "secret")
         monkeypatch.setattr(task.state, "read", lambda o, k: None)
@@ -324,3 +328,16 @@ def test_a_plan_the_channel_does_not_sell_is_skipped_not_fatal(run):
     assert grid.result["failed"] == 0
     # 3,410 from 4,278 at a CP of 8,500 is 6,775.
     assert grid.writes == [("Agoda", "CLASSIC", "Online Rate CP", D("6775"))]
+
+
+def test_automatic_writes_nothing_from_old_readings(run):
+    """12 Nov: Goibibo unread since 12:15, written to until 16:39."""
+    grid = run("auto", main_auto=False, agoda_auto=True,
+               stale="Agoda has not been read for Sterling since 12 Nov 06:51 UTC")
+    assert grid.writes == []
+
+
+def test_a_pressed_apply_is_not_held_by_the_age_check(run):
+    """The owner has the page, and its prices, in front of them."""
+    grid = run("manual", channel="Agoda", stale="Agoda has not been read for Sterling since 12 Nov 06:51 UTC")
+    assert channels_written(grid) == {"Agoda"}

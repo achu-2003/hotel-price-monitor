@@ -2971,16 +2971,11 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     # write, for as long as our own price is still the one that write was
     # computed from. The moment the site catches up, ``our_price`` changes,
     # this stops matching, and the live reading takes over again.
-    by_room = {p.room_type_id: p for p in proposals}
-    ratio_base: dict[tuple, object] = {}
-    for a in readings:
-        if (a.status != "applied" or a.current_rms is None or a.check_in != check_in
-                or a.channel not in (None, settings.channel)
-                or (a.rms_room, a.rms_rate_type) in ratio_base):
-            continue
-        proposal = by_room.get(a.room_type_id)
-        if proposal is not None and proposal.our_price is not None and a.our_price == proposal.our_price:
-            ratio_base[(a.rms_room, a.rms_rate_type)] = a.current_rms
+    # Walked back over every write the site has not shown, as the worker
+    # does: see repricing_rule.ratio_base.
+    ratio_base = _ratio_bases(
+        [a for a in readings if a.check_in == check_in and a.channel in (None, settings.channel)],
+        {p.room_type_id: p for p in proposals})
 
     other_channels = [c for c in (settings.known_channels or []) if c != settings.channel]
 
@@ -3023,15 +3018,8 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                            PriceSeries.check_in >= since)
                     .distinct().order_by(RoomType.name)
                 )).all())
-            lane_by_room = {p.room_type_id: p for p in lane_proposals}
-            lane_ratio: dict[tuple, object] = {}
-            for a in readings:
-                if (a.status != "applied" or a.current_rms is None or a.channel != lane.channel
-                        or (a.rms_room, a.rms_rate_type) in lane_ratio):
-                    continue
-                p = lane_by_room.get(a.room_type_id)
-                if p is not None and p.our_price is not None and a.our_price == p.our_price:
-                    lane_ratio[(a.rms_room, a.rms_rate_type)] = a.current_rms
+            lane_ratio = _ratio_bases([a for a in readings if a.channel == lane.channel],
+                                      {p.room_type_id: p for p in lane_proposals})
             lanes.append(SimpleNamespace(
                 rule=rule_row, lane=lane, proposals=lane_proposals, ratio_base=lane_ratio,
                 rms={p.room_type_id: _lane_rms(rule_row, p, mappings.get(p.room_type_id), channel_rms,
@@ -3096,6 +3084,28 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         has_rate_app=app_row is not None, rule=repricing_rule,
         last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
     )
+
+
+def _ratio_bases(actions, by_room) -> dict[tuple, object]:
+    """``(rms_room, rate_type) -> rate the site's price was made from``.
+
+    ``actions`` is one channel's actions tonight, newest first; ``by_room``
+    tonight's proposals by room. Each row's actions go through
+    :func:`repricing_rule.ratio_base` with that room's price on the site.
+    """
+    rows: dict[tuple, list] = {}
+    rooms: dict[tuple, int] = {}
+    for a in actions:
+        key = (a.rms_room, a.rms_rate_type)
+        rows.setdefault(key, []).append(a)
+        rooms.setdefault(key, a.room_type_id)
+    out = {}
+    for key, row_actions in rows.items():
+        proposal = by_room.get(rooms[key])
+        base = repricing_rule.ratio_base(row_actions, proposal.our_price if proposal else None)
+        if base is not None:
+            out[key] = base
+    return out
 
 
 def _lane_rms(rule_row, p, m, channel_rms, lane_ratio, round_to) -> SimpleNamespace:

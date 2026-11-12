@@ -116,6 +116,7 @@ def run(monkeypatch):
         monkeypatch.setattr(task, "compute", lambda s, o, ci, co: ([proposal()], settings, {27: m}))
         monkeypatch.setattr(task, "settings_for", lambda s, o: settings)
         monkeypatch.setattr(task, "shadow_advice", lambda *a, **k: 0)
+        monkeypatch.setattr(task, "stale_for", lambda *a, **k: None)  # tonight's readings are fresh
         monkeypatch.setattr(task, "sync_session", lambda: FakeSession(app))
         monkeypatch.setattr(task, "decrypt", lambda v: "secret")
         monkeypatch.setattr(task.state, "read", lambda o, k: None)

@@ -35,7 +35,7 @@ from typing import Any
 from uuid import uuid4
 
 from celery import shared_task
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, func, or_, select
 
 from app.config import get_settings
 from app.core.crypto import decrypt, encrypt
@@ -149,6 +149,30 @@ def lane_benchmark_for(session, owner_user_id: int, settings, lane: data.Lane,
     row = session.execute(data.benchmark_stmt(owner_user_id, settings.benchmark_hotel_id)).first()
     return _complete(session, owner_user_id, data.lane_benchmark(row, lane, settings.channel), lane,
                      check_in, check_out)
+
+
+def stale_for(session, owner_user_id: int, settings, lane: data.Lane | None, check_in,
+              now: datetime | None = None) -> str | None:
+    """:func:`rule.stale_reason` for one lane (``None``: the main one): when
+    its site last read our hotel and every hotel it follows, for tonight."""
+    lane = lane or data.main_lane(settings)
+    if lane.source_id is None:
+        return None
+    own = own_hotel_id(session, owner_user_id)
+    hotel_ids = {h for h in (own, settings.benchmark_hotel_id, *lane.hotels.values()) if h}
+    if not hotel_ids:
+        return None
+    names = dict(session.execute(select(Hotel.id, Hotel.name).where(Hotel.id.in_(hotel_ids))).all())
+    last = dict(session.execute(
+        select(RoomType.hotel_id, func.max(PriceSeries.last_checked_at))
+        .join(PriceSeries, PriceSeries.room_type_id == RoomType.id)
+        .where(RoomType.hotel_id.in_(hotel_ids), PriceSeries.source_id == lane.source_id,
+               PriceSeries.check_in == check_in)
+        .group_by(RoomType.hotel_id)
+    ).all())
+    site = lane.channel or "the site"
+    return rule.stale_reason({names.get(h, f"hotel {h}"): last.get(h) for h in hotel_ids},
+                             now or datetime.now(UTC), site)
 
 
 def extra_lanes(session, owner_user_id: int) -> list[data.Lane]:
@@ -690,13 +714,25 @@ def _run(owner_user_id: int, mode: str = "manual",
         jobs: list[dict[str, Any]] = []
         if run_main:
             jobs.append({"channel": settings.channel, "main": True, "board": settings.benchmark_meal_plan,
-                         "proposals": proposals})
+                         "proposals": proposals, "lane": None})
         for lane in run_lanes:
             lane_proposals, _, _ = compute(session, owner_user_id, check_in, check_out, lane)
             if only_room_type_id is not None:
                 lane_proposals = [p for p in lane_proposals if p.room_type_id == only_room_type_id]
             jobs.append({"channel": lane.channel, "main": False, "board": lane.meal_plan,
-                         "proposals": lane_proposals})
+                         "proposals": lane_proposals, "lane": lane})
+
+        # NOT FROM OLD READINGS. An automatic run holds every room of a site
+        # whose prices -- ours, or a hotel it follows -- were not read in the
+        # last two hours. See rule.stale_reason (12 Nov, Goibibo).
+        if mode == "auto":
+            for job in jobs:
+                why = stale_for(session, owner_user_id, settings, job["lane"], check_in)
+                if why:
+                    job["proposals"] = [replace(p, target=None, held=why) if p.actionable else p
+                                        for p in job["proposals"]]
+                    log.warning("repricing_readings_stale", owner_user_id=owner_user_id,
+                                channel=job["channel"], reason=why)
 
         # Nothing to write: say so without opening a browser, but leave the
         # held rows so the page can show why.
@@ -823,8 +859,9 @@ def _run(owner_user_id: int, mode: str = "manual",
                     # the same target by it would move the rate a second time.
                     # While the site still shows the price the last move was
                     # scaled from, that move's pre-move pair is the ratio.
-                    rms_for_ratio = current[anchor]
-                    prior = session.scalar(
+                    # Walked back over EVERY write the site has not shown yet,
+                    # not just the last: see rule.ratio_base (12 Nov, Goibibo).
+                    applied_tonight = list(session.scalars(
                         select(RepricingAction).where(
                             RepricingAction.owner_user_id == owner_user_id,
                             RepricingAction.check_in == check_in,
@@ -832,10 +869,10 @@ def _run(owner_user_id: int, mode: str = "manual",
                             RepricingAction.plan == anchor,
                             RepricingAction.status == "applied",
                             data.on_channel(ch, main=job["main"]),
-                        ).order_by(RepricingAction.created_at.desc())
-                    )
-                    if prior is not None and prior.our_price == p.our_price and prior.current_rms:
-                        rms_for_ratio = prior.current_rms
+                        ).order_by(RepricingAction.created_at.desc()).limit(200)
+                    ))
+                    prior = applied_tonight[0] if applied_tonight else None
+                    rms_for_ratio = rule.ratio_base(applied_tonight, p.our_price) or current[anchor]
 
                     # THE CELL MUST STILL HOLD WHAT WE LAST PUT IN IT.
                     #
