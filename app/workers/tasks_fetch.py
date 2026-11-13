@@ -239,12 +239,26 @@ def _run_fetch(
             error_summary=(f"Held: the site refused our last look, so it is left alone "
                            f"until {until:%H:%M}."),
         )
+        # NEXT LOOK RIGHT AFTER THE HOLD, not a whole interval later. Left on
+        # its thirty-minute slot, a hotel whose slots kept landing inside holds
+        # was never tried at all: on 13 Nov Sterling, the hotel Goibibo
+        # repricing follows, went untried from 11:05 while ASG had already
+        # been read again. Spread over a few minutes, so the hotels held
+        # together do not all knock in the same one.
+        if target_ids:
+            retry_at = datetime.now(UTC) + timedelta(seconds=held + random.uniform(60, 300))
+            with sync_session() as session:
+                for target in session.execute(
+                        select(MonitorTarget).where(MonitorTarget.id.in_(target_ids))).scalars():
+                    if target.next_run_at is None or target.next_run_at > retry_at:
+                        target.next_run_at = retry_at
+                session.commit()
         logger.info("fetch_skipped_source_held", wait_s=round(held))
         return {"status": "skipped", "why": "source_held", "check_run_id": check_run_id}
 
     # Politeness budget first: no point opening a browser we are not allowed
     # to use yet.
-    rate =effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
+    rate = effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
     verdict = take_token(payload["source_id"], rate)
     if not verdict.allowed:
         logger.info("rate_limited_deferring", wait_s=round(verdict.retry_after_seconds, 1))
