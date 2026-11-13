@@ -181,6 +181,12 @@ def _localtime(value, fmt: str = "%d %b %H:%M") -> str:
     """
     if value is None:
         return "—"
+    # A timestamp kept in JSON (an error's context) arrives as ISO text.
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
     # A plain time (quiet hours) is already expressed in the recipient's own
     # zone and has no date to convert against, so it is rendered as-is.
     if not isinstance(value, datetime):

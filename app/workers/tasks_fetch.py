@@ -36,9 +36,12 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.ratelimit import (
     LockNotAcquired,
+    clear_source_hold,
     dispatch_lock,
     effective_rate_per_min,
+    hold_source,
     penalise_source,
+    source_hold_remaining,
     take_token,
 )
 from app.db.models import CheckRun, CheckRunStatus, Hotel, MonitorTarget, PriceBasis
@@ -57,6 +60,9 @@ _LOCK_TTL_SECONDS = 600
 #: Backoff per attempt, seconds, before jitter. Long on purpose: a site that
 #: just failed is not helped by three requests in thirty seconds.
 _BACKOFF = (30, 120, 480)
+
+#: The first hold on a source that throttled without saying for how long.
+_HOLD_BASE_SECONDS = 900
 
 #: How long before a schema-drift reading is checked on a fresh page load. Long
 #: enough that a slow booking engine has finished whatever held it up, short
@@ -219,9 +225,24 @@ def _run_fetch(
 ) -> dict[str, Any]:
     settings = get_settings()
 
+    # A site that is refusing us is left alone until its hold runs out (see
+    # ``hold_source``). Recorded as skipped, not failed: nothing was asked of
+    # the site, so there is no new error and no failure to count.
+    held = source_hold_remaining(payload["source_id"])
+    if held > 0:
+        until = datetime.now(UTC) + timedelta(seconds=held)
+        _write_check_run(
+            check_run_id, payload, stay, started, CheckRunStatus.SKIPPED,
+            triggered_by=triggered_by,
+            error_summary=(f"Held: the site refused our last look, so it is left alone "
+                           f"until {until:%H:%M} UTC."),
+        )
+        logger.info("fetch_skipped_source_held", wait_s=round(held))
+        return {"status": "skipped", "why": "source_held", "check_run_id": check_run_id}
+
     # Politeness budget first: no point opening a browser we are not allowed
     # to use yet.
-    rate = effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
+    rate =effective_rate_per_min(payload["source_id"], payload["rate_limit_per_min"])
     verdict = take_token(payload["source_id"], rate)
     if not verdict.allowed:
         logger.info("rate_limited_deferring", wait_s=round(verdict.retry_after_seconds, 1))
@@ -542,6 +563,7 @@ def _ingest(
                 )
 
         monitoring.record_success(session, target_ids, now)
+        clear_source_hold(payload["source_id"])
         _update_check_run(
             session,
             check_run_id,
@@ -763,6 +785,8 @@ def _handle_failure(
 
     if error.error_class == ErrorClass.RATE_LIMITED:
         penalise_source(payload["source_id"])
+        hold_source(payload["source_id"],
+                    getattr(error, "retry_after_seconds", None) or _HOLD_BASE_SECONDS)
 
     with sync_session() as session:
         monitoring.record_error(

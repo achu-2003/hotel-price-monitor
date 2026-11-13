@@ -218,8 +218,15 @@
                 </dd>
               </div>
               <div>
-                <dt>Retries so far</dt>
-                <dd>{{ error.retry_count }}</dd>
+                {# A repeating transient error is one row (record_error); this
+                   is how many times it has happened again since it opened. #}
+                <dt>Seen again</dt>
+                <dd>
+                  {{ error.retry_count }} time{{ '' if error.retry_count == 1 else 's' }}
+                  {% if error.retry_count and (error.context or {}).get('first_seen_at') %}
+                  <span class="muted">· first at {{ error.context.first_seen_at|localtime('%d %b %H:%M') }}</span>
+                  {% endif %}
+                </dd>
               </div>
               {% if error.monitor_target_id %}
               <div>

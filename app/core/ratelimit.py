@@ -124,6 +124,68 @@ def penalise_source(source_id: int, *, seconds: int = 3600) -> None:
         log.warning("penalty_set_failed", source_id=source_id, error=str(exc))
 
 
+# -- source hold -------------------------------------------------------
+# A site that refuses us refuses the CONNECTION, not one hotel. On 12 and 13
+# Nov 2026 Goibibo answered every page from our server with a "200 - OK" stub
+# or a blank "Sold Out" for hours on end, and each of its three hotels went on
+# trying every fifteen minutes on its own -- twelve refused loads an hour,
+# each one a fresh row on Attention, against a site we were asking for less.
+#
+# So a throttle holds the whole source, and the hold doubles each time the
+# first look after it is refused again: 15, 30, 60, then 120 minutes at most.
+# The first success clears it. Only the first refusal while no hold is running
+# escalates -- three hotels refused in the same minute are one refusal.
+HOLD_MAX_SECONDS = 2 * 3600
+_HOLD_LEVEL_TTL_SECONDS = 6 * 3600
+
+
+def _hold_key(source_id: int) -> str:
+    return f"ratelimit:hold:{source_id}"
+
+
+def _hold_level_key(source_id: int) -> str:
+    return f"ratelimit:hold_level:{source_id}"
+
+
+def hold_source(source_id: int, base_seconds: int) -> int:
+    """Hold this source after a throttle; returns the hold in seconds (0 on error).
+
+    A hold already running is left as it is.
+    """
+    try:
+        r = get_redis()
+        running = r.ttl(_hold_key(source_id))
+        if running and running > 0:
+            return int(running)
+        level = int(r.incr(_hold_level_key(source_id)))
+        r.expire(_hold_level_key(source_id), _HOLD_LEVEL_TTL_SECONDS)
+        seconds = min(HOLD_MAX_SECONDS, max(60, int(base_seconds)) * 2 ** (level - 1))
+        r.setex(_hold_key(source_id), seconds, b"1")
+        log.warning("source_held", source_id=source_id, seconds=seconds, level=level)
+        return seconds
+    except redis.RedisError as exc:
+        log.warning("source_hold_failed", source_id=source_id, error=str(exc))
+        return 0
+
+
+def source_hold_remaining(source_id: int) -> float:
+    """Seconds left on this source's hold; 0 when none (or Redis is down)."""
+    try:
+        ttl = get_redis().ttl(_hold_key(source_id))
+    except redis.RedisError as exc:
+        log.warning("source_hold_check_failed", source_id=source_id, error=str(exc))
+        return 0.0
+    return float(ttl) if ttl and ttl > 0 else 0.0
+
+
+def clear_source_hold(source_id: int) -> None:
+    """A page came back: the site is answering, start from fifteen minutes again."""
+    try:
+        get_redis().delete(_hold_key(source_id), _hold_level_key(source_id))
+    except redis.RedisError as exc:
+        log.warning("source_hold_clear_failed", source_id=source_id, error=str(exc))
+
+
 def take_token(source_id: int, rate_per_min: int) -> BucketVerdict:
     """Spend one request against this source's budget.
 

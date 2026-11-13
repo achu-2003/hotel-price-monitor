@@ -422,6 +422,42 @@ def record_error(
     they are what turn "the adapter broke" into a ten-minute fix.
     """
     context = scrub(dict(error.context or {}))
+    now = now or datetime.now(UTC)
+
+    # ONE ROW PER TARGET FOR A REPEATING TRANSIENT ERROR. On 13 Nov 2026
+    # Goibibo refused three hotels every fifteen minutes from 08:30 and
+    # Attention grew a fresh row for each refusal: eighteen items saying one
+    # thing. A repeat of an open transient error of the same class on the same
+    # target now updates that row -- latest message and evidence, a count in
+    # ``retry_count``, the first sighting kept in ``context["first_seen_at"]``.
+    # The next success resolves it exactly as before (record_success). Errors
+    # a person must act on are still one row each: every one is news.
+    if error.is_transient and target_id is not None:
+        open_row = session.execute(
+            select(MonitoringError)
+            .where(
+                MonitoringError.monitor_target_id == target_id,
+                MonitoringError.error_class == error.error_class,
+                MonitoringError.is_transient.is_(True),
+                MonitoringError.resolved_at.is_(None),
+            )
+            .order_by(MonitoringError.occurred_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if open_row is not None:
+            first_seen = (open_row.context or {}).get("first_seen_at") \
+                or open_row.occurred_at.isoformat()
+            open_row.context = {**context, "first_seen_at": first_seen}
+            open_row.occurred_at = now
+            open_row.message = str(error)[:4000]
+            open_row.check_run_id = check_run_id
+            open_row.retry_count = (open_row.retry_count or 0) + 1
+            if context.get("screenshot_path"):
+                open_row.screenshot_path = context["screenshot_path"]
+            if context.get("html_path"):
+                open_row.html_path = context["html_path"]
+            return open_row
+
     row = MonitoringError(
         monitor_target_id=target_id,
         hotel_id=hotel_id,
