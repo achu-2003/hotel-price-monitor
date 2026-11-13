@@ -124,66 +124,103 @@ def penalise_source(source_id: int, *, seconds: int = 3600) -> None:
         log.warning("penalty_set_failed", source_id=source_id, error=str(exc))
 
 
-# -- source hold -------------------------------------------------------
-# A site that refuses us refuses the CONNECTION, not one hotel. On 12 and 13
-# Nov 2026 Goibibo answered every page from our server with a "200 - OK" stub
-# or a blank "Sold Out" for hours on end, and each of its three hotels went on
-# trying every fifteen minutes on its own -- twelve refused loads an hour,
-# each one a fresh row on Attention, against a site we were asking for less.
+# -- adaptive pacing -------------------------------------------------
+# A site that refuses us decides by SPACING, not by volume. Goibibo, 10-13 Nov
+# 2026, our three hotels on it, about seven page loads an hour:
 #
-# So a throttle holds the whole source, and the hold doubles each time the
-# first look after it is refused again: 15, 30, 60, then 120 minutes at most.
-# The first success clears it. Only the first refusal while no hold is running
-# escalates -- three hotels refused in the same minute are one refusal.
-HOLD_MAX_SECONDS = 2 * 3600
-_HOLD_LEVEL_TTL_SECONDS = 6 * 3600
+#     time since the previous Goibibo load    loads that got rooms
+#     under 10 minutes                        about 50%
+#     10 minutes or more                      about 80%
+#
+# The three hotels came due together and loaded one to five minutes apart,
+# and Goibibo refused half of each burst. So a source that has refused us is
+# read one page at a time, with a gap between loads that it teaches us:
+#
+#   * a refusal doubles the gap (at least five minutes, at most thirty);
+#   * every page that comes back shortens it by 15%;
+#   * back down at the source's own budget, the pacing switches itself off.
+#
+# Settles where about one load in five is refused, which is the pace the site
+# actually accepts -- different at 3 am and 3 pm, and found anew every day.
+# A source that never refuses us is never paced: nothing changes for it.
+#
+# One atomic script reserves the slot, so two browser workers cannot both
+# take it. Fails open like the token bucket: a Redis outage paces nothing.
+PACE_MIN_AFTER_REFUSAL = 300
+PACE_MAX_SECONDS = 1800
+PACE_SHRINK = 0.85
+_PACE_TTL_SECONDS = 24 * 3600
+
+_PACE_TAKE_LUA = """
+local gap = tonumber(redis.call('GET', KEYS[1]))
+if gap == nil then return '0' end
+local now = tonumber(ARGV[1])
+local last = tonumber(redis.call('GET', KEYS[2]) or '0')
+local wait = last + gap - now
+if wait > 0 then return tostring(wait) end
+redis.call('SET', KEYS[2], tostring(now), 'EX', tonumber(ARGV[2]))
+return '0'
+"""
 
 
-def _hold_key(source_id: int) -> str:
-    return f"ratelimit:hold:{source_id}"
+def _pace_gap_key(source_id: int) -> str:
+    return f"ratelimit:pace_gap:{source_id}"
 
 
-def _hold_level_key(source_id: int) -> str:
-    return f"ratelimit:hold_level:{source_id}"
+def _pace_last_key(source_id: int) -> str:
+    return f"ratelimit:pace_last:{source_id}"
 
 
-def hold_source(source_id: int, base_seconds: int) -> int:
-    """Hold this source after a throttle; returns the hold in seconds (0 on error).
+def pace_take(source_id: int) -> float:
+    """Seconds until this source may be loaded again; 0 means go (slot taken)."""
+    try:
+        raw = get_redis().eval(_PACE_TAKE_LUA, 2, _pace_gap_key(source_id),
+                               _pace_last_key(source_id), time.time(), _PACE_TTL_SECONDS)
+        return max(0.0, float(raw))
+    except (redis.RedisError, TypeError, ValueError) as exc:
+        log.warning("pace_check_failed", source_id=source_id, error=str(exc))
+        return 0.0
 
-    A hold already running is left as it is.
-    """
+
+def pace_gap(source_id: int) -> float:
+    """The current gap between loads, in seconds; 0 when not paced."""
+    try:
+        raw = get_redis().get(_pace_gap_key(source_id))
+        return float(raw) if raw is not None else 0.0
+    except (redis.RedisError, TypeError, ValueError):
+        return 0.0
+
+
+def pace_refused(source_id: int) -> float:
+    """The site refused a page: widen the gap. Returns the new gap."""
     try:
         r = get_redis()
-        running = r.ttl(_hold_key(source_id))
-        if running and running > 0:
-            return int(running)
-        level = int(r.incr(_hold_level_key(source_id)))
-        r.expire(_hold_level_key(source_id), _HOLD_LEVEL_TTL_SECONDS)
-        seconds = min(HOLD_MAX_SECONDS, max(60, int(base_seconds)) * 2 ** (level - 1))
-        r.setex(_hold_key(source_id), seconds, b"1")
-        log.warning("source_held", source_id=source_id, seconds=seconds, level=level)
-        return seconds
+        gap = min(PACE_MAX_SECONDS, max(PACE_MIN_AFTER_REFUSAL, pace_gap(source_id) * 2))
+        r.set(_pace_gap_key(source_id), str(gap), ex=_PACE_TTL_SECONDS)
+        # The refused load counts as the last one: the gap runs from it.
+        r.set(_pace_last_key(source_id), str(time.time()), ex=_PACE_TTL_SECONDS)
+        log.warning("source_paced", source_id=source_id, gap_s=round(gap))
+        return gap
     except redis.RedisError as exc:
-        log.warning("source_hold_failed", source_id=source_id, error=str(exc))
-        return 0
-
-
-def source_hold_remaining(source_id: int) -> float:
-    """Seconds left on this source's hold; 0 when none (or Redis is down)."""
-    try:
-        ttl = get_redis().ttl(_hold_key(source_id))
-    except redis.RedisError as exc:
-        log.warning("source_hold_check_failed", source_id=source_id, error=str(exc))
+        log.warning("pace_widen_failed", source_id=source_id, error=str(exc))
         return 0.0
-    return float(ttl) if ttl and ttl > 0 else 0.0
 
 
-def clear_source_hold(source_id: int) -> None:
-    """A page came back: the site is answering, start from fifteen minutes again."""
+def pace_succeeded(source_id: int, base_seconds: float) -> None:
+    """A page came back: narrow the gap; at the source's own budget, stop pacing."""
+    gap = pace_gap(source_id)
+    if gap <= 0:
+        return
     try:
-        get_redis().delete(_hold_key(source_id), _hold_level_key(source_id))
+        r = get_redis()
+        narrower = gap * PACE_SHRINK
+        if narrower <= max(1.0, base_seconds):
+            r.delete(_pace_gap_key(source_id))
+            log.info("source_unpaced", source_id=source_id)
+        else:
+            r.set(_pace_gap_key(source_id), str(narrower), ex=_PACE_TTL_SECONDS)
     except redis.RedisError as exc:
-        log.warning("source_hold_clear_failed", source_id=source_id, error=str(exc))
+        log.warning("pace_narrow_failed", source_id=source_id, error=str(exc))
 
 
 def take_token(source_id: int, rate_per_min: int) -> BucketVerdict:

@@ -37,12 +37,12 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.ratelimit import (
     LockNotAcquired,
-    clear_source_hold,
     dispatch_lock,
     effective_rate_per_min,
-    hold_source,
     penalise_source,
-    source_hold_remaining,
+    pace_refused,
+    pace_succeeded,
+    pace_take,
     take_token,
 )
 from app.db.models import CheckRun, CheckRunStatus, Hotel, MonitorTarget, PriceBasis
@@ -61,9 +61,6 @@ _LOCK_TTL_SECONDS = 600
 #: Backoff per attempt, seconds, before jitter. Long on purpose: a site that
 #: just failed is not helped by three requests in thirty seconds.
 _BACKOFF = (30, 120, 480)
-
-#: The first hold on a source that throttled without saying for how long.
-_HOLD_BASE_SECONDS = 900
 
 #: How long before a schema-drift reading is checked on a fresh page load. Long
 #: enough that a slow booking engine has finished whatever held it up, short
@@ -226,27 +223,27 @@ def _run_fetch(
 ) -> dict[str, Any]:
     settings = get_settings()
 
-    # A site that is refusing us is left alone until its hold runs out (see
-    # ``hold_source``). Recorded as skipped, not failed: nothing was asked of
-    # the site, so there is no new error and no failure to count.
-    held = source_hold_remaining(payload["source_id"])
+    # A site that has refused us is read one page at a time, with the gap it
+    # has taught us (see ``pace_take``). Not yet: recorded as skipped, not
+    # failed -- nothing was asked of the site, so no error and no failure.
+    held = pace_take(payload["source_id"])
     if held > 0:
         # In the deployment's own time, as every other time on the dashboard.
         until = (datetime.now(UTC) + timedelta(seconds=held)).astimezone(ZoneInfo(settings.timezone))
         _write_check_run(
             check_run_id, payload, stay, started, CheckRunStatus.SKIPPED,
             triggered_by=triggered_by,
-            error_summary=(f"Held: the site refused our last look, so it is left alone "
-                           f"until {until:%H:%M}."),
+            error_summary=(f"Spaced: this site is read one page at a time after refusing us; "
+                           f"next look after {until:%H:%M}."),
         )
-        # NEXT LOOK RIGHT AFTER THE HOLD, not a whole interval later. Left on
-        # its thirty-minute slot, a hotel whose slots kept landing inside holds
-        # was never tried at all: on 13 Nov Sterling, the hotel Goibibo
+        # NEXT LOOK RIGHT AFTER THE GAP, not a whole interval later. Left on
+        # its thirty-minute slot, a hotel whose slots kept landing inside the
+        # wait was never tried at all: on 13 Nov Sterling, the hotel Goibibo
         # repricing follows, went untried from 11:05 while ASG had already
-        # been read again. Spread over a few minutes, so the hotels held
+        # been read again. Spread over a few minutes, so the hotels waiting
         # together do not all knock in the same one.
         if target_ids:
-            retry_at = datetime.now(UTC) + timedelta(seconds=held + random.uniform(60, 300))
+            retry_at = datetime.now(UTC) + timedelta(seconds=held + random.uniform(30, 180))
             with sync_session() as session:
                 for target in session.execute(
                         select(MonitorTarget).where(MonitorTarget.id.in_(target_ids))).scalars():
@@ -579,7 +576,7 @@ def _ingest(
                 )
 
         monitoring.record_success(session, target_ids, now)
-        clear_source_hold(payload["source_id"])
+        pace_succeeded(payload["source_id"], 60.0 / max(1, payload["rate_limit_per_min"]))
         _update_check_run(
             session,
             check_run_id,
@@ -801,8 +798,7 @@ def _handle_failure(
 
     if error.error_class == ErrorClass.RATE_LIMITED:
         penalise_source(payload["source_id"])
-        hold_source(payload["source_id"],
-                    getattr(error, "retry_after_seconds", None) or _HOLD_BASE_SECONDS)
+        pace_refused(payload["source_id"])
 
     with sync_session() as session:
         monitoring.record_error(
