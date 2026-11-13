@@ -77,6 +77,22 @@
   and nothing else: a website with a rule of its own is shown and applied
   here, never there.
 #}
+{#
+  ONE ROOM'S AUTOMATIC SWITCH ON ONE WEBSITE. Off: automatic runs leave this
+  room's rate on that website alone; the other rooms keep following, and
+  "Apply this room" still writes it. Renders from the saved setting and
+  re-renders from the server's answer, so it cannot claim a state it is not in.
+#}
+{% macro room_auto_button(room_type_id, room_name, channel) %}
+  {% set off = room_type_id in rule.room_auto_off(settings, channel) %}
+  <br><button type="button" class="room-auto {{ 'off' if off else 'on' }}"
+          data-room-type-id="{{ room_type_id }}" data-room="{{ room_name }}"
+          data-channel="{{ channel }}" data-enabled="{{ '0' if off else '1' }}"
+          aria-pressed="{{ 'false' if off else 'true' }}"
+          title="{{ 'Automatic runs leave this room alone on ' ~ channel ~ '. Click to let them move it again.' if off else 'Automatic runs move this room on ' ~ channel ~ '. Click to stop them for this room only.' }}">
+    {{ '⏸ Auto off' if off else '● Auto on' }}</button>
+{% endmacro %}
+
 {% macro lane_cells(L, p) %}
   {% set r = L.rule %}
   {% set m = mappings.get(p.room_type_id) %}
@@ -85,7 +101,8 @@
   {% set ns = L.rms[p.room_type_id] %}
   {% set anchor = ns.anchor %}
   <td class="room"><strong>{{ p.room_name }}</strong>
-    {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}</td>
+    {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}{% if anchor %} › {{ m.rate_type_for(anchor) }}{% endif %}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
+    {% if m %}{{ room_auto_button(p.room_type_id, p.room_name, r.channel) }}{% endif %}</td>
   <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, (p.their_board or r.benchmark_meal_plan) if p.benchmark_entry else none) }}{% else %}—{% endif %}</td>
   <td class="num market">
     {% if p.market is not none %}{{ money(p.market) }}{% else %}—{% endif %}
@@ -194,6 +211,7 @@
         <td class="room">
           <strong>{{ p.room_name }}</strong>
           {% if m %}<br><span class="muted">RMS: {{ m.rms_room }}</span>{% else %}<br><span class="muted">not mapped</span>{% endif %}
+          {% if m %}{{ room_auto_button(p.room_type_id, p.room_name, settings.channel) }}{% endif %}
         </td>
         <td>{{ p.tier_label }}</td>
         <td class="num">{% if p.our_price is not none %}{{ money(p.our_price) }}{% if p.our_note %} <em class="muted">{{ p.our_note }}</em>{% endif %}{{ board_note(p.board, (p.their_board or settings.benchmark_meal_plan) if p.benchmark_entry is defined and p.benchmark_entry else none) }}{% else %}—{% endif %}</td>

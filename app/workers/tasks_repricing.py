@@ -733,6 +733,15 @@ def _run(owner_user_id: int, mode: str = "manual",
                                         for p in job["proposals"]]
                     log.warning("repricing_readings_stale", owner_user_id=owner_user_id,
                                 channel=job["channel"], reason=why)
+            # ROOMS SWITCHED OFF ONE BY ONE (the room's own button). The
+            # channel's other rooms keep moving; a manual Apply still writes.
+            for job in jobs:
+                off = rule.room_auto_off(settings, job["channel"])
+                if off:
+                    job["proposals"] = [
+                        replace(p, target=None, held=rule.ROOM_AUTO_OFF_REASON)
+                        if p.actionable and p.room_type_id in off else p
+                        for p in job["proposals"]]
 
         # Nothing to write: say so without opening a browser, but leave the
         # held rows so the page can show why.

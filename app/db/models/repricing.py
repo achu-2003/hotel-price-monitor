@@ -44,6 +44,12 @@ class RepricingSettings(Base, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     auto_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: ``{channel: [room_type_id, ...]}``: rooms an AUTOMATIC run leaves alone
+    #: on that channel, while the channel's other rooms keep moving. A manual
+    #: Apply still writes them. Set from the room's own button on Repricing.
+    auto_off_rooms: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, server_default=text("'{}'::jsonb")
+    )
     position_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"), nullable=False)
     max_step_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("10"), nullable=False)
     floor_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("30"), nullable=False)

@@ -364,6 +364,39 @@
     });
   });
 
+  // -- one room's automatic switch, under the room's name -------------
+  //
+  // The same rule as the channel's switch above: saved the moment it is
+  // pressed, rendered from the answer. Off stops only the AUTOMATIC runs for
+  // this room on this website; "Apply this room" still writes it.
+  document.querySelectorAll("button.room-auto").forEach(function (button) {
+    function render(on) {
+      button.classList.toggle("on", on);
+      button.classList.toggle("off", !on);
+      button.dataset.enabled = on ? "1" : "0";
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+      button.textContent = on ? "● Auto on" : "⏸ Auto off";
+      button.title = on
+        ? "Automatic runs move this room on " + button.dataset.channel + ". Click to stop them for this room only."
+        : "Automatic runs leave this room alone on " + button.dataset.channel + ". Click to let them move it again.";
+    }
+    button.addEventListener("click", async function () {
+      if (button.classList.contains("busy")) return;
+      const wanted = button.dataset.enabled !== "1";
+      button.classList.add("busy");
+      const result = await api(
+        "/api/v1/repricing/rooms/" + button.dataset.roomTypeId + "/channels/" +
+          encodeURIComponent(button.dataset.channel) + "/automatic",
+        "PUT", { enabled: wanted });
+      button.classList.remove("busy");
+      if (!result.ok) {
+        window.alert("Could not change automatic for " + button.dataset.room + ". " + problemText(result));
+        return;
+      }
+      render(Boolean(result.body && result.body.enabled));
+    });
+  });
+
   document.querySelectorAll("form.repricing-run-form").forEach(function (form) {
     const buttons = Array.from(form.querySelectorAll("button.run"));
     // The per-room buttons live in the table, outside this form, but they

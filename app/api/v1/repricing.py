@@ -263,6 +263,39 @@ async def set_channel_automatic(channel: str, payload: AutomaticIn, request: Req
     return _rule_out(row)
 
 
+@router.put("/rooms/{room_type_id}/channels/{channel}/automatic")
+async def set_room_automatic(room_type_id: int, channel: str, payload: AutomaticIn,
+                             request: Request, session: DbSession, user: CurrentUser):
+    """One room's automatic switch on one website.
+
+    Off: an automatic run leaves this room's rate on ``channel`` alone while
+    the channel's other rooms keep following. A manual Apply still writes it.
+    Says what it did, so the button renders from the answer.
+    """
+    await _own_room(session, user, room_type_id)
+    channel = " ".join(channel.split())
+    row = await _settings(session, user)
+    off = {ch: list(ids) for ch, ids in (row.auto_off_rooms or {}).items()}
+    rooms = set(off.get(channel, []))
+    before = room_type_id not in rooms
+    if payload.enabled:
+        rooms.discard(room_type_id)
+    else:
+        rooms.add(room_type_id)
+    if rooms:
+        off[channel] = sorted(rooms)
+    else:
+        off.pop(channel, None)
+    row.auto_off_rooms = off  # a new object, so the JSONB change is seen
+    await record_audit(
+        session, user=user, action="update", entity="repricing_room_automatic", entity_id=room_type_id,
+        before={"channel": channel, "enabled": before},
+        after={"channel": channel, "enabled": payload.enabled}, request=request,
+    )
+    await session.commit()
+    return {"room_type_id": room_type_id, "channel": channel, "enabled": payload.enabled}
+
+
 @router.delete("/channels/{channel}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_channel_rule(channel: str, request: Request, session: DbSession, user: CurrentUser):
     row = await _rule(session, user, " ".join(channel.split()))

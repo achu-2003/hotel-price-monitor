@@ -1306,6 +1306,27 @@ def nothing_to_write(cur: Decimal | None, base: Decimal | None, rms_new: Decimal
     return "written" if base is not None and base != cur else "stuck"
 
 
+#: Why an automatic run left a room alone that its own button switched off.
+ROOM_AUTO_OFF_REASON = "automatic is off for this room; Apply this room still works"
+
+
+def room_auto_off(settings, channel: str) -> frozenset[int]:
+    """The rooms whose automatic repricing is switched off on ``channel``.
+
+    Read from ``RepricingSettings.auto_off_rooms`` (``{channel: [ids]}``);
+    anything unreadable counts as on, the way the room was before.
+    """
+    stored = getattr(settings, "auto_off_rooms", None) or {}
+    ids = stored.get(channel) or []
+    out = set()
+    for i in ids:
+        try:
+            out.add(int(i))
+        except (TypeError, ValueError):
+            continue
+    return frozenset(out)
+
+
 #: How old a site's reading may be for an AUTOMATIC run to write from it.
 #: Readings come every 30 minutes; three missed ones is "gone quiet" on
 #: Attention, and by two hours something is plainly wrong with the reading.
