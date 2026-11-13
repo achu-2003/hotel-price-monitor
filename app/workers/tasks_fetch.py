@@ -17,6 +17,7 @@ from __future__ import annotations
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from celery import shared_task
@@ -230,12 +231,13 @@ def _run_fetch(
     # the site, so there is no new error and no failure to count.
     held = source_hold_remaining(payload["source_id"])
     if held > 0:
-        until = datetime.now(UTC) + timedelta(seconds=held)
+        # In the deployment's own time, as every other time on the dashboard.
+        until = (datetime.now(UTC) + timedelta(seconds=held)).astimezone(ZoneInfo(settings.timezone))
         _write_check_run(
             check_run_id, payload, stay, started, CheckRunStatus.SKIPPED,
             triggered_by=triggered_by,
             error_summary=(f"Held: the site refused our last look, so it is left alone "
-                           f"until {until:%H:%M} UTC."),
+                           f"until {until:%H:%M}."),
         )
         logger.info("fetch_skipped_source_held", wait_s=round(held))
         return {"status": "skipped", "why": "source_held", "check_run_id": check_run_id}
