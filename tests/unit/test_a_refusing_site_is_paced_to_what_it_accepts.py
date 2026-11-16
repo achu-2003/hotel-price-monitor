@@ -68,9 +68,12 @@ def test_one_load_at_a_time_while_paced(clock):
     assert ratelimit.pace_take(7) == pytest.approx(300)
 
 
-def test_refusals_double_the_gap_up_to_thirty_minutes(clock):
-    gaps = [ratelimit.pace_refused(7) for _ in range(5)]
-    assert gaps == [300, 600, 1200, 1800, 1800]
+def test_refusals_double_the_gap_up_to_two_hours(clock):
+    # Doubles from five minutes and tops out at two hours -- a quiet window
+    # long enough for a deep data-centre-IP penalty to lapse, instead of the
+    # old half-hour ceiling that just kept probing back into it (16 Nov 2026).
+    gaps = [ratelimit.pace_refused(7) for _ in range(7)]
+    assert gaps == [300, 600, 1200, 2400, 4800, 7200, 7200]
 
 
 def test_successes_narrow_it_until_pacing_switches_itself_off(clock):

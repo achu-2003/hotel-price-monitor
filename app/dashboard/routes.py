@@ -44,6 +44,7 @@ from app.adapters.engines import known_engines
 from app.api.deps import SESSION_COOKIE, DbSession
 from app.config import get_settings
 from app.core.logging import get_logger
+from app.core.ratelimit import pace_gap
 from app.core.security import decode_token
 from app.db.models import (
     AlertDefaults,
@@ -264,13 +265,17 @@ async def _render(
     # deployment would send someone to an Attention page that then showed
     # them nothing -- a permanent unread marker they have no way to clear.
     mine = owned_hotel_ids(user)
-    targets = (
-        await session.scalars(
-            select(MonitorTarget)
+    target_rows = (
+        await session.execute(
+            select(MonitorTarget, HotelSource.source_id)
             .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
             .where(MonitorTarget.is_enabled.is_(True), HotelSource.hotel_id.in_(mine))
         )
     ).all()
+    # A source we are deliberately pacing after a refusal is not "gone quiet".
+    # Checked only for targets already stale -- a healthy board asks Redis
+    # nothing -- so the common page render pays for this nowhere.
+    paced = _paced_sources(target_rows, now)
     attention = {
         # Counted by the same rule the Attention page lists by, so the badge
         # never promises a row the page then hides.
@@ -283,8 +288,11 @@ async def _render(
             .join(HotelSource, UnmatchedOffer.hotel_source_id == HotelSource.id)
             .where(UnmatchedOffer.resolved_at.is_(None), HotelSource.hotel_id.in_(mine))
         ) or 0,
-        "stale": sum(1 for t in targets if t.is_stale(now)),
-        "paused": sum(1 for t in targets if t.circuit_state != CircuitState.CLOSED),
+        "stale": sum(
+            1 for t, sid in target_rows
+            if monitoring_service.gone_quiet(t, now, source_paced=sid in paced)
+        ),
+        "paused": sum(1 for t, _ in target_rows if t.circuit_state != CircuitState.CLOSED),
     }
     attention["total"] = sum(attention.values())
 
@@ -2548,6 +2556,18 @@ def _popup_payload(change, hotel_name, room_name, check_in, check_out) -> dict:
 
 
 # -- attention -------------------------------------------------------
+def _paced_sources(target_rows, now: datetime) -> set[int]:
+    """Source ids we are deliberately spacing out, among the STALE targets.
+
+    Only a stale target can land under "Gone quiet", so only a stale target's
+    source is worth a Redis lookup -- a board with nothing stale asks nothing.
+    ``pace_gap`` fails open (returns 0) when Redis is unreachable, so a lookup
+    that cannot run shows the target as it did before rather than hiding it.
+    """
+    stale_sources = {sid for t, sid in target_rows if t.is_stale(now)}
+    return {sid for sid in stale_sources if pace_gap(sid) > 0}
+
+
 async def _open_errors(session, hotel_ids, *, with_hotel: bool = False) -> list[tuple]:
     """Unresolved errors on these hotels, newest first, each with its target.
 
@@ -2591,15 +2611,23 @@ async def attention_page(request: Request, user: DashUser, session: DbSession):
 
     target_rows = (
         await session.execute(
-            select(MonitorTarget, Hotel.id, Hotel.name)
+            select(MonitorTarget, Hotel.id, Hotel.name, HotelSource.source_id)
             .join(HotelSource, MonitorTarget.hotel_source_id == HotelSource.id)
             .join(Hotel, HotelSource.hotel_id == Hotel.id)
             .where(MonitorTarget.is_enabled.is_(True), Hotel.owner_user_id == user.id)
         )
     ).all()
-    stale = [(t, hid, name) for t, hid, name in target_rows if t.is_stale(now)]
+    # A source in pace back-off after a refusal is not "gone quiet": its silence
+    # is deliberate and self-healing, so it is left off this alarm list (the
+    # throttle lane already owns it). A stopped scheduler is never paced, so it
+    # still shows. Same rule drives the nav badge in ``_render``.
+    paced = _paced_sources([(t, sid) for t, _h, _n, sid in target_rows], now)
+    stale = [
+        (t, hid, name) for t, hid, name, sid in target_rows
+        if monitoring_service.gone_quiet(t, now, source_paced=sid in paced)
+    ]
     paused = [
-        (t, hid, name) for t, hid, name in target_rows
+        (t, hid, name) for t, hid, name, sid in target_rows
         if t.circuit_state != CircuitState.CLOSED
     ]
 

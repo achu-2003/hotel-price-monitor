@@ -84,6 +84,23 @@ def needs_a_person(error: MonitoringError, target: MonitorTarget | None, now: da
     return now - baseline > patience
 
 
+def gone_quiet(target: MonitorTarget, now: datetime, *, source_paced: bool) -> bool:
+    """Whether a stale target belongs under "Gone quiet" on Attention.
+
+    "Gone quiet" is for a target that stopped checking with NO explanation --
+    the dangerous case, because the dashboard looks healthy while the price it
+    shows quietly freezes. A source we are deliberately spacing out after it
+    refused us is not that: its silence is known and self-healing (the adaptive
+    pacing in core/ratelimit widens the gap after a refusal and narrows it on
+    the next good page). On 16 Nov 2026 Goibibo refused the server for hours and
+    its three hotels, each genuinely stale, filled this list with an alarm
+    nobody could act on while the back-off was already handling it. A stopped
+    scheduler -- the fault this list exists to catch -- never paces a source, so
+    it still shows.
+    """
+    return target.is_stale(now) and not source_paced
+
+
 @dataclass(frozen=True, slots=True)
 class DueGroup:
     """One page load: everything needed to fetch it, resolved up front.

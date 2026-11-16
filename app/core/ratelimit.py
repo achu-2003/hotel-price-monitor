@@ -136,7 +136,7 @@ def penalise_source(source_id: int, *, seconds: int = 3600) -> None:
 # and Goibibo refused half of each burst. So a source that has refused us is
 # read one page at a time, with a gap between loads that it teaches us:
 #
-#   * a refusal doubles the gap (at least five minutes, at most thirty);
+#   * a refusal doubles the gap (at least five minutes, at most two hours);
 #   * every page that comes back shortens it by 15%;
 #   * back down at the source's own budget, the pacing switches itself off.
 #
@@ -144,10 +144,24 @@ def penalise_source(source_id: int, *, seconds: int = 3600) -> None:
 # actually accepts -- different at 3 am and 3 pm, and found anew every day.
 # A source that never refuses us is never paced: nothing changes for it.
 #
+# WHY THE CEILING IS HOURS, NOT THE HALF HOUR THE 80% TABLE WOULD SUGGEST.
+# On 16 Nov 2026 Goibibo refused the production server (a data-centre IP) for
+# five hours straight -- every probe empty -- while the identical adapter was
+# served from a home connection, which recovered about a minute after its own
+# one refusal. So the penalty on a data-centre address is far deeper than the
+# frequency score the table measured, and the half-hour ceiling we had kept
+# probing straight back into it: thirty minutes of quiet was never enough to
+# let it lapse, and each probe renewed it. The gap now keeps widening to a
+# couple of hours, which is a real quiet window rather than a knock every half
+# hour -- and the moment one page comes back, the shrink above walks it back
+# down to the ordinary ten-minute pace on its own. Two hours because a block
+# that outlasts even that is not ours to pace around; it wants a different
+# route out than this IP (and no amount of spacing substitutes for one).
+#
 # One atomic script reserves the slot, so two browser workers cannot both
 # take it. Fails open like the token bucket: a Redis outage paces nothing.
 PACE_MIN_AFTER_REFUSAL = 300
-PACE_MAX_SECONDS = 1800
+PACE_MAX_SECONDS = 7200
 PACE_SHRINK = 0.85
 _PACE_TTL_SECONDS = 24 * 3600
 
