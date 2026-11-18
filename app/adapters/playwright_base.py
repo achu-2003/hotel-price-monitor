@@ -55,6 +55,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+from app.adapters import visitor_proxy
 from app.config import get_settings
 from app.core.errors import (
     BlockedError,
@@ -263,6 +264,12 @@ def _visitor_chrome_executable(channel: str, playwright) -> str:
     )
 
 
+def _visitor_proxy() -> visitor_proxy.VisitorProxy | None:
+    """The proxy visitor sites are read through, or None for straight out."""
+    secret = get_settings().browser_visitor_proxy
+    return visitor_proxy.parse(secret.get_secret_value() if secret else None)
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -436,6 +443,12 @@ class BrowserPool:
             f"--window-size={_VIEWPORT['width']},{_VIEWPORT['height']}",
             f"--lang={locale}",
         ]
+        # A PROXY, WHEN THIS MACHINE'S OWN ADDRESS IS THE ONE REFUSED. Given as
+        # Chrome's own flag rather than a context's proxy=, which would make
+        # the context something other than plain; see adapters/visitor_proxy.
+        proxy = _visitor_proxy()
+        if proxy is not None:
+            args.append(visitor_proxy.chrome_argument(proxy))
         if settings.browser_visitor_headless:
             args.append("--headless=new")
         if sys.platform.startswith("linux"):
@@ -667,6 +680,19 @@ def open_page(
                 raise TimeoutError_(
                     f"Timed out loading {url}", context={"url": url}
                 ) from exc
+            # THE PROXY FAILING IS NOT THE SITE FAILING. Left as Chromium's own
+            # "net::ERR_TUNNEL_CONNECTION_FAILED at https://www.goibibo.com/..."
+            # it reads as Goibibo being down, and the one thing that fixes it
+            # -- a lapsed proxy subscription -- is never looked at.
+            if as_visitor and any(
+                marker in message for marker in visitor_proxy.PROXY_NET_ERRORS
+            ):
+                proxy = _visitor_proxy()
+                if proxy is not None:
+                    raise NetworkError(
+                        visitor_proxy.explain(message, proxy),
+                        context={"url": url, "proxy": proxy.address},
+                    ) from exc
             raise NetworkError(str(exc), context={"url": url}) from exc
 
         # Refusal check comes first: everything after it would be parsing a

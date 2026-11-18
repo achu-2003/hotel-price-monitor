@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any
 
+import redis
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
@@ -47,7 +48,7 @@ from app.core.ratelimit import (
 )
 from app.db.models import CheckRun, CheckRunStatus, Hotel, MonitorTarget, PriceBasis
 from app.db.session import sync_session
-from app.services import monitoring
+from app.services import monitoring, remote_reader
 from app.services.dates import StayWindow, local_today, rollover_window
 from app.services.ingest import IngestContext, ingest_fetch_result
 from app.services.monitoring import DueGroup
@@ -223,6 +224,30 @@ def _run_fetch(
 ) -> dict[str, Any]:
     settings = get_settings()
 
+    # A SITE THAT REFUSES THIS SERVER'S ADDRESS IS READ BY THE READER PC, for
+    # as long as one is asking (services/remote_reader.py). Before the pacing
+    # and the politeness budget on purpose: those count page loads made from
+    # here, and this is not one -- the reader spaces its own.
+    if remote_reader.handles(payload["adapter_key"]) and target_ids:
+        try:
+            _close_parked(remote_reader.sweep(local_today(settings.timezone)),
+                          "The reader PC did not collect this check in time.")
+            if remote_reader.alive():
+                _write_check_run(
+                    check_run_id, payload, stay, started, CheckRunStatus.RUNNING,
+                    triggered_by=triggered_by,
+                    error_summary="Waiting for the reader PC to load this page.",
+                )
+                replaced = remote_reader.park(payload, check_run_id, triggered_by)
+                if replaced:
+                    _close_parked([{"check_run_id": replaced}],
+                                  "A newer check of the same night took this one's place.")
+                logger.info("fetch_parked_for_reader")
+                return {"status": "parked", "check_run_id": check_run_id}
+        except redis.RedisError as exc:
+            # The queue is unreachable: read it here, as if no reader existed.
+            logger.warning("reader_queue_unreachable", error=str(exc)[:200])
+
     # A site that has refused us is read one page at a time, with the gap it
     # has taught us (see ``pace_take``). Not yet: recorded as skipped, not
     # failed -- nothing was asked of the site, so no error and no failure.
@@ -297,6 +322,77 @@ def _run_fetch(
 #: it. A run produces one of these normally, and two when a full night was
 #: rolled forward.
 Reading = tuple[StayWindow, FetchResult]
+
+
+# -- a page the reader PC loaded for us ------------------------------
+def _close_parked(jobs: list[dict[str, Any]], why: str) -> None:
+    """Close the check runs of parked checks that will never be answered."""
+    if not jobs:
+        return
+    now = datetime.now(UTC)
+    with sync_session() as session:
+        for job in jobs:
+            run = session.get(CheckRun, job["check_run_id"])
+            if run is not None and run.status == CheckRunStatus.RUNNING:
+                run.status = CheckRunStatus.SKIPPED
+                run.finished_at = now
+                run.error_summary = why
+
+
+class _NoRetry:
+    """What ``_handle_failure`` asks of a Celery task, for a caller that is not one.
+
+    The reader's failure arrives over HTTP, with no task to reschedule. It is
+    recorded as a final one; the next scheduled check is the retry.
+    """
+
+    class request:  # noqa: N801 - the attribute name Celery uses
+        retries = 10 ** 6
+        kwargs: dict[str, Any] = {}
+        args: list[Any] = []
+        expires = None
+
+    def retry(self, **_kw):  # pragma: no cover - never reached, see ``retries``
+        raise RuntimeError("a remote reading is not retried here")
+
+
+_ERRORS_BY_CLASS = {cls.error_class: cls for cls in FetchError.__subclasses__()}
+
+
+def finish_remote_read(job: dict[str, Any], answer: dict[str, Any]) -> dict[str, Any]:
+    """Record what the reader PC found for one parked check.
+
+    ``answer`` is either a fetch result (``remote_reader.result_to_json``) or
+    ``{"error_class": ..., "error": ...}``. Both go down the paths a fetch
+    made here takes -- the same ingest, the same error bookkeeping -- so a
+    price read on the PC confirms changes, moves the repricer and reaches
+    Attention exactly as one read by the worker would.
+
+    Only the requested night: the sold-out roll-forward is a second page
+    load, and the reader was asked for one.
+    """
+    payload = job["payload"]
+    stay = _stay_from_payload(payload)
+    check_run_id = job["check_run_id"]
+    triggered_by = job.get("triggered_by") or "scheduler"
+    started = datetime.fromtimestamp(float(job["parked_at"]), UTC)
+    logger = log.bind(hotel=payload["hotel_name"], hotel_source_id=payload["hotel_source_id"],
+                      check_in=payload["check_in"], check_run_id=check_run_id, read_by="reader")
+
+    if answer.get("error_class"):
+        try:
+            cls = _ERRORS_BY_CLASS.get(ErrorClass(answer["error_class"]), FetchError)
+        except ValueError:
+            cls = FetchError
+        error = cls(str(answer.get("error") or "the reader reported a failure")[:2000])
+        # ``drift_seen``: the reader is not asked to look twice, so a drift it
+        # reports is filed on this sighting.
+        return _handle_failure(_NoRetry(), error, {**payload, "drift_seen": True}, stay,
+                               payload["target_ids"], check_run_id, started, triggered_by, logger)
+
+    result = remote_reader.result_from_json(answer)
+    return _ingest([(stay, result)], payload, payload["target_ids"], check_run_id, started,
+                   triggered_by, logger)
 
 
 def _context_for(

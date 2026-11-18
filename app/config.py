@@ -128,6 +128,26 @@ class Settings(BaseSettings):
     # Google Chrome, in a window. "" falls back to the bundled Chromium.
     browser_visitor_channel: str = "chrome"
     browser_visitor_headless: bool = False
+    # The connection that visitor Chrome goes out through, as
+    # http://username:password@host:port. Empty = straight out. Goibibo scores
+    # the caller's ADDRESS and from 16 Nov 2026 served the production server's
+    # data-centre one nothing but its "Sold Out" page, while a home connection
+    # was served every room; a proxy on a residential connection is the way
+    # round that. Only visitor sites use it -- see adapters/visitor_proxy.py.
+    browser_visitor_proxy: SecretStr | None = None
+    # ── a reader on another connection (services/remote_reader.py) ───
+    # The free way round the same refusal: a PC on an ordinary connection
+    # runs scripts/remote_reader.py, collects these adapters' checks from
+    # /api/v1/reader and posts the prices back. The key is the shared secret
+    # both ends are given; without it the route answers 404 and every check
+    # is read here, as before.
+    remote_reader_key: SecretStr | None = None
+    remote_reader_adapters: str = "goibibo"
+    # A reader that has not asked for work in this long is taken to be off,
+    # and the worker reads the site itself until it asks again.
+    remote_reader_alive_seconds: int = 300
+    # Reader side only: the server it collects from, e.g. https://hpm.example.
+    remote_reader_url: str | None = None
     artifact_dir: Path = Path("/data/artifacts")
     artifact_retention_days: int = 7
 
