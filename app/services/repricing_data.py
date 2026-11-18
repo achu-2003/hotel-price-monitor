@@ -417,6 +417,50 @@ def lane_rows(rows, own_hotel_id: int, lane: Lane,
     return out
 
 
+def listed_stmt(hotel_id: int) -> Select:
+    """Every ``(source_id, room_type_id)`` a site has ever shown a row for."""
+    return (select(PriceSeries.source_id, PriceSeries.room_type_id)
+            .where(PriceSeries.hotel_id == hotel_id).distinct())
+
+
+def split_never_listed(rooms: Mapping[int, str], lane: Lane, listed: set[tuple[int, int]],
+                       names: Mapping[int, str]) -> tuple[dict[int, str], list[str]]:
+    """``rooms`` this lane's site has shown at least once, and the names of the rest.
+
+    Every mapped room gets a row in every website's section, held when the
+    site showed no price for it tonight. That is right for a room that sold
+    out and wrong for one the site has NEVER sold: "Luxury villa" is a Goibibo
+    room, and on Booking.com and Agoda its row said "not on sale tonight"
+    every night, which reads as something to wait for or to fix.
+
+    A room is the lane's when the site has a series under the room itself or
+    under the name the lane reads it by (``lane.ours``: Agoda's "Suite Room"
+    is our Family Suite). A room that copies the main channel stays: its row
+    says so, and has nothing to do with being listed. With no site chosen
+    (``source_id`` None) nothing can be ruled out, so nothing is.
+
+    The names come back so the page can say which rooms it left out: a room
+    that is simply absent is the outcome this page refuses everywhere else.
+    """
+    if lane.source_id is None:
+        return dict(rooms), []
+    seen = {room_type_id for source_id, room_type_id in listed if source_id == lane.source_id}
+    by_name: dict[str, set[int]] = {}
+    for room_type_id, name in names.items():
+        by_name.setdefault(normalize_room_name(name), set()).add(room_type_id)
+
+    kept: dict[int, str] = {}
+    never: list[str] = []
+    for room_type_id, name in rooms.items():
+        read_as = lane.ours.get(room_type_id)
+        ids = by_name.get(normalize_room_name(read_as), set()) if read_as else {room_type_id}
+        if room_type_id in lane.copies_main or ids & seen:
+            kept[room_type_id] = name
+        else:
+            never.append(name)
+    return kept, sorted(never)
+
+
 def lane_benchmark(row, lane: Lane, main_channel: str | None = None) -> Benchmark | None:
     """:func:`benchmark_for`, with the gap, board and pairs of one lane."""
     if row is None:

@@ -470,6 +470,10 @@
   </table>
   </div>
   {% endif %}
+  {% if never_listed %}
+  <p class="muted">Not shown above: {{ never_listed | join(', ') }}. {{ settings.channel }} has never listed
+    {{ 'it' if never_listed | length == 1 else 'them' }}, so there is no price there to follow.</p>
+  {% endif %}
 
   {#
     TWO BUTTONS, ONE JOB. Preview logs in, reads every mapped row on the
@@ -569,6 +573,10 @@
       </tbody>
     </table>
     </div>
+    {% endif %}
+    {% if L.never_listed %}
+    <p class="muted">Not shown above: {{ L.never_listed | join(', ') }}. {{ L.lane.channel }} has never listed
+      {{ 'it' if L.never_listed | length == 1 else 'them' }}, so there is no price there to follow.</p>
     {% endif %}
 
     <form class="lane-run-form" data-endpoint="/api/v1/repricing/run" data-channel="{{ r.channel }}">

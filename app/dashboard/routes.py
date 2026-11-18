@@ -2892,6 +2892,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
     check_in = local_today(get_settings().timezone)
     check_out = check_in + timedelta(days=1)
     proposals = []
+    never_listed: list[str] = []
     if own:
         # Our side from the main channel's own site, as the worker reads it.
         rows = repricing_data.lane_rows(await _priced_rows(session, user, check_in, check_out, 2),
@@ -2920,9 +2921,17 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
             benchmark=rule_benchmark,
             moved_today=set(await session.scalars(repricing_data.moved_stmt(user.id, check_in, settings.channel))),
         )
-        # Every mapped room gets a row, read tonight or not.
+        # Every mapped room gets a row, read tonight or not -- except a room
+        # this website has never shown, which is named under the table
+        # instead (see repricing_data.split_never_listed).
         mapped_rooms = {r.id: r.name for r in rooms if r.id in enabled}
-        proposals = repricing_rule.with_unread_rooms(proposals, mapped_rooms, settings.channel)
+        room_names = {r.id: r.name for r in rooms}
+        listed = {tuple(row) for row in (await session.execute(repricing_data.listed_stmt(own.id))).all()}
+        have = {p.room_type_id for p in proposals}
+        shown_rooms, never_listed = repricing_data.split_never_listed(
+            {rt: name for rt, name in mapped_rooms.items() if rt not in have},
+            repricing_data.main_lane(settings), listed, room_names)
+        proposals = repricing_rule.with_unread_rooms(proposals, shown_rooms, settings.channel)
 
     # The last RMS reading per rate row, so the page can show the RMS
     # number a proposal would become without opening a browser.
@@ -3039,9 +3048,12 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                 moved_today=set(await session.scalars(
                     repricing_data.moved_stmt(user.id, check_in, lane.channel, main=False))),
             ) if lane_benchmark is not None else []
+            lane_have = {p.room_type_id for p in lane_proposals}
+            lane_rooms, lane_never = repricing_data.split_never_listed(
+                {rt: name for rt, name in mapped_rooms.items() if rt not in lane_have},
+                lane, listed, room_names)
             lane_proposals = repricing_rule.with_unread_rooms(
-                lane_proposals,
-                {r.id: r.name for r in rooms if r.id in {rt for rt, m in mappings.items() if m.is_enabled}},
+                lane_proposals, lane_rooms,
                 lane.channel, copies_main=lane.copies_main, main_channel=settings.channel)
             # The names to pair with, as this site writes them: ours and the
             # benchmark's, from what it has shown over the last fortnight.
@@ -3056,6 +3068,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
                                       {p.room_type_id: p for p in lane_proposals})
             lanes.append(SimpleNamespace(
                 rule=rule_row, lane=lane, proposals=lane_proposals, ratio_base=lane_ratio,
+                never_listed=lane_never,
                 rms={p.room_type_id: _lane_rms(rule_row, p, mappings.get(p.room_type_id), channel_rms,
                                                lane_ratio, settings.round_to)
                      for p in lane_proposals},
@@ -3114,7 +3127,7 @@ async def repricing_page(request: Request, user: DashUser, session: DbSession):
         competitors=competitors, benchmark=benchmark, benchmark_rooms=benchmark_rooms,
         check_in=check_in, latest_rms=latest_rms, advice=advice, ai_wanted=ai_wanted,
         channel_rms=channel_rms,
-        lanes=lanes, lane_sources=lane_sources, unruled_channels=unruled_channels,
+        never_listed=never_listed, lanes=lanes, lane_sources=lane_sources, unruled_channels=unruled_channels,
         has_rate_app=app_row is not None, rule=repricing_rule,
         last_auto_change=last_auto_change, auto_changes_today=auto_changes_today, today=today,
     )
