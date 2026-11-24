@@ -455,16 +455,93 @@ def _tick_trust(scope, page) -> bool:
     return False
 
 
+#: The link on a code screen that has the code sent (again). RMS: "Resend
+#: Code". Others: "Send code", "Send me a new code", "Email me a code".
+_RESEND_RE = re.compile(
+    r"^\s*(re-?send|send|email|e-mail|text|sms)( me)?( a| the)?( new)?( one.?time)?"
+    r" (pass)?code\b",
+    re.IGNORECASE,
+)
+
+
+def _other_dialog(page, code_box):
+    """A visible pop-up that is not the one holding the code box, or ``None``."""
+    for h in _visible(page.locator(_DIALOGS)):
+        try:
+            if h.locator(_CODE_INPUTS).count() and _visible(h.locator(_CODE_INPUTS)):
+                continue
+            return h
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _request_code(scope, page, code_box) -> str | None:
+    """Press the code screen's "Resend Code", so a fresh code is on its way.
+
+    Returns what the page answered ("One-Time Passcode Email has been
+    sent."), or ``None`` when the screen has no such link.
+
+    WHY ASK AT ALL: on 21 Nov 2026 RMS turned on two-factor for the account
+    and refused every code the owner typed with "Invalid Passcode" -- the
+    right box, the right button, and still refused. The screen says a code
+    "has been sent", but the only thing in its script that emails one is the
+    Resend link, so the code in the inbox was an older one. Asking here
+    makes the newest email the one for this login, whether or not the page
+    had already sent one.
+
+    Only when someone is waiting to type it: an unattended run that pressed
+    this would email the owner every half hour.
+
+    The answer comes in a second pop-up over the first, with its own Ok, and
+    while it is up the code box cannot be clicked -- so it is read and closed.
+    """
+    links = scope.locator("a, button, [role=button]").filter(has_text=_RESEND_RE)
+    link = next(iter(_visible(links)), None)
+    if link is None:
+        return None
+    link.click(timeout=5_000)
+    deadline = time.monotonic() + 20
+    answer = ""
+    while time.monotonic() < deadline:
+        box = _other_dialog(page, code_box)
+        if box is not None:
+            try:
+                answer = " ".join(box.inner_text(timeout=1_000).split())
+            except Exception:  # noqa: BLE001
+                answer = ""
+            if answer:
+                for button in _visible(box.locator("button")):
+                    label = (button.inner_text(timeout=1_000) or "").strip()
+                    if label:
+                        if answer.endswith(label):  # "…has been sent. Ok"
+                            answer = answer[: -len(label)].strip()
+                        button.click(timeout=3_000)
+                        break
+                break
+        time.sleep(0.5)
+    return answer[:200] or "the page said nothing back"
+
+
 def _keep_dialog_html(scope, owner_user_id: int) -> None:
     """The code panel's markup, for reading what a refused code was typed into.
 
-    No secret is in it: the code has not been typed yet, and the password
-    field is behind it, masked, and not part of the panel.
+    WITHOUT ITS SCRIPTS. RMS's code screen carries a script that re-copies
+    the user name and the password, in plain text, into the login form
+    before submitting -- so the panel as served holds the password. Saved
+    whole, it put that password on the server's disk (found 21 Nov 2026).
+    Scripts are removed from a copy before it is written, and with them any
+    value attribute, which is where a field could hold one.
     """
     try:
         directory = Path(get_settings().artifact_dir)
         directory.mkdir(parents=True, exist_ok=True)
-        html = scope.evaluate("el => el.outerHTML") if scope is not None else ""
+        html = scope.evaluate(
+            "el => { const c = el.cloneNode(true);"
+            " c.querySelectorAll('script, noscript, template').forEach(s => s.remove());"
+            " c.querySelectorAll('[value]').forEach(i => i.removeAttribute('value'));"
+            " return c.outerHTML; }"
+        ) if scope is not None else ""
         (directory / f"rate-app-2fa-{owner_user_id}.html").write_text(html, encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         log.warning("rate_app_dialog_capture_failed", error=str(exc))
@@ -606,7 +683,22 @@ def attempt_login(
                     screenshot_path=_screenshot(page, owner_user_id), filled=filled,
                 )
 
-            on_code_needed(prompt)
+            try:
+                sent = _request_code(code_scope, page, code_box)
+            except Exception as exc:  # noqa: BLE001 - asking is a help, not a step
+                log.warning("rate_app_code_request_failed", error=str(exc).splitlines()[0][:200])
+                sent = None
+            if sent is None:
+                on_code_needed(
+                    f"The application asked for a one-time code: “{prompt}”. "
+                    f"Type the code from the newest email."
+                )
+            else:
+                on_code_needed(
+                    f"The application asked for a one-time code, and a new one was "
+                    f"requested just now (it said: “{sent}”). Type the code from the "
+                    f"email that arrives now, not an older one."
+                )
             code = wait_for_code()
             if not code:
                 return LoginProbe(

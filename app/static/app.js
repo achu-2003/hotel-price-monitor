@@ -261,8 +261,10 @@
       } else if (state.status === "needs_code") {
         note("");
         ask.hidden = false;
+        // The worker writes the whole sentence: it alone knows whether a
+        // fresh code was requested and which email to use.
         ask.querySelector(".code-prompt").textContent =
-          "The application asked for a one-time code: \u201c" + (state.message || "") + "\u201d";
+          state.message || "The application asked for a one-time code.";
         if (document.activeElement !== codeInput && !codeInput.value) codeInput.focus();
       } else if (state.status === "done") {
         note("");
