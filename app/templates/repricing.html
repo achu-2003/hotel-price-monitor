@@ -93,6 +93,28 @@
     {{ '⏸ Auto off' if off else '● Auto on' }}</button>
 {% endmacro %}
 
+{#
+  WHOSE PRICE THIS IS, when it is not the hotel the column is headed with.
+  The column says "Sterling" because that is the hotel the rule follows, but
+  one room can follow another (Family Suite follows Ananthyam's Family Room),
+  and its price then sat under Sterling's name while the status beside it
+  said "under Ananthyam Resort" -- two names for one figure.
+#}
+{% macro other_hotel_note(p) %}
+  {%- if benchmark is defined and benchmark and p.benchmark and p.benchmark != benchmark.name -%}
+    <br><span class="muted other-hotel">at {{ p.benchmark }}, not {{ benchmark.name }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{#
+  "WILL APPLY" ON A ROOM WHOSE AUTOMATIC SWITCH IS OFF. True of the Apply
+  buttons and false of the automatic run, which leaves the room alone -- and
+  the tag alone did not say which. Said beside it.
+#}
+{% macro auto_off_note(room_type_id, channel) %}
+  {%- if room_type_id in rule.room_auto_off(settings, channel) %} <span class="muted auto-off-note">only when you press Apply: automatic is off for this room</span>{% endif -%}
+{% endmacro %}
+
 {% macro lane_cells(L, p) %}
   {% set r = L.rule %}
   {% set m = mappings.get(p.room_type_id) %}
@@ -109,6 +131,7 @@
     {% if p.benchmark_entry %}
       {{ board_note(p.their_board or r.benchmark_meal_plan) }}
       <br><span class="muted">{{ p.benchmark_entry.room }}</span>
+      {{ other_hotel_note(p) }}
       <br><span class="muted">− {{ money(r.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
     {% endif %}
   </td>
@@ -152,7 +175,7 @@
     {% elif ns.idle %}{{ idle_status(ns.idle, ns.cur, p, r.channel) }}
     {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
       <span class="muted">{{ money(p.short_by) }} short; {{ p.capped }}</span>
-      {% else %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
+      {% else %}<span class="tag ok">will apply</span>{{ auto_off_note(p.room_type_id, r.channel) }}{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
     {% else %}—{% endif %}
   </td>
 {% endmacro %}
@@ -227,6 +250,7 @@
               that the box below did it right. -#}
           {% if p.benchmark_entry is defined and p.benchmark_entry %}
             <br><span class="muted">{{ p.benchmark_entry.room }}</span>
+            {{ other_hotel_note(p) }}
             <br><span class="muted">− {{ money(settings.benchmark_undercut) }} → {{ money(p.wanted) }}</span>
           {% endif %}
           {% if p.demand_note %}<br><span class="muted demand">{{ p.demand_note }}</span>{% endif %}
@@ -437,7 +461,7 @@
           {% elif p.target is not none %}{% if p.short_by %}<span class="tag short">applies, still over</span>
             <span class="muted">{{ money(p.short_by) }} short of {{ p.benchmark }} − {{ money(settings.benchmark_undercut) }};
             {{ p.capped }}</span>
-          {% else %}<span class="tag ok">will apply</span>{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
+          {% else %}<span class="tag ok">will apply</span>{{ auto_off_note(p.room_type_id, settings.channel) }}{% if p.capped %} <span class="muted">{{ p.capped }}</span>{% endif %}{% endif %}
           {% else %}—{% endif %}
         </td>
       </tr>
@@ -749,7 +773,7 @@
       {% set m = mappings.get(room.id) %}
       <form class="api-form mapping-row" data-endpoint="/api/v1/repricing/mappings/{{ room.id }}" data-method="PUT">
         <div class="mapping-name"><strong>{{ room.name }}</strong></div>
-        <div><input type="text" name="rms_room" data-text required placeholder="CLASSIC" value="{{ m.rms_room if m else '' }}"></div>
+        <div><input type="text" name="rms_room" data-text required placeholder="not mapped" value="{{ m.rms_room if m else '' }}"></div>
         <div><input type="text" name="rate_type_ep" data-text placeholder="—" value="{{ m.rate_type_ep or '' if m else '' }}"></div>
         <div><input type="text" name="rate_type_cp" data-text placeholder="—" value="{{ m.rate_type_cp or '' if m else '' }}"></div>
         <div><input type="text" name="rate_type_map" data-text placeholder="—" value="{{ m.rate_type_map or '' if m else '' }}"></div>
