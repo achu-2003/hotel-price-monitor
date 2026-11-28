@@ -246,6 +246,8 @@ def test_a_refusal_the_reader_met_is_recorded_as_one_and_not_retried(monkeypatch
 @pytest.fixture
 def client(queue, monkeypatch):
     monkeypatch.setattr(reader_api, "get_settings", _settings)
+    # The parked checks are for TODAY, so the door must not ask the real clock.
+    monkeypatch.setattr(reader_api, "local_today", lambda _tz: TODAY)
     app = FastAPI()
     app.include_router(reader_api.router, prefix="/api/v1")
     return TestClient(app)

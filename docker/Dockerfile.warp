@@ -1,0 +1,45 @@
+# Cloudflare WARP as a SOCKS5 proxy, for Goibibo only.
+#
+# From 16 Nov 2026 Goibibo served this server nothing but its "Sold Out"
+# page: it scores the ADDRESS, and 103.178.166.6 is a data-centre one. A paid
+# residential proxy was rejected, and a reader on someone's PC stops the day
+# that PC is off. WARP is free and runs here: Goibibo sees a Cloudflare
+# address instead of the data centre's. On 28 Nov 2026 the real Goibibo
+# adapter read ASG's 10 rooms twice through it, and refused the other two
+# hotels exactly as it refused a home connection in the same minutes.
+#
+# Userspace WireGuard (wireproxy), so the container needs no NET_ADMIN, no
+# /dev/net/tun and no sysctls. Only the visitor Chrome is pointed at it
+# (BROWSER_VISITOR_PROXY on worker-browser); every other site goes out direct.
+#
+# Both binaries are pinned by version AND checksum: this image sits in the
+# path of every Goibibo read.
+FROM alpine:3.20
+
+ARG WGCF_VERSION=2.3.1
+ARG WGCF_SHA256=4fb7a136aa470ece11d17949c7db07b040ec9c604742dc8680bcf1889f85d0c8
+ARG WIREPROXY_VERSION=1.1.3
+ARG WIREPROXY_SHA256=e88c1d090740373fc606c1bafd81d9a5eadc642cce5667616e20e9d7a444f51c
+
+RUN apk add --no-cache ca-certificates wget \
+ && wget -qO /usr/local/bin/wgcf \
+      "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VERSION}/wgcf_${WGCF_VERSION}_linux_amd64" \
+ && echo "${WGCF_SHA256}  /usr/local/bin/wgcf" | sha256sum -c - \
+ && wget -qO /tmp/wireproxy.tgz \
+      "https://github.com/windtf/wireproxy/releases/download/v${WIREPROXY_VERSION}/wireproxy_linux_amd64.tar.gz" \
+ && echo "${WIREPROXY_SHA256}  /tmp/wireproxy.tgz" | sha256sum -c - \
+ && tar -xzf /tmp/wireproxy.tgz -C /usr/local/bin wireproxy \
+ && rm /tmp/wireproxy.tgz \
+ && chmod +x /usr/local/bin/wgcf /usr/local/bin/wireproxy
+
+COPY docker/warp.sh /warp.sh
+
+EXPOSE 40000
+
+# /readyz says wireproxy is up and serving. It does not prove a handshake
+# (it answered 200 before one in testing); a dead tunnel shows instead as the
+# Goibibo check failing with a "proxy did not carry the page" error.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:9080/readyz >/dev/null || exit 1
+
+ENTRYPOINT ["/bin/sh", "/warp.sh"]

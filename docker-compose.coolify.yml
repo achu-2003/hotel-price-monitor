@@ -29,7 +29,7 @@ x-app-env: &app-env
   env_file:
     - path: .env
       required: false
-  environment:
+  environment: &app-env-vars
     APP_ENV: ${APP_ENV:-production}
     # Overridden here, not in .env: these are compose service names, and are
     # the one part of the configuration the host cannot get right.
@@ -121,6 +121,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile.browser
     <<: *app-env
+    # Restated rather than inherited: a merge key copies `environment` whole,
+    # so adding one variable here means listing the shared ones again.
+    environment:
+      <<: *app-env-vars
+      # Goibibo (the only visitor-browser site) is read through WARP, because
+      # it refuses this server's own address. See docker/Dockerfile.warp.
+      # Set it empty in Coolify to read Goibibo directly again.
+      BROWSER_VISITOR_PROXY: ${BROWSER_VISITOR_PROXY:-socks5://warp:40000}
     volumes:
       - artifacts:/data/artifacts
     depends_on:
@@ -128,8 +136,26 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      # Started, not healthy: if WARP is down, Booking.com, Agoda and RMS must
+      # still be read. Only the Goibibo check fails, and says why.
+      warp:
+        condition: service_started
     mem_limit: 4g
     shm_size: 1gb          # Chromium crashes with the 64MB Docker default
+    restart: unless-stopped
+
+  # Cloudflare WARP as a SOCKS5 proxy on warp:40000, for Goibibo only. Free,
+  # registers itself on first start, and keeps that account in its volume so
+  # a redeploy is the same device. Binds no host port.
+  warp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.warp
+    expose:
+      - "40000"
+    volumes:
+      - warpdata:/data/warp
+    mem_limit: 128m
     restart: unless-stopped
 
   # Light work: HTTP-only adapters and everything that is not a browser.
@@ -232,3 +258,4 @@ volumes:
   redisdata:
   beatdata:
   artifacts:
+  warpdata:

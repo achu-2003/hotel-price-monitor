@@ -154,12 +154,18 @@ def explain(net_error_message: str, proxy: VisitorProxy) -> str:
     code = next(
         (c for c in PROXY_NET_ERRORS if c in net_error_message.lower()), "proxy error"
     )
-    return (
+    head = (
         f"The proxy this site is read through ({proxy.host}:{proxy.port}) did not "
-        f"carry the page ({code.upper()}). Nothing reached the site itself. Check "
-        f"that the proxy subscription is active and that BROWSER_VISITOR_PROXY "
-        f"still has the right address, username and password."
+        f"carry the page ({code.upper()}). Nothing reached the site itself. "
     )
+    if proxy.host == "warp":
+        # The free Cloudflare WARP container of docker-compose.coolify.yml:
+        # nothing to pay for and no password, so the advice above is wrong.
+        return head + ("Check that the warp container is running in Coolify; it "
+                       "reconnects by itself, and a restart of it is safe.")
+    return head + ("Check that the proxy subscription is active and that "
+                   "BROWSER_VISITOR_PROXY still has the right address, username "
+                   "and password.")
 
 
 # -- the relay --------------------------------------------------------
